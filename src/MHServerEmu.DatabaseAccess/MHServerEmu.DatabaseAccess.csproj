@@ -52,4 +52,12 @@
     </Content>
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="FluentMigrator" Version="6.2.0" />
+    <PackageReference Include="FluentMigrator.Runner" Version="6.2.0" />
+    <PackageReference Include="FluentMigrator.Runner.Postgres" Version="6.2.0" />
+    <PackageReference Include="FluentMigrator.Runner.SQLite" Version="6.2.0" />
+    <PackageReference Include="Npgsql" Version="9.0.2" />
+  </ItemGroup>
+
 </Project>

@@ -9,6 +9,7 @@ using MHServerEmu.Core.Logging.Targets;
 using MHServerEmu.Core.Network;
 using MHServerEmu.DatabaseAccess;
 using MHServerEmu.DatabaseAccess.Json;
+using MHServerEmu.DatabaseAccess.PostgreSQL;
 using MHServerEmu.DatabaseAccess.SQLite;
 using MHServerEmu.Frontend;
 using MHServerEmu.Games.GameData;
@@ -201,7 +202,22 @@ namespace MHServerEmu
         {
             // JsonDBManager saves a single account in a JSON file
             var config = ConfigManager.Instance.GetConfig<PlayerManagerConfig>();
-            IDBManager dbManager = config.UseJsonDBManager ? JsonDBManager.Instance : SQLiteDBManager.Instance;
+            IDBManager dbManager;
+            switch (config.DBManagerBackend)
+            {
+                case "postgresql":
+                    dbManager = PostgreSQLDBManager.Instance;
+                    break;
+                case "sqlite":
+                    dbManager = SQLiteDBManager.Instance;
+                    break;
+                case "json":
+                    dbManager = JsonDBManager.Instance;
+                    break;
+                default:
+                    Logger.Fatal($"Invalid DBManagerBackend value '{config.DBManagerBackend}'");
+                    return false;
+            }
 
             return PakFileSystem.Instance.Initialize()
                 && ProtocolDispatchTable.Instance.Initialize()

@@ -8,6 +8,7 @@ namespace MHServerEmu.PlayerManagement
     public class PlayerManagerConfig : ConfigContainer
     {
         public bool UseJsonDBManager { get; private set; } = false;
+        public string DBManagerBackend { get; private set; } = "sqlite";
         public bool IgnoreSessionToken { get; private set; } = false;
         public bool AllowClientVersionMismatch { get; private set; } = false;
         public bool SimulateQueue { get; private set; } = false;

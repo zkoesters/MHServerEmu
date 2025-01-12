@@ -118,8 +118,8 @@ namespace MHServerEmu.PlayerManagement
             }
 
             // Verify the token if enabled
-            if (_playerManager.Config.UseJsonDBManager == false && _playerManager.Config.IgnoreSessionToken == false &&
-                session.Account.Flags.HasFlag(AccountFlags.LinuxCompatibilityMode) == false)
+            if (_playerManager.Config.DBManagerBackend != "json" && !_playerManager.Config.IgnoreSessionToken && 
+                !session.Account.Flags.HasFlag(AccountFlags.LinuxCompatibilityMode))
             {
                 // Try to decrypt the token (we avoid extra allocations and copying by accessing buffers directly with Unsafe.GetBuffer())
                 byte[] encryptedToken = ByteString.Unsafe.GetBuffer(credentials.EncryptedToken);
