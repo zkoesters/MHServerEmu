@@ -24,7 +24,7 @@ public static class MigrationRunnerExtensions
         }
 
         // Check if any rows are present in the VersionInfo table
-        var count = processor.ReadTableData("public", "VersionInfo").Tables[0].Rows.Count;
+        var count = processor.ReadTableData(null, "VersionInfo").Tables[0].Rows.Count;
         return count > 0;
     }
 }

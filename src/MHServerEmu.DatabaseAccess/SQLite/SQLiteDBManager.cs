@@ -1,10 +1,17 @@
 ﻿using Dapper;
 using System.Data.SQLite;
+using FluentMigrator.Runner;
+using FluentMigrator.Runner.Generators;
+using FluentMigrator.Runner.Generators.SQLite;
 using MHServerEmu.Core.Config;
 using MHServerEmu.Core.Helpers;
 using MHServerEmu.Core.Logging;
 using MHServerEmu.Core.System.Time;
+using MHServerEmu.DatabaseAccess.Extensions;
+using MHServerEmu.DatabaseAccess.Migrations;
 using MHServerEmu.DatabaseAccess.Models;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace MHServerEmu.DatabaseAccess.SQLite
 {
@@ -13,7 +20,6 @@ namespace MHServerEmu.DatabaseAccess.SQLite
     /// </summary>
     public class SQLiteDBManager : IDBManager
     {
-        private const int CurrentSchemaVersion = 2;         // Increment this when making changes to the database schema
         private const int NumTestAccounts = 5;              // Number of test accounts to create for new database files
         private const int NumPlayerDataWriteAttempts = 3;   // Number of write attempts to do when saving player data
 
@@ -38,18 +44,14 @@ namespace MHServerEmu.DatabaseAccess.SQLite
 
             _dbFilePath = Path.Combine(FileHelper.DataDirectory, config.FileName);
             _connectionString = $"Data Source={_dbFilePath}";
-
-            if (File.Exists(_dbFilePath) == false)
+            
+            try
             {
-                // Create a new database file if it does not exist
-                if (InitializeDatabaseFile() == false)
-                    return false;
+                ApplyMigrations();
             }
-            else
+            catch (Exception)
             {
-                // Migrate existing database if needed
-                if (MigrateDatabaseFileToCurrentSchema() == false)
-                    return false;
+                return false;
             }
 
             _maxBackupNumber = config.MaxBackupNumber;
@@ -180,25 +182,59 @@ namespace MHServerEmu.DatabaseAccess.SQLite
             connection.Open();
             return connection;
         }
-
-        /// <summary>
-        /// Initializes a new empty database file using the current schema.
-        /// </summary>
-        private bool InitializeDatabaseFile()
+        
+        private void ApplyMigrations()
         {
-            string initializationScript = SQLiteScripts.GetInitializationScript();
-            if (initializationScript == string.Empty)
-                return Logger.ErrorReturn(false, "InitializeDatabaseFile(): Failed to get database initialization script");
+            var serviceProvider = new ServiceCollection()
+                .AddFluentMigratorCore()
+                .ConfigureRunner(rb => rb
+                    .AddSQLite()
+                    .WithGlobalConnectionString(_connectionString)
+                    .ScanIn(typeof(IMigrationsMarker).Assembly).For.Migrations())
+                .AddLogging(lb => lb.AddFluentMigratorConsole())
+                .AddScoped(
+                    sp =>
+                    {
+                        var typeMap = sp.GetRequiredService<ISQLiteTypeMap>();
+                        return new SQLiteGenerator(
+                            new SQLiteQuoter(),
+                            typeMap,
+                            new OptionsWrapper<GeneratorOptions>(new GeneratorOptions { CompatibilityMode = CompatibilityMode.LOOSE }));
+                    })
+                .BuildServiceProvider(false);
+        
+            // First pass migration, in case we have an existing database
+            using (var scope = serviceProvider.CreateScope())
+            {
+                var runner = scope.ServiceProvider.GetRequiredService<IMigrationRunner>();
+                using SQLiteConnection connection = GetConnection();
+                if (GetSchemaVersion(connection) == 2 && !runner.HasMigrationsApplied())
+                {
+                    runner.MigrateUp(0);
+                    connection.Execute(
+                        "INSERT OR IGNORE INTO VersionInfo (Version, AppliedOn, Description) VALUES (@Version, @AppliedOn, @Description)",
+                        new
+                        {
+                            Version = 1736695246,
+                            AppliedOn = DateTime.Now,
+                            Description = "InitializeDatabase"
+                        });
+                }
+            }
 
-            SQLiteConnection.CreateFile(_dbFilePath);
-            using SQLiteConnection connection = GetConnection();
-            connection.Execute(initializationScript);
+            // Second pass migration, to apply all migrations
+            using (var scope = serviceProvider.CreateScope())
+            {
+                var runner = scope.ServiceProvider.GetRequiredService<IMigrationRunner>();
+                var isFirstRun = !runner.HasMigrationsApplied();
 
-            Logger.Info($"Initialized a new database file at {Path.GetRelativePath(FileHelper.ServerRoot, _dbFilePath)} using schema version {CurrentSchemaVersion}");
+                runner.MigrateUp();
 
-            CreateTestAccounts(NumTestAccounts);
-
-            return true;
+                if (isFirstRun)
+                {
+                    CreateTestAccounts(NumTestAccounts);
+                }
+            }
         }
 
         /// <summary>
@@ -216,63 +252,6 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                 InsertAccount(account);
                 Logger.Info($"Created test account {account}");
             }
-        }
-
-        /// <summary>
-        /// Migrates an existing database file to the current schema if needed.
-        /// </summary>
-        private bool MigrateDatabaseFileToCurrentSchema()
-        {
-            using SQLiteConnection connection = GetConnection();
-
-            int schemaVersion = GetSchemaVersion(connection);
-            if (schemaVersion > CurrentSchemaVersion)
-                return Logger.ErrorReturn(false, $"Initialize(): Existing database file uses unsupported schema version {schemaVersion} (current = {CurrentSchemaVersion})");
-
-            Logger.Info($"Found existing database file with schema version {schemaVersion} (current = {CurrentSchemaVersion})");
-
-            if (schemaVersion == CurrentSchemaVersion)
-                return true;
-
-            // Create a backup to fall back to if something goes wrong
-            string backupDbPath = $"{_dbFilePath}.v{schemaVersion}";
-            File.Copy(_dbFilePath, backupDbPath);
-
-            bool success = true;
-
-            while (schemaVersion < CurrentSchemaVersion)
-            {
-                Logger.Info($"Migrating version {schemaVersion} => {schemaVersion + 1}...");
-
-                string migrationScript = SQLiteScripts.GetMigrationScript(schemaVersion);
-                if (migrationScript == string.Empty)
-                {
-                    Logger.Error($"MigrateDatabaseFileToCurrentSchema(): Failed to get database migration script for version {schemaVersion}");
-                    success = false;
-                    break;
-                }
-
-                connection.Execute(migrationScript);
-                SetSchemaVersion(connection, ++schemaVersion);
-            }
-
-            success &= GetSchemaVersion(connection) == CurrentSchemaVersion;
-
-            if (success == false)
-            {
-                // Restore backup
-                File.Delete(_dbFilePath);
-                File.Move(backupDbPath, _dbFilePath);
-                return Logger.ErrorReturn(false, "MigrateDatabaseFileToCurrentSchema(): Migration failed, backup restored");
-            }
-            else
-            {
-                // Clean up backup
-                File.Delete(backupDbPath);
-            }
-
-            Logger.Info($"Successfully migrated to schema version {CurrentSchemaVersion}");
-            return true;
         }
 
         private bool DoSavePlayerData(DBAccount account)
@@ -358,14 +337,6 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                 return queryResult.First();
 
             return Logger.WarnReturn(-1, "GetSchemaVersion(): Failed to query user_version from the DB");
-        }
-
-        /// <summary>
-        /// Sets the user_version value of the current database file.
-        /// </summary>
-        private static void SetSchemaVersion(SQLiteConnection connection, int version)
-        {
-            connection.Execute($"PRAGMA user_version = {version}");
         }
 
         /// <summary>

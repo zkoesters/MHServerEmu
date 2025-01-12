@@ -1,3 +1,4 @@
+using System.Data;
 using FluentMigrator;
 
 namespace MHServerEmu.DatabaseAccess.Migrations;
@@ -24,7 +25,8 @@ public class InitializeDatabase : Migration {
         
         Create.ForeignKey()
             .FromTable("Player").ForeignColumn("DbGuid")
-            .ToTable("Account").PrimaryColumn("Id");
+            .ToTable("Account").PrimaryColumn("Id")
+            .OnDelete(Rule.Cascade);
 
         Create.Table("Avatar")
             .WithColumn("DbGuid").AsInt64().Unique().NotNullable().PrimaryKey()
@@ -36,7 +38,8 @@ public class InitializeDatabase : Migration {
         
         Create.ForeignKey()
             .FromTable("Avatar").ForeignColumn("ContainerDbGuid")
-            .ToTable("Player").PrimaryColumn("DbGuid");
+            .ToTable("Player").PrimaryColumn("DbGuid")
+            .OnDelete(Rule.Cascade);
         
         Create.Table("TeamUp")
             .WithColumn("DbGuid").AsInt64().Unique().NotNullable().PrimaryKey()
@@ -48,7 +51,8 @@ public class InitializeDatabase : Migration {
         
         Create.ForeignKey()
             .FromTable("TeamUp").ForeignColumn("ContainerDbGuid")
-            .ToTable("Player").PrimaryColumn("DbGuid");
+            .ToTable("Player").PrimaryColumn("DbGuid")
+            .OnDelete(Rule.Cascade);
         
         Create.Table("Item")
             .WithColumn("DbGuid").AsInt64().Unique().NotNullable().PrimaryKey()
@@ -60,15 +64,18 @@ public class InitializeDatabase : Migration {
         
         Create.ForeignKey()
             .FromTable("Item").ForeignColumn("ContainerDbGuid")
-            .ToTable("Player").PrimaryColumn("DbGuid");
+            .ToTable("Player").PrimaryColumn("DbGuid")
+            .OnDelete(Rule.Cascade);
         
         Create.ForeignKey()
             .FromTable("Item").ForeignColumn("ContainerDbGuid")
-            .ToTable("Avatar").PrimaryColumn("DbGuid");
+            .ToTable("Avatar").PrimaryColumn("DbGuid")
+            .OnDelete(Rule.Cascade);
         
         Create.ForeignKey()
             .FromTable("Item").ForeignColumn("ContainerDbGuid")
-            .ToTable("TeamUp").PrimaryColumn("DbGuid");
+            .ToTable("TeamUp").PrimaryColumn("DbGuid")
+            .OnDelete(Rule.Cascade);
         
         Create.Table("ControlledEntity")
             .WithColumn("DbGuid").AsInt64().Unique().NotNullable().PrimaryKey()
@@ -80,7 +87,8 @@ public class InitializeDatabase : Migration {
         
         Create.ForeignKey()
             .FromTable("ControlledEntity").ForeignColumn("ContainerDbGuid")
-            .ToTable("Avatar").PrimaryColumn("DbGuid");
+            .ToTable("Avatar").PrimaryColumn("DbGuid")
+            .OnDelete(Rule.Cascade);
 
         Create.Index()
             .OnTable("Avatar").OnColumn("ContainerDbGuid");
@@ -97,6 +105,39 @@ public class InitializeDatabase : Migration {
 
     public override void Down()
     {
-        throw new NotImplementedException();
+        Delete.ForeignKey()
+            .FromTable("ControlledEntity").ForeignColumn("ContainerDbGuid")
+            .ToTable("Avatar").PrimaryColumn("DbGuid");
+        
+        Delete.ForeignKey()
+            .FromTable("Item").ForeignColumn("ContainerDbGuid")
+            .ToTable("Player").PrimaryColumn("DbGuid");
+        
+        Delete.ForeignKey()
+            .FromTable("Item").ForeignColumn("ContainerDbGuid")
+            .ToTable("Avatar").PrimaryColumn("DbGuid");
+        
+        Delete.ForeignKey()
+            .FromTable("Item").ForeignColumn("ContainerDbGuid")
+            .ToTable("TeamUp").PrimaryColumn("DbGuid");
+        
+        Delete.ForeignKey()
+            .FromTable("TeamUp").ForeignColumn("ContainerDbGuid")
+            .ToTable("Player").PrimaryColumn("DbGuid");
+        
+        Delete.ForeignKey()
+            .FromTable("Avatar").ForeignColumn("ContainerDbGuid")
+            .ToTable("Player").PrimaryColumn("DbGuid");
+        
+        Delete.ForeignKey()
+            .FromTable("Player").ForeignColumn("DbGuid")
+            .ToTable("Account").PrimaryColumn("Id");
+        
+        Delete.Table("ControlledEntity");
+        Delete.Table("Item");
+        Delete.Table("TeamUp");
+        Delete.Table("Avatar");
+        Delete.Table("Player");
+        Delete.Table("Account");
     }
 }
