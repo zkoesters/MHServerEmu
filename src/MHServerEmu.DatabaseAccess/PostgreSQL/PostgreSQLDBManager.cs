@@ -260,7 +260,7 @@ public class PostgreSQLDBManager : IDBManager
         }
         catch (Exception e)
         {
-            _logger.Warn($"DoSavePlayerData(): SQLite error for account [{account}]: {e.Message}");
+            _logger.Warn($"DoSavePlayerData(): PostgreSQL error for account [{account}]: {e.Message}");
             transaction.Rollback();
             return false;
         }
