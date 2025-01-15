@@ -15,7 +15,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL;
 public class PostgreSQLDBManager : IDBManager
 {
     private const int NumPlayerDataWriteAttempts = 3; // Number of write attempts to do when saving player data
-    private const int NumTestAccounts = 5;              // Number of test accounts to create for new database files
+    private const int NumTestAccounts = 5; // Number of test accounts to create for new database files
 
     private static readonly Logger _logger = LogManager.CreateLogger();
 
@@ -50,7 +50,7 @@ public class PostgreSQLDBManager : IDBManager
     {
         using var connection = GetConnection();
         var accounts = connection.Query<DBAccount>(
-            "SELECT Id, Email, PlayerName, PasswordHash, Salt, UserLevel, Flags FROM Account WHERE Email = @Email",
+            "SELECT id, email, playername, passwordhash, salt, userlevel, flags FROM account WHERE email = @Email",
             new { Email = email });
         account = accounts.FirstOrDefault();
         return account != null;
@@ -60,7 +60,7 @@ public class PostgreSQLDBManager : IDBManager
     {
         using var connection = GetConnection();
         var results = connection.Query<string>(
-            "SELECT PlayerName FROM Account WHERE LOWER(PlayerName) = LOWER(@PlayerName)",
+            "SELECT playername FROM account WHERE LOWER(playername) = LOWER(@PlayerName)",
             new { PlayerName = playerName });
         return results.Any();
     }
@@ -73,7 +73,7 @@ public class PostgreSQLDBManager : IDBManager
         try
         {
             connection.Execute(
-                "INSERT INTO Account (Id, Email, PlayerName, PasswordHash, Salt, UserLevel, Flags) VALUES (@Id, @Email, @PlayerName, @PasswordHash, @Salt, @UserLevel, @Flags)",
+                "INSERT INTO account (id, email, playername, passwordhash, salt, userlevel, flags) VALUES (@Id, @Email, @PlayerName, @PasswordHash, @Salt, @UserLevel, @Flags)",
                 account, transaction);
             transaction.Commit();
             return true;
@@ -94,14 +94,14 @@ public class PostgreSQLDBManager : IDBManager
         try
         {
             connection.Execute(
-                @"UPDATE Account
-                        SET Email = @Email,
-                            PlayerName = @PlayerName,
-                            PasswordHash = @PasswordHash,
-                            Salt = @Salt,
-                            UserLevel = @UserLevel,
-                            Flags = @Flags
-                        WHERE Id = @Id",
+                @"UPDATE account
+                        SET email = @Email,
+                            playername = @PlayerName,
+                            passwordhash = @PasswordHash,
+                            salt = @Salt,
+                            userlevel = @UserLevel,
+                            flags = @Flags
+                        WHERE id = @Id",
                 account, transaction);
             transaction.Commit();
             return true;
@@ -122,7 +122,7 @@ public class PostgreSQLDBManager : IDBManager
 
         using var connection = GetConnection();
         var players =
-            connection.Query<DBPlayer>("SELECT * FROM Player WHERE DbGuid = @DbGuid", new { DbGuid = account.Id });
+            connection.Query<DBPlayer>("SELECT * FROM player WHERE dbguid = @DbGuid", new { DbGuid = account.Id });
         account.Player = players.FirstOrDefault();
 
         if (account.Player == null)
@@ -162,24 +162,21 @@ public class PostgreSQLDBManager : IDBManager
 
         return _logger.WarnReturn(false, $"SavePlayerData(): Failed to write player data for account [{account}]");
     }
-    
+
     private NpgsqlConnection GetConnection()
     {
         NpgsqlConnection connection = new(_connectionString);
         connection.Open();
         return connection;
     }
-    
+
     private void InitializeDatabase()
     {
         var serviceProvider = new ServiceCollection()
             .AddFluentMigratorCore()
             .ConfigureRunner(rb => rb
                 .AddPostgres()
-                .ConfigureGlobalProcessorOptions(options =>
-                {
-                    options.ProviderSwitches = "Force Quote=false";
-                })
+                .ConfigureGlobalProcessorOptions(options => { options.ProviderSwitches = "Force Quote=false"; })
                 .WithGlobalConnectionString(_connectionString)
                 .ScanIn(typeof(IMigrationsMarker).Assembly).For.Migrations())
             .AddLogging(lb => lb.AddFluentMigratorConsole())
@@ -188,9 +185,9 @@ public class PostgreSQLDBManager : IDBManager
         // Run the migrations
         using var scope = serviceProvider.CreateScope();
         var runner = scope.ServiceProvider.GetRequiredService<IMigrationRunner>();
-        
+
         var isFirstRun = !runner.HasMigrationsApplied();
-        
+
         runner.MigrateUp();
 
         if (isFirstRun)
@@ -198,7 +195,7 @@ public class PostgreSQLDBManager : IDBManager
             CreateTestAccounts(NumTestAccounts);
         }
     }
-    
+
     private void CreateTestAccounts(int numAccounts)
     {
         for (int i = 0; i < numAccounts; i++)
@@ -223,15 +220,15 @@ public class PostgreSQLDBManager : IDBManager
             // Update player entity
             if (account.Player != null)
             {
-                connection.Execute("INSERT INTO Player (DbGuid) VALUES (@DbGuid) ON CONFLICT DO NOTHING",
-                    account.Player,
+                connection.Execute("INSERT INTO player (dbguid) VALUES (@DbGuid) ON CONFLICT DO NOTHING",
+                    new { account.Player.DbGuid },
                     transaction);
-                connection.Execute(@"UPDATE Player
-                                           SET ArchiveData = @ArchiveData,
-                                               StartTarget = @StartTarget,
-                                               StartTargetRegionOverride = @StartTargetRegionOverride,
-                                               AOIVolume = @AOIVolume
-                                           WHERE DbGuid = @DbGuid",
+                connection.Execute(@"UPDATE player
+                                           SET archivedata = @ArchiveData,
+                                               starttarget = @StartTarget,
+                                               starttargetregionoverride = @StartTargetRegionOverride,
+                                               aoivolume = @AOIVolume
+                                           WHERE dbguid = @DbGuid",
                     account.Player, transaction);
             }
             else
@@ -240,20 +237,20 @@ public class PostgreSQLDBManager : IDBManager
             }
 
             // Update inventory entities
-            UpdateEntityTable(connection, transaction, "Avatar", account.Id, account.Avatars);
-            UpdateEntityTable(connection, transaction, "TeamUp", account.Id, account.TeamUps);
-            UpdateEntityTable(connection, transaction, "Item", account.Id, account.Items);
+            UpdateEntityTable(connection, transaction, "avatar", account.Id, account.Avatars);
+            UpdateEntityTable(connection, transaction, "teamup", account.Id, account.TeamUps);
+            UpdateEntityTable(connection, transaction, "item", account.Id, account.Items);
 
             foreach (var dbGuid in account.Avatars.Select(x => x.DbGuid))
             {
-                UpdateEntityTable(connection, transaction, "Item", dbGuid, account.Items);
-                UpdateEntityTable(connection, transaction, "ControlledEntity", dbGuid,
+                UpdateEntityTable(connection, transaction, "item", dbGuid, account.Items);
+                UpdateEntityTable(connection, transaction, "controlledentity", dbGuid,
                     account.ControlledEntities);
             }
 
             foreach (var teamUp in account.TeamUps)
             {
-                UpdateEntityTable(connection, transaction, "Item", teamUp.DbGuid, account.Items);
+                UpdateEntityTable(connection, transaction, "item", teamUp.DbGuid, account.Items);
             }
 
             transaction.Commit();
@@ -268,54 +265,56 @@ public class PostgreSQLDBManager : IDBManager
         }
     }
 
-    private IEnumerable<DBEntity> LoadEntitiesFromTable(NpgsqlConnection connection, string tableName, long containerDbGuid)
+    private IEnumerable<DBEntity> LoadEntitiesFromTable(NpgsqlConnection connection, string tableName,
+        long containerDbGuid)
     {
-        return connection.Query<DBEntity>($"SELECT * FROM {tableName} WHERE ContainerDbGuid = @ContainerDbGuid",
+        return connection.Query<DBEntity>($"SELECT * FROM {tableName} WHERE containerdbguid = @ContainerDbGuid",
             new { ContainerDbGuid = containerDbGuid });
     }
 
     private void UpdateEntityTable(NpgsqlConnection connection, IDbTransaction transaction, string tableName,
         long containerDbGuid, DBEntityCollection dbEntityCollection)
     {
-        var @params = new { ContainerDbGuid = containerDbGuid };
-
         // Delete items that no longer belong to this account
         var storedEntities = connection.Query<long>(
-            $"SELECT DbGuid FROM {tableName} WHERE ContainerDbGuid = @ContainerDbGuid", @params, transaction);
+            $"SELECT DbGuid FROM {tableName} WHERE containerdbguid = @ContainerDbGuid",
+            new { ContainerDbGuid = containerDbGuid }, transaction);
         var entitiesToDelete = storedEntities.Except(dbEntityCollection.Guids);
 
         var toDelete = entitiesToDelete as long[] ?? entitiesToDelete.ToArray();
         if (toDelete.Length != 0)
         {
-            connection.Execute($"DELETE FROM {tableName} WHERE DbGuid IN @DbGuids", new { DbGuids = toDelete },
+            connection.Execute($"DELETE FROM {tableName} WHERE dbguid IN @DbGuids", new { DbGuids = toDelete },
                 transaction);
         }
 
         // Insert and update
         var entries = dbEntityCollection.GetEntriesForContainer(containerDbGuid);
 
-        if (!entries.Any())
+        var dbEntities = entries as DBEntity[] ?? entries.ToArray();
+        if (dbEntities.Length == 0)
             return;
 
-        foreach (var entry in entries)
+        foreach (var entry in dbEntities)
         {
-            connection.Execute($"INSERT INTO {tableName} (DbGuid) VALUES (@DbGuid) ON CONFLICT DO NOTHING",
-                entry.DbGuid, transaction);
-            connection.Execute(@$"UPDATE {tableName}
-                                     SET ContainerDbGuid = @ContainerDbGuid,
-                                         InventoryProtoGuid = @InventoryProtoGuid,
-                                         Slot = @Slot,
-                                         EntityProtoGuid = @EntityProtoGuid,
-                                         ArchiveData = @ArchiveData
-                                     WHERE DbGuid = @DbGuid",
+            connection.Execute(
+                $"""
+                 INSERT INTO {tableName} (dbguid, containerdbguid, inventoryprotoguid, slot, entityprotoguid, archivedata)
+                                          VALUES (@DbGuid, @ContainerDbGuid, @InventoryProtoGuid, @Slot, @EntityProtoGuid, @ArchiveData)
+                                        ON CONFLICT (dbguid) DO UPDATE SET containerdbguid = @ContainerDbGuid,
+                                                                           inventoryprotoguid = @InventoryProtoGuid,
+                                                                           slot = @Slot,
+                                                                           entityprotoguid = @EntityProtoGuid,
+                                                                           archivedata = @ArchiveData
+                 """,
                 new
                 {
+                    entry.DbGuid,
                     entry.ContainerDbGuid,
                     entry.InventoryProtoGuid,
                     Slot = (int)entry.Slot,
                     entry.EntityProtoGuid,
-                    entry.ArchiveData,
-                    entry.DbGuid
+                    entry.ArchiveData
                 }, transaction);
         }
     }
