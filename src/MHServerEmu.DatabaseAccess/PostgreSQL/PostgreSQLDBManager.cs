@@ -296,16 +296,27 @@ public class PostgreSQLDBManager : IDBManager
 
         if (!entries.Any())
             return;
-        
-        connection.Execute($"INSERT INTO {tableName} (DbGuid) VALUES (@DbGuid) ON CONFLICT DO NOTHING",
-            entries, transaction);
-        connection.Execute(@$"UPDATE {tableName}
+
+        foreach (var entry in entries)
+        {
+            connection.Execute($"INSERT INTO {tableName} (DbGuid) VALUES (@DbGuid) ON CONFLICT DO NOTHING",
+                entry.DbGuid, transaction);
+            connection.Execute(@$"UPDATE {tableName}
                                      SET ContainerDbGuid = @ContainerDbGuid,
                                          InventoryProtoGuid = @InventoryProtoGuid,
-                                         Slot = @Slot::int,
+                                         Slot = @Slot,
                                          EntityProtoGuid = @EntityProtoGuid,
                                          ArchiveData = @ArchiveData
                                      WHERE DbGuid = @DbGuid",
-            entries, transaction);
+                new
+                {
+                    entry.ContainerDbGuid,
+                    entry.InventoryProtoGuid,
+                    Slot = (int)entry.Slot,
+                    entry.EntityProtoGuid,
+                    entry.ArchiveData,
+                    entry.DbGuid
+                }, transaction);
+        }
     }
 }
