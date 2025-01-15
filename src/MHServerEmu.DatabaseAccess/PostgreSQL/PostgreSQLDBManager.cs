@@ -279,13 +279,22 @@ public class PostgreSQLDBManager : IDBManager
 
         // Delete items that no longer belong to this account
         var storedEntities = connection.Query<long>(
-            $"SELECT DbGuid FROM {tableName} WHERE ContainerDbGuid = @ContainerDbGuid", @params);
+            $"SELECT DbGuid FROM {tableName} WHERE ContainerDbGuid = @ContainerDbGuid", @params, transaction);
         var entitiesToDelete = storedEntities.Except(dbEntityCollection.Guids);
-        connection.Execute($"DELETE FROM {tableName} WHERE DbGuid IN ({string.Join(',', entitiesToDelete)})");
+
+        var toDelete = entitiesToDelete as long[] ?? entitiesToDelete.ToArray();
+        if (toDelete.Length != 0)
+        {
+            connection.Execute($"DELETE FROM {tableName} WHERE DbGuid IN @DbGuids", new { DbGuids = toDelete },
+                transaction);
+        }
 
         // Insert and update
         var entries = dbEntityCollection.GetEntriesForContainer(containerDbGuid);
 
+        if (!entries.Any())
+            return;
+        
         connection.Execute($"INSERT INTO {tableName} (DbGuid) VALUES (@DbGuid) ON CONFLICT DO NOTHING",
             entries, transaction);
         connection.Execute(@$"UPDATE {tableName}
