@@ -302,7 +302,7 @@ public class PostgreSQLDBManager : IDBManager
         connection.Execute(@$"UPDATE {tableName}
                                      SET ContainerDbGuid = @ContainerDbGuid,
                                          InventoryProtoGuid = @InventoryProtoGuid,
-                                         Slot = @Slot,
+                                         Slot = @Slot::int,
                                          EntityProtoGuid = @EntityProtoGuid,
                                          ArchiveData = @ArchiveData
                                      WHERE DbGuid = @DbGuid",
