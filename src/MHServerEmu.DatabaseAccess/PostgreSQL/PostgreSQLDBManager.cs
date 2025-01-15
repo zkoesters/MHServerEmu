@@ -6,6 +6,7 @@ using MHServerEmu.Core.Logging;
 using MHServerEmu.DatabaseAccess.Extensions;
 using MHServerEmu.DatabaseAccess.Migrations;
 using MHServerEmu.DatabaseAccess.Models;
+using MHServerEmu.DatabaseAccess.TypeHandlers;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 
@@ -28,6 +29,7 @@ public class PostgreSQLDBManager : IDBManager
 
     public bool Initialize()
     {
+        SqlMapper.AddTypeHandler(new UIntTypeHandler());
         var config = ConfigManager.Instance.GetConfig<PostgreSQLDBManagerConfig>();
 
         _connectionString =
