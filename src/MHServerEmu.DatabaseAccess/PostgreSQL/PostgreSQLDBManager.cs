@@ -94,14 +94,16 @@ public class PostgreSQLDBManager : IDBManager
         try
         {
             connection.Execute(
-                @"UPDATE account
-                        SET email = @Email,
-                            playername = @PlayerName,
-                            passwordhash = @PasswordHash,
-                            salt = @Salt,
-                            userlevel = @UserLevel,
-                            flags = @Flags
-                        WHERE id = @Id",
+                """
+                UPDATE account
+                SET email        = @Email,
+                    playername   = @PlayerName,
+                    passwordhash = @PasswordHash,
+                    salt         = @Salt,
+                    userlevel    = @UserLevel,
+                    flags        = @Flags
+                WHERE id = @Id
+                """,
                 account, transaction);
             transaction.Commit();
             return true;
@@ -223,12 +225,14 @@ public class PostgreSQLDBManager : IDBManager
                 connection.Execute("INSERT INTO player (dbguid) VALUES (@DbGuid) ON CONFLICT DO NOTHING",
                     new { account.Player.DbGuid },
                     transaction);
-                connection.Execute(@"UPDATE player
-                                           SET archivedata = @ArchiveData,
-                                               starttarget = @StartTarget,
-                                               starttargetregionoverride = @StartTargetRegionOverride,
-                                               aoivolume = @AOIVolume
-                                           WHERE dbguid = @DbGuid",
+                connection.Execute("""
+                                   UPDATE player
+                                   SET archivedata               = @ArchiveData,
+                                       starttarget               = @StartTarget,
+                                       starttargetregionoverride = @StartTargetRegionOverride,
+                                       aoivolume                 = @AOIVolume
+                                   WHERE dbguid = @DbGuid
+                                   """,
                     account.Player, transaction);
             }
             else
@@ -277,14 +281,14 @@ public class PostgreSQLDBManager : IDBManager
     {
         // Delete items that no longer belong to this account
         var storedEntities = connection.Query<long>(
-            $"SELECT DbGuid FROM {tableName} WHERE containerdbguid = @ContainerDbGuid",
+            $"SELECT dbguid FROM {tableName} WHERE containerdbguid = @ContainerDbGuid",
             new { ContainerDbGuid = containerDbGuid }, transaction);
         var entitiesToDelete = storedEntities.Except(dbEntityCollection.Guids);
 
         var toDelete = entitiesToDelete as long[] ?? entitiesToDelete.ToArray();
         if (toDelete.Length != 0)
         {
-            connection.Execute($"DELETE FROM {tableName} WHERE dbguid IN @DbGuids", new { DbGuids = toDelete },
+            connection.Execute($"DELETE FROM {tableName} WHERE dbguid = ANY(@DbGuids)", new { DbGuids = toDelete },
                 transaction);
         }
 
@@ -299,13 +303,14 @@ public class PostgreSQLDBManager : IDBManager
         {
             connection.Execute(
                 $"""
-                 INSERT INTO {tableName} (dbguid, containerdbguid, inventoryprotoguid, slot, entityprotoguid, archivedata)
-                                          VALUES (@DbGuid, @ContainerDbGuid, @InventoryProtoGuid, @Slot, @EntityProtoGuid, @ArchiveData)
-                                        ON CONFLICT (dbguid) DO UPDATE SET containerdbguid = @ContainerDbGuid,
-                                                                           inventoryprotoguid = @InventoryProtoGuid,
-                                                                           slot = @Slot,
-                                                                           entityprotoguid = @EntityProtoGuid,
-                                                                           archivedata = @ArchiveData
+                 INSERT INTO {tableName} (dbguid, containerdbguid, inventoryprotoguid, slot, entityprotoguid,
+                                                            archivedata)
+                 VALUES (@DbGuid, @ContainerDbGuid, @InventoryProtoGuid, @Slot, @EntityProtoGuid, @ArchiveData)
+                 ON CONFLICT (dbguid) DO UPDATE SET containerdbguid = @ContainerDbGuid,
+                                                    inventoryprotoguid = @InventoryProtoGuid,
+                                                    slot = @Slot,
+                                                    entityprotoguid = @EntityProtoGuid,
+                                                    archivedata = @ArchiveData
                  """,
                 new
                 {
