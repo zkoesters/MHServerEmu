@@ -208,17 +208,70 @@ namespace MHServerEmu.DatabaseAccess.SQLite
             {
                 var runner = scope.ServiceProvider.GetRequiredService<IMigrationRunner>();
                 using SQLiteConnection connection = GetConnection();
-                if (GetSchemaVersion(connection) == 2 && !runner.HasMigrationsApplied())
+                
+                var userVersion = GetSchemaVersion(connection);
+                var isSchemaEmpty = !runner.Processor.TableExists(null, "Account");
+                if (!runner.HasMigrationsApplied())
                 {
-                    runner.MigrateUp(0);
-                    connection.Execute(
-                        "INSERT OR IGNORE INTO VersionInfo (Version, AppliedOn, Description) VALUES (@Version, @AppliedOn, @Description)",
-                        new
-                        {
-                            Version = 1736695246,
-                            AppliedOn = DateTime.Now,
-                            Description = "InitializeDatabase"
-                        });
+                    runner.MigrateUp(-1);
+                    
+                    if (!isSchemaEmpty && userVersion == 0)
+                    {
+                        connection.Execute(
+                            "INSERT OR IGNORE INTO VersionInfo (Version, AppliedOn, Description) VALUES (@Version, @AppliedOn, @Description)",
+                            new
+                            {
+                                Version = 1710414120,
+                                AppliedOn = DateTime.Now,
+                                Description = "InitializeDatabase"
+                            });
+                    }
+                    if (userVersion == 1)
+                    {
+                        connection.Execute(
+                            "INSERT OR IGNORE INTO VersionInfo (Version, AppliedOn, Description) VALUES (@Version, @AppliedOn, @Description)",
+                            new
+                            {
+                                Version = 1710414120,
+                                AppliedOn = DateTime.Now,
+                                Description = "InitializeDatabase"
+                            });
+                        connection.Execute(
+                            "INSERT OR IGNORE INTO VersionInfo (Version, AppliedOn, Description) VALUES (@Version, @AppliedOn, @Description)",
+                            new
+                            {
+                                Version = 1724920380,
+                                AppliedOn = DateTime.Now,
+                                Description = "AddEntityTables"
+                            });
+                    }
+                    if (userVersion == 2)
+                    {
+                        connection.Execute(
+                            "INSERT OR IGNORE INTO VersionInfo (Version, AppliedOn, Description) VALUES (@Version, @AppliedOn, @Description)",
+                            new
+                            {
+                                Version = 1710414120,
+                                AppliedOn = DateTime.Now,
+                                Description = "InitializeDatabase"
+                            });
+                        connection.Execute(
+                            "INSERT OR IGNORE INTO VersionInfo (Version, AppliedOn, Description) VALUES (@Version, @AppliedOn, @Description)",
+                            new
+                            {
+                                Version = 1724920380,
+                                AppliedOn = DateTime.Now,
+                                Description = "AddEntityTables"
+                            });
+                        connection.Execute(
+                            "INSERT OR IGNORE INTO VersionInfo (Version, AppliedOn, Description) VALUES (@Version, @AppliedOn, @Description)",
+                            new
+                            {
+                                Version = 1726107240,
+                                AppliedOn = DateTime.Now,
+                                Description = "AccountFlagsColumn"
+                            });
+                    }
                 }
             }
 
