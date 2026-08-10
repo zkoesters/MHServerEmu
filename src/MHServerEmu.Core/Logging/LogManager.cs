@@ -59,7 +59,17 @@ namespace MHServerEmu.Core.Logging
         /// </summary>
         public static bool AttachTarget(LogTarget target)
         {
-            return _targets.Add(target);
+            lock (_targets)
+                return _targets.Add(target);
+        }
+
+        /// <summary>
+        /// Detaches a <see cref="LogTarget"/> from log message routing. Returns <see langword="true"/> if successful.
+        /// </summary>
+        public static bool DetachTarget(LogTarget target)
+        {
+            lock (_targets)
+                return _targets.Remove(target);
         }
 
         /// <summary>
@@ -67,48 +77,54 @@ namespace MHServerEmu.Core.Logging
         /// </summary>
         internal static Iterator IterateTargets(in LogMessage message)
         {
-            return new(message.Level, message.Channels);
+            LogTarget[] targets;
+            lock (_targets)
+                targets = _targets.ToArray();
+
+            return new(message.Level, message.Channels, targets);
         }
 
         internal readonly struct Iterator
         {
             private readonly LoggingLevel _loggingLevel;
             private readonly LogChannels _channels;
+            private readonly LogTarget[] _targets;
 
-            public Iterator(LoggingLevel loggingLevel, LogChannels channels)
+            public Iterator(LoggingLevel loggingLevel, LogChannels channels, LogTarget[] targets)
             {
                 _loggingLevel = loggingLevel;
                 _channels = channels;
+                _targets = targets;
             }
 
             public readonly Enumerator GetEnumerator()
             {
-                return new(_loggingLevel, _channels);
+                return new(_loggingLevel, _channels, _targets);
             }
 
             public struct Enumerator : IEnumerator<LogTarget>
             {
                 private readonly LoggingLevel _loggingLevel;
                 private readonly LogChannels _channels;
-
-                private HashSet<LogTarget>.Enumerator _targetEnumerator;
+                private readonly LogTarget[] _targets;
+                private int _index;
 
                 public LogTarget Current { get; private set; }
                 object IEnumerator.Current { get => Current; }
 
-                public Enumerator(LoggingLevel loggingLevel, LogChannels channels)
+                public Enumerator(LoggingLevel loggingLevel, LogChannels channels, LogTarget[] targets)
                 {
                     _loggingLevel = loggingLevel;
                     _channels = channels;
-
-                    _targetEnumerator = _targets.GetEnumerator();
+                    _targets = targets;
+                    _index = -1;
                 }
 
                 public bool MoveNext()
                 {
-                    while (_targetEnumerator.MoveNext())
+                    while (++_index < _targets.Length)
                     {
-                        LogTarget target = _targetEnumerator.Current;
+                        LogTarget target = _targets[_index];
 
                         if (_loggingLevel < target.MinimumLevel || _loggingLevel > target.MaximumLevel)
                             continue;
@@ -125,12 +141,11 @@ namespace MHServerEmu.Core.Logging
 
                 public void Reset()
                 {
-                    _targetEnumerator = _targets.GetEnumerator();
+                    _index = -1;
                 }
 
                 public void Dispose()
                 {
-                    _targetEnumerator.Dispose();
                 }
             }
         }

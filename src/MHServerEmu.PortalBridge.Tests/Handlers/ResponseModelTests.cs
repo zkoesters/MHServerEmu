@@ -235,11 +235,15 @@ namespace MHServerEmu.PortalBridge.Tests.Handlers
                 DateTimeOffset.UnixEpoch);
             CapturingLogTarget target = new();
             bool loggingEnabled = LogManager.Enabled;
+            bool targetAttached = false;
+            bool targetDetached = false;
             LogManager.Enabled = true;
-            LogManager.AttachTarget(target);
 
             try
             {
+                targetAttached = LogManager.AttachTarget(target);
+                Assert.True(targetAttached);
+
                 using HttpClient client = new();
                 using HttpRequestMessage request = TestRequestFactory.CreateSignedGetRequest(service.Settings.ListenUrl,
                     HealthWebHandler.Path + "?value=" + queryValue, "31112233445566778899aabbccddeeff");
@@ -252,9 +256,15 @@ namespace MHServerEmu.PortalBridge.Tests.Handlers
             }
             finally
             {
+                if (targetAttached)
+                    targetDetached = LogManager.DetachTarget(target);
+
                 LogManager.Enabled = loggingEnabled;
                 service.Stop();
             }
+
+            Assert.True(targetDetached);
+            Assert.False(LogManager.DetachTarget(target));
         }
 
         [Fact]
