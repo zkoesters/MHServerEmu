@@ -64,7 +64,7 @@ namespace MHServerEmu.Core.Network.Web
             _cts = cts;
 
             IsRunning = true;
-            Task.Run(() => HandleRequestsAsync(listener, cts.Token));
+            Task.Run(() => HandleRequestsAsync(listener, cts, cts.Token));
             return true;
         }
 
@@ -146,7 +146,10 @@ namespace MHServerEmu.Core.Network.Web
 
             IWebExceptionWriter exceptionWriter = Settings.ExceptionWriter;
             if (exceptionWriter == null)
+            {
+                Logger.Warn($"Error handling {context}: {exception}");
                 return;
+            }
 
             try
             {
@@ -162,7 +165,7 @@ namespace MHServerEmu.Core.Network.Web
         /// <summary>
         /// Handles incoming requests asynchronously.
         /// </summary>
-        private async Task HandleRequestsAsync(HttpListener listener, CancellationToken cancellationToken)
+        private async Task HandleRequestsAsync(HttpListener listener, CancellationTokenSource cts, CancellationToken cancellationToken)
         {
             Logger.Info($"{this} is listening on {Settings.ListenUrl}...");
 
@@ -194,7 +197,6 @@ namespace MHServerEmu.Core.Network.Web
                     }
                     catch (Exception e)
                     {
-                        Logger.Warn($"Error handling {requestContext}: {e}");
                         await WriteExceptionAsync(requestContext, e);
                     }
                     finally
@@ -214,7 +216,21 @@ namespace MHServerEmu.Core.Network.Web
             }
             finally
             {
-                IsRunning = false;
+                if (_listener == listener && _cts == cts)
+                {
+                    _listener = null;
+                    _cts = null;
+                    IsRunning = false;
+
+                    try
+                    {
+                        listener.Close();
+                    }
+                    finally
+                    {
+                        cts.Dispose();
+                    }
+                }
             }
         }
 
