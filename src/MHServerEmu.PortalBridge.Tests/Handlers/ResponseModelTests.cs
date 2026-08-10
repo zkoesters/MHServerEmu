@@ -162,7 +162,7 @@ namespace MHServerEmu.PortalBridge.Tests.Handlers
                 Assert.Equal(new[] { "code", "correlationId" }, json.RootElement.EnumerateObject().Select(property => property.Name));
                 Assert.Equal("bridge_authentication_failed", json.RootElement.GetProperty("code").GetString());
                 Assert.True(Guid.TryParse(json.RootElement.GetProperty("correlationId").GetString(), out Guid correlationId));
-                Assert.NotEqual(operationId, correlationId);
+                Assert.Equal(operationId, correlationId);
                 Assert.DoesNotContain("Exception", body, StringComparison.Ordinal);
             }
             finally
@@ -254,6 +254,8 @@ namespace MHServerEmu.PortalBridge.Tests.Handlers
                 Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
                 Assert.Contains(HealthWebHandler.Path, message.Message, StringComparison.Ordinal);
                 Assert.DoesNotContain(queryValue, message.Message, StringComparison.Ordinal);
+                Assert.Contains("correlationId=4b56bb3d-8b6e-4be4-a754-2f99ab40f26a", message.Message,
+                    StringComparison.Ordinal);
             }
             finally
             {

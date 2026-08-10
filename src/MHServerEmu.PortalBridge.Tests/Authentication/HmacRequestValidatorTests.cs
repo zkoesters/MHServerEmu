@@ -1,4 +1,6 @@
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using MHServerEmu.PortalBridge.Authentication;
 
 namespace MHServerEmu.PortalBridge.Tests.Authentication
@@ -29,7 +31,7 @@ namespace MHServerEmu.PortalBridge.Tests.Authentication
         }
 
         [Fact]
-        public void TryValidate_ValidRequest_AcceptsAndReturnsGeneratedCorrelationId()
+        public void TryValidate_ValidRequest_AcceptsAndReturnsOperationIdAsCorrelationId()
         {
             Guid operationId = Guid.Parse("4b56bb3d-8b6e-4be4-a754-2f99ab40f26a");
             PortalBridgeRequest request = TestRequestFactory.Create(operationId: operationId);
@@ -38,12 +40,11 @@ namespace MHServerEmu.PortalBridge.Tests.Authentication
             bool result = validator.TryValidate(request, out Guid correlationId);
 
             Assert.True(result);
-            Assert.NotEqual(Guid.Empty, correlationId);
-            Assert.NotEqual(operationId, correlationId);
+            Assert.Equal(operationId, correlationId);
         }
 
         [Fact]
-        public void TryValidate_OperationIdChangedAfterSigning_AcceptsAndReturnsGeneratedCorrelationId()
+        public void TryValidate_OperationIdChangedAfterSigning_AcceptsAndReturnsOperationIdAsCorrelationId()
         {
             Guid operationId = Guid.Parse("1b56bb3d-8b6e-4be4-a754-2f99ab40f26a");
             PortalBridgeRequest request = TestRequestFactory.Create(mutateHeaders: headers =>
@@ -51,7 +52,7 @@ namespace MHServerEmu.PortalBridge.Tests.Authentication
             using HmacRequestValidator validator = TestRequestFactory.CreateValidator();
 
             Assert.True(validator.TryValidate(request, out Guid correlationId));
-            Assert.NotEqual(operationId, correlationId);
+            Assert.Equal(operationId, correlationId);
         }
 
         [Theory]
@@ -131,7 +132,6 @@ namespace MHServerEmu.PortalBridge.Tests.Authentication
         }
 
         [Theory]
-        [InlineData("get")]
         [InlineData("POST")]
         [InlineData("")]
         [InlineData(null)]
@@ -140,6 +140,35 @@ namespace MHServerEmu.PortalBridge.Tests.Authentication
             Dictionary<string, string[]> headers = TestRequestFactory.CreateSignedHeaders("GET", "/portal-bridge/v1/health",
                 TestRequestFactory.FixedNow.ToUnixTimeSeconds(), "00112233445566778899aabbccddeeff", Guid.NewGuid());
             PortalBridgeRequest request = new(method, "/portal-bridge/v1/health", false, 0, null, headers);
+            using HmacRequestValidator validator = TestRequestFactory.CreateValidator();
+
+            Assert.False(validator.TryValidate(request, out _));
+        }
+
+        [Fact]
+        public void TryValidate_LowercaseRequestMethodWithUppercaseSignature_Accepts()
+        {
+            Dictionary<string, string[]> headers = TestRequestFactory.CreateSignedHeaders("GET", "/portal-bridge/v1/health",
+                TestRequestFactory.FixedNow.ToUnixTimeSeconds(), "00112233445566778899aabbccddeeff", Guid.NewGuid());
+            PortalBridgeRequest request = new("get", "/portal-bridge/v1/health", false, 0, null, headers);
+            using HmacRequestValidator validator = TestRequestFactory.CreateValidator();
+
+            Assert.True(validator.TryValidate(request, out _));
+        }
+
+        [Fact]
+        public void TryValidate_LowercaseSignedMethod_Rejects()
+        {
+            Dictionary<string, string[]> headers = TestRequestFactory.CreateSignedHeaders("GET", "/portal-bridge/v1/health",
+                TestRequestFactory.FixedNow.ToUnixTimeSeconds(), "00112233445566778899aabbccddeeff", Guid.NewGuid());
+            string canonical = string.Join('\n', "get", "/portal-bridge/v1/health",
+                headers[HmacRequestValidator.TimestampHeader][0], headers[HmacRequestValidator.NonceHeader][0],
+                headers[HmacRequestValidator.BodyDigestHeader][0]);
+            headers[HmacRequestValidator.SignatureHeader] = new[]
+            {
+                Convert.ToHexString(HMACSHA256.HashData(TestRequestFactory.Key, Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant(),
+            };
+            PortalBridgeRequest request = new("get", "/portal-bridge/v1/health", false, 0, null, headers);
             using HmacRequestValidator validator = TestRequestFactory.CreateValidator();
 
             Assert.False(validator.TryValidate(request, out _));
@@ -230,7 +259,7 @@ namespace MHServerEmu.PortalBridge.Tests.Authentication
         }
 
         [Fact]
-        public void TryValidate_AfterDispose_RejectsWithGeneratedCorrelationId()
+        public void TryValidate_AfterDispose_RejectsWithOperationIdAsCorrelationId()
         {
             Guid operationId = Guid.Parse("4b56bb3d-8b6e-4be4-a754-2f99ab40f26a");
             PortalBridgeRequest request = TestRequestFactory.Create(operationId);
@@ -238,8 +267,7 @@ namespace MHServerEmu.PortalBridge.Tests.Authentication
             validator.Dispose();
 
             Assert.False(validator.TryValidate(request, out Guid correlationId));
-            Assert.NotEqual(Guid.Empty, correlationId);
-            Assert.NotEqual(operationId, correlationId);
+            Assert.Equal(operationId, correlationId);
         }
 
         public static IEnumerable<object[]> RequiredHeaders()

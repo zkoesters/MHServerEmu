@@ -43,11 +43,15 @@ namespace MHServerEmu.PortalBridge.Authentication
         public bool TryValidate(PortalBridgeRequest request, out Guid correlationId)
         {
             correlationId = Guid.NewGuid();
+            if (TryGetSingleValue(request, OperationIdHeader, out string operationId) &&
+                Guid.TryParseExact(operationId, "D", out Guid suppliedCorrelationId))
+                correlationId = suppliedCorrelationId;
+
             lock (_lock)
             {
                 if (_disposed)
                     return false;
-                if (request == null || string.IsNullOrEmpty(request.RawUrl))
+                if (request == null || string.IsNullOrEmpty(request.Method) || string.IsNullOrEmpty(request.RawUrl))
                     return false;
                 if (TryReadSingleHeaders(request, out HeaderValues headers) == false)
                     return false;
@@ -68,7 +72,7 @@ namespace MHServerEmu.PortalBridge.Authentication
                 if (timestamp < now - (long)ClockSkew.TotalSeconds || timestamp > now + (long)ClockSkew.TotalSeconds)
                     return false;
 
-                string canonical = string.Join('\n', request.Method, request.RawUrl, headers.Timestamp, headers.Nonce,
+                string canonical = string.Join('\n', request.Method.ToUpperInvariant(), request.RawUrl, headers.Timestamp, headers.Nonce,
                     headers.BodyDigest);
                 byte[] expected = HMACSHA256.HashData(_key, Encoding.UTF8.GetBytes(canonical));
                 byte[] supplied = Convert.FromHexString(headers.Signature);
