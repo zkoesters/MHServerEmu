@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <Platforms>x64</Platforms>
+    <Configurations>Debug;Release;Debug 1.48;Release 1.48;Debug 1.53;Release 1.53</Configurations>
+    <AssemblyVersion>1.0.2.0</AssemblyVersion>
+    <FileVersion>$(AssemblyVersion)</FileVersion>
+    <InformationalVersion>$(AssemblyVersion)</InformationalVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <AssemblyMetadata Include="PortalBridgeUpstreamCommit" Value="7ae81f6ba8816ad86c156c44b3284a5f271aa61f" />
+    <ProjectReference Include="..\MHServerEmu.Core\MHServerEmu.Core.csproj" />
+  </ItemGroup>
+
+</Project>

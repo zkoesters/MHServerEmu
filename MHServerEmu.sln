@@ -27,6 +27,10 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "MHServerEmu.Core.Tests", "s
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MHServerEmu.Games.Tests", "src\MHServerEmu.Games.Tests\MHServerEmu.Games.Tests.csproj", "{3921B039-7911-49D4-9AE2-727168015157}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MHServerEmu.PortalBridge", "src\MHServerEmu.PortalBridge\MHServerEmu.PortalBridge.csproj", "{E741DAB8-7E67-4112-8208-6B878B1A6A0F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MHServerEmu.PortalBridge.Tests", "src\MHServerEmu.PortalBridge.Tests\MHServerEmu.PortalBridge.Tests.csproj", "{F3CAFDFF-7353-481D-BCA3-06C6E0F29AE0}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -81,6 +85,30 @@ Global
 		{3921B039-7911-49D4-9AE2-727168015157}.Debug|x64.Build.0 = Debug|x64
 		{3921B039-7911-49D4-9AE2-727168015157}.Release|x64.ActiveCfg = Release|x64
 		{3921B039-7911-49D4-9AE2-727168015157}.Release|x64.Build.0 = Release|x64
+		{E741DAB8-7E67-4112-8208-6B878B1A6A0F}.Debug 1.48|x64.ActiveCfg = Debug 1.48|x64
+		{E741DAB8-7E67-4112-8208-6B878B1A6A0F}.Debug 1.48|x64.Build.0 = Debug 1.48|x64
+		{E741DAB8-7E67-4112-8208-6B878B1A6A0F}.Debug 1.53|x64.ActiveCfg = Debug 1.53|x64
+		{E741DAB8-7E67-4112-8208-6B878B1A6A0F}.Debug 1.53|x64.Build.0 = Debug 1.53|x64
+		{E741DAB8-7E67-4112-8208-6B878B1A6A0F}.Debug|x64.ActiveCfg = Debug|x64
+		{E741DAB8-7E67-4112-8208-6B878B1A6A0F}.Debug|x64.Build.0 = Debug|x64
+		{E741DAB8-7E67-4112-8208-6B878B1A6A0F}.Release 1.48|x64.ActiveCfg = Release 1.48|x64
+		{E741DAB8-7E67-4112-8208-6B878B1A6A0F}.Release 1.48|x64.Build.0 = Release 1.48|x64
+		{E741DAB8-7E67-4112-8208-6B878B1A6A0F}.Release 1.53|x64.ActiveCfg = Release 1.53|x64
+		{E741DAB8-7E67-4112-8208-6B878B1A6A0F}.Release 1.53|x64.Build.0 = Release 1.53|x64
+		{E741DAB8-7E67-4112-8208-6B878B1A6A0F}.Release|x64.ActiveCfg = Release|x64
+		{E741DAB8-7E67-4112-8208-6B878B1A6A0F}.Release|x64.Build.0 = Release|x64
+		{F3CAFDFF-7353-481D-BCA3-06C6E0F29AE0}.Debug 1.48|x64.ActiveCfg = Debug 1.48|x64
+		{F3CAFDFF-7353-481D-BCA3-06C6E0F29AE0}.Debug 1.48|x64.Build.0 = Debug 1.48|x64
+		{F3CAFDFF-7353-481D-BCA3-06C6E0F29AE0}.Debug 1.53|x64.ActiveCfg = Debug 1.53|x64
+		{F3CAFDFF-7353-481D-BCA3-06C6E0F29AE0}.Debug 1.53|x64.Build.0 = Debug 1.53|x64
+		{F3CAFDFF-7353-481D-BCA3-06C6E0F29AE0}.Debug|x64.ActiveCfg = Debug|x64
+		{F3CAFDFF-7353-481D-BCA3-06C6E0F29AE0}.Debug|x64.Build.0 = Debug|x64
+		{F3CAFDFF-7353-481D-BCA3-06C6E0F29AE0}.Release 1.48|x64.ActiveCfg = Release 1.48|x64
+		{F3CAFDFF-7353-481D-BCA3-06C6E0F29AE0}.Release 1.48|x64.Build.0 = Release 1.48|x64
+		{F3CAFDFF-7353-481D-BCA3-06C6E0F29AE0}.Release 1.53|x64.ActiveCfg = Release 1.53|x64
+		{F3CAFDFF-7353-481D-BCA3-06C6E0F29AE0}.Release 1.53|x64.Build.0 = Release 1.53|x64
+		{F3CAFDFF-7353-481D-BCA3-06C6E0F29AE0}.Release|x64.ActiveCfg = Release|x64
+		{F3CAFDFF-7353-481D-BCA3-06C6E0F29AE0}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
