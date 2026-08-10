@@ -15,6 +15,19 @@ namespace MHServerEmu.Core.Helpers
 
         public static readonly string ServerRoot = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
         public static readonly string DataDirectory = Path.Combine(ServerRoot, "Data");
+        public static readonly string RuntimeDirectory = ResolveDirectory(
+            Environment.GetEnvironmentVariable("MHSERVEREMU_RUNTIME_DIRECTORY"),
+            ServerRoot);
+        public static readonly string LogsDirectory = Path.Combine(RuntimeDirectory, "Logs");
+        public static readonly string CrashReportsDirectory = Path.Combine(RuntimeDirectory, "CrashReports");
+
+        internal static string ResolveDirectory(string configuredDirectory, string fallbackDirectory)
+        {
+            string directory = string.IsNullOrWhiteSpace(configuredDirectory)
+                ? fallbackDirectory
+                : configuredDirectory;
+            return Path.GetFullPath(directory);
+        }
 
         /// <summary>
         /// Returns a path relative to server root directory.
@@ -80,11 +93,11 @@ namespace MHServerEmu.Core.Helpers
         }
 
         /// <summary>
-        /// Saves the provided <see cref="string"/> to a text file in the server root directory.
+        /// Saves the provided <see cref="string"/> to a text file in the runtime directory.
         /// </summary>
         public static void SaveTextFileToRoot(string fileName, string text)
         {
-            File.WriteAllText(Path.Combine(ServerRoot, fileName), text);
+            File.WriteAllText(Path.Combine(RuntimeDirectory, fileName), text);
         }
 
         /// <summary>

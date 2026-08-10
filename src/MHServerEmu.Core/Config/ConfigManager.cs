@@ -11,6 +11,10 @@ namespace MHServerEmu.Core.Config
         private readonly IniFile _iniFile;
         private readonly IniFile _overrideFile;
 
+        public static string ConfigDirectory { get; } = FileHelper.ResolveDirectory(
+            Environment.GetEnvironmentVariable("MHSERVEREMU_CONFIG_DIRECTORY"),
+            FileHelper.ServerRoot);
+
         /// <summary>
         /// Provides access to the <see cref="ConfigManager"/> instance.
         /// </summary>
@@ -21,10 +25,10 @@ namespace MHServerEmu.Core.Config
         /// </summary>
         private ConfigManager()
         {
-            string configPath = Path.Combine(FileHelper.ServerRoot, "Config.ini");
+            string configPath = Path.Combine(ConfigDirectory, "Config.ini");
             _iniFile = new(configPath);
 
-            string overridePath = Path.Combine(FileHelper.ServerRoot, "ConfigOverride.ini");
+            string overridePath = Path.Combine(ConfigDirectory, "ConfigOverride.ini");
             if (File.Exists(overridePath))
                 _overrideFile = new(overridePath);
             else
