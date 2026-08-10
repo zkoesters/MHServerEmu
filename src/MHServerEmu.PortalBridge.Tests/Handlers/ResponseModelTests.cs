@@ -10,6 +10,7 @@ using MHServerEmu.PortalBridge.Models;
 
 namespace MHServerEmu.PortalBridge.Tests.Handlers
 {
+    [Collection("PortalBridge logging")]
     public class ResponseModelTests
     {
         [Fact]

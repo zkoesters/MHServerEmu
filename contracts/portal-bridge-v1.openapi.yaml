@@ -1,0 +1,127 @@
+openapi: 3.1.0
+info:
+  title: MHServerEmu Portal Bridge
+  version: '1.0.0'
+servers:
+  - url: /portal-bridge/v1
+security:
+  - portalHmac: []
+paths:
+  /capabilities:
+    get:
+      operationId: getCapabilities
+      responses:
+        '200':
+          description: Bridge capabilities.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BridgeCapabilities'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /health:
+    get:
+      operationId: getHealth
+      responses:
+        '200':
+          description: Bridge health.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BridgeHealth'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+components:
+  securitySchemes:
+    portalHmac:
+      type: apiKey
+      in: header
+      name: X-Portal-Signature
+      description: HMAC-SHA-256 signature over the canonical request. The BFF-provided HmacSigningHandler supplies all headers centrally; callers never provide them.
+      x-required-headers:
+        - X-Portal-Contract-Version
+        - X-Portal-Timestamp
+        - X-Portal-Nonce
+        - X-Portal-Body-SHA256
+        - X-Portal-Operation-Id
+        - X-Portal-Key-Id
+        - X-Portal-Signature
+  responses:
+    Unauthorized:
+      description: Request authentication failed
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    BridgeCapabilities:
+      type: object
+      additionalProperties: false
+      required:
+        - contractVersion
+        - emulatorVersion
+        - upstreamCommit
+        - gameBuild
+        - snapshotSchemaVersion
+        - serverInstanceId
+        - capabilities
+      properties:
+        contractVersion:
+          type: string
+          const: '1.0'
+        emulatorVersion:
+          type: string
+          minLength: 1
+        upstreamCommit:
+          type: string
+          pattern: '^[0-9a-f]{40}$'
+        gameBuild:
+          type: string
+          minLength: 1
+        snapshotSchemaVersion:
+          type: integer
+          minimum: 1
+        serverInstanceId:
+          type: string
+          format: uuid
+        capabilities:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+    BridgeHealth:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - checkedAtUtc
+        - services
+      properties:
+        status:
+          $ref: '#/components/schemas/HealthStatus'
+        checkedAtUtc:
+          type: string
+          format: date-time
+        services:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/HealthStatus'
+    HealthStatus:
+      type: string
+      enum:
+        - healthy
+        - degraded
+        - unhealthy
+    Problem:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - correlationId
+      properties:
+        code:
+          type: string
+        correlationId:
+          type: string
+          format: uuid

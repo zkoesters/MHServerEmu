@@ -5,6 +5,7 @@ using MHServerEmu.Core.Network;
 
 namespace MHServerEmu.PortalBridge.Tests
 {
+    [Collection("PortalBridge logging")]
     public class PortalBridgeServiceTests
     {
         [Fact]

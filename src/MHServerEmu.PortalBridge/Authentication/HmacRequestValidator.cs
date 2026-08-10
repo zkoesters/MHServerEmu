@@ -47,7 +47,7 @@ namespace MHServerEmu.PortalBridge.Authentication
             {
                 if (_disposed)
                     return false;
-                if (request == null || request.Method != "GET" || string.IsNullOrEmpty(request.RawUrl))
+                if (request == null || string.IsNullOrEmpty(request.RawUrl))
                     return false;
                 if (TryReadSingleHeaders(request, out HeaderValues headers) == false)
                     return false;
