@@ -65,7 +65,6 @@ namespace MHServerEmu.Core.Network.Web
             }
             catch (Exception e)
             {
-                Logger.Warn($"Error handling {context}: {e}");
                 await Service.WriteExceptionAsync(context, e);
             }
         }

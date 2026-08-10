@@ -76,7 +76,7 @@ namespace MHServerEmu.Core.Network.Web
 
         public string[] GetHeaderValues(string name)
         {
-            return _httpRequest.Headers.GetValues(name);
+            return _httpRequest.Headers.GetValues(name) ?? Array.Empty<string>();
         }
 
         public void Redirect(string url)

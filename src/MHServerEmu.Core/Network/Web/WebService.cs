@@ -43,8 +43,20 @@ namespace MHServerEmu.Core.Network.Web
             string url = Settings.ListenUrl;
 
             HttpListener listener = new();
-            listener.Prefixes.Add(url);
-            listener.Start();
+
+            try
+            {
+                listener.Prefixes.Add(url);
+                listener.Start();
+            }
+            catch
+            {
+                listener.Close();
+                _listener = null;
+                _cts = null;
+                IsRunning = false;
+                throw;
+            }
 
             CancellationTokenSource cts = new();
 
@@ -210,20 +222,12 @@ namespace MHServerEmu.Core.Network.Web
         {
             IWebRequestAuthorizer requestAuthorizer = Settings.RequestAuthorizer;
             if (requestAuthorizer != null && await requestAuthorizer.AuthorizeAsync(requestContext) == false)
-            {
-                requestContext.StatusCode = (int)HttpStatusCode.Forbidden;
                 return;
-            }
 
             // This may be either a registered handler or a fallback handler.
             WebHandler handler = GetHandler(requestContext.LocalPath);
-            if (handler == null)
-            {
-                requestContext.StatusCode = (int)HttpStatusCode.NotFound;
-                return;
-            }
-
-            await handler.HandleAsync(requestContext);
+            if (handler != null)
+                await handler.HandleAsync(requestContext);
         }
     }
 }
