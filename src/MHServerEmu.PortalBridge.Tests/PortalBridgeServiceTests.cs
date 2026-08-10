@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using MHServerEmu.Core.Logging;
 using MHServerEmu.Core.Network;
 
 namespace MHServerEmu.PortalBridge.Tests
@@ -13,13 +14,18 @@ namespace MHServerEmu.PortalBridge.Tests
             PortalBridgeService service = CreateService(config);
             Thread thread = new(service.Run);
 
-            thread.Start();
-            Assert.True(SpinWait.SpinUntil(() => service.State == GameServiceState.Running, TimeSpan.FromSeconds(2)));
-            Assert.False(service.IsAvailable);
+            try
+            {
+                thread.Start();
+                Assert.True(SpinWait.SpinUntil(() => service.State == GameServiceState.Running, TimeSpan.FromSeconds(2)));
+                Assert.False(service.IsAvailable);
+            }
+            finally
+            {
+                service.Shutdown();
+                Assert.True(thread.Join(TimeSpan.FromSeconds(2)));
+            }
 
-            service.Shutdown();
-
-            Assert.True(thread.Join(TimeSpan.FromSeconds(2)));
             Assert.Equal(GameServiceState.Shutdown, service.State);
         }
 
@@ -38,16 +44,77 @@ namespace MHServerEmu.PortalBridge.Tests
                 thread.Start();
                 Assert.True(SpinWait.SpinUntil(() => service.State == GameServiceState.Running, TimeSpan.FromSeconds(2)));
                 Assert.False(service.IsAvailable);
-
-                service.Shutdown();
-
-                Assert.True(thread.Join(TimeSpan.FromSeconds(2)));
-                Assert.Equal(GameServiceState.Shutdown, service.State);
             }
             finally
             {
                 service.Shutdown();
-                thread.Join(TimeSpan.FromSeconds(2));
+                Assert.True(thread.Join(TimeSpan.FromSeconds(2)));
+                File.Delete(secretFile);
+            }
+
+            Assert.Equal(GameServiceState.Shutdown, service.State);
+        }
+
+        [Fact]
+        public void Shutdown_BeforeRun_IsRememberedWhenRunTransitionsThroughStarting()
+        {
+            PortalBridgeService service = CreateService(CreateConfig("/missing/portal-bridge-secret", GetFreePort()));
+            Thread thread = new(service.Run);
+
+            service.Shutdown();
+            try
+            {
+                thread.Start();
+                Assert.True(SpinWait.SpinUntil(() => service.State == GameServiceState.Starting ||
+                    service.State == GameServiceState.Running || service.State == GameServiceState.Shutdown,
+                    TimeSpan.FromSeconds(2)));
+                Assert.False(service.IsAvailable);
+            }
+            finally
+            {
+                service.Shutdown();
+                Assert.True(thread.Join(TimeSpan.FromSeconds(2)));
+            }
+
+            Assert.Equal(GameServiceState.Shutdown, service.State);
+        }
+
+        [Fact]
+        public void Run_ListenerStartupFailure_LogsExceptionWithoutSecretContents()
+        {
+            using TcpListener listener = new(IPAddress.Loopback, 0);
+            listener.Start();
+            string secretFile = Path.GetTempFileName();
+            string secret = Convert.ToBase64String(new byte[32]);
+            File.WriteAllText(secretFile, secret);
+            PortalBridgeService service = CreateService(CreateConfig(secretFile, ((IPEndPoint)listener.LocalEndpoint).Port));
+            Thread thread = new(service.Run);
+            CapturingLogTarget target = new();
+            bool loggingEnabled = LogManager.Enabled;
+            bool targetAttached = false;
+
+            try
+            {
+                LogManager.Enabled = true;
+                targetAttached = LogManager.AttachTarget(target);
+                Assert.True(targetAttached);
+
+                thread.Start();
+                LogMessage message = target.Message.Task.Wait(TimeSpan.FromSeconds(2))
+                    ? target.Message.Task.Result
+                    : throw new TimeoutException("PortalBridge startup exception was not logged.");
+
+                Assert.Contains("[Exception]", message.Message, StringComparison.Ordinal);
+                Assert.Contains(nameof(HttpListenerException), message.Message, StringComparison.Ordinal);
+                Assert.DoesNotContain(secret, message.Message, StringComparison.Ordinal);
+            }
+            finally
+            {
+                service.Shutdown();
+                Assert.True(thread.Join(TimeSpan.FromSeconds(2)));
+                if (targetAttached)
+                    Assert.True(LogManager.DetachTarget(target));
+                LogManager.Enabled = loggingEnabled;
                 File.Delete(secretFile);
             }
         }
@@ -83,6 +150,26 @@ namespace MHServerEmu.PortalBridge.Tests
             using TcpListener listener = new(IPAddress.Loopback, 0);
             listener.Start();
             return ((IPEndPoint)listener.LocalEndpoint).Port;
+        }
+
+        private sealed class CapturingLogTarget : LogTarget
+        {
+            public TaskCompletionSource<LogMessage> Message { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            public CapturingLogTarget() : base(new LogTargetSettings
+            {
+                MinimumLevel = LoggingLevel.Error,
+                MaximumLevel = LoggingLevel.Error,
+                Channels = LogChannels.All,
+            })
+            {
+            }
+
+            public override void ProcessLogMessage(in LogMessage message)
+            {
+                if (message.Logger == nameof(PortalBridgeService))
+                    Message.TrySetResult(message);
+            }
         }
     }
 }

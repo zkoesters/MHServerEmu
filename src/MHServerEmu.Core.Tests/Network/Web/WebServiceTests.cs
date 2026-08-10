@@ -176,6 +176,41 @@ namespace MHServerEmu.Core.Tests.Network.Web
             }
         }
 
+        [Fact]
+        public async Task StopAsync_BlockedAcceptedRequest_WaitsForRequestCompletion()
+        {
+            BlockingRequestAuthorizer authorizer = new();
+            WebService service = StartService(
+                listenUrl => new()
+                {
+                    Name = "Test Web Service",
+                    ListenUrl = listenUrl,
+                    RequestAuthorizer = authorizer
+                },
+                service => service.RegisterHandler("/test", new CountingWebHandler()));
+
+            try
+            {
+                using HttpClient client = new();
+                Task<HttpResponseMessage> request = client.GetAsync($"{service.Settings.ListenUrl}test");
+                await authorizer.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+                Task stop = service.StopAsync();
+                Assert.False(stop.IsCompleted);
+
+                authorizer.Release.TrySetResult(true);
+                await stop.WaitAsync(TimeSpan.FromSeconds(5));
+
+                Assert.False(service.IsRunning);
+                await Record.ExceptionAsync(async () => await request);
+            }
+            finally
+            {
+                authorizer.Release.TrySetResult(true);
+                await service.StopAsync();
+            }
+        }
+
         private static string GetListenUrl()
         {
             using TcpListener listener = new(IPAddress.Loopback, 0);

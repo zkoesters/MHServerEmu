@@ -15,13 +15,31 @@ namespace MHServerEmu.PortalBridge
         private readonly Func<GameServiceState?> _playerManagerStateProvider;
         private readonly TimeProvider _timeProvider;
         private readonly INonceReplayCache _replayCache;
+        private readonly object _lifecycleLock = new();
         private readonly ManualResetEventSlim _shutdownEvent = new(false);
 
         private WebService _webService;
         private HmacRequestValidator _requestValidator;
+        private GameServiceState _state = GameServiceState.Created;
+        private bool _shutdownRequested;
 
-        public GameServiceState State { get; private set; } = GameServiceState.Created;
-        public bool IsAvailable { get => _webService?.IsRunning == true; }
+        public GameServiceState State
+        {
+            get
+            {
+                lock (_lifecycleLock)
+                    return _state;
+            }
+        }
+
+        public bool IsAvailable
+        {
+            get
+            {
+                lock (_lifecycleLock)
+                    return _webService?.IsRunning == true;
+            }
+        }
 
         public PortalBridgeService(PortalBridgeConfig config, PortalBridgeMetadata metadata,
             Func<GameServiceState?> playerManagerStateProvider, TimeProvider timeProvider = null,
@@ -36,23 +54,47 @@ namespace MHServerEmu.PortalBridge
 
         public void Run()
         {
-            State = GameServiceState.Starting;
-            TryStartListener();
-            State = GameServiceState.Running;
+            lock (_lifecycleLock)
+                _state = GameServiceState.Starting;
+
+            if (IsShutdownRequested() == false)
+                TryStartListener();
+
+            lock (_lifecycleLock)
+                _state = GameServiceState.Running;
             _shutdownEvent.Wait();
 
-            _webService?.Stop();
-            _requestValidator?.Dispose();
-            State = GameServiceState.Shutdown;
+            WebService webService;
+            HmacRequestValidator requestValidator;
+            lock (_lifecycleLock)
+            {
+                _state = GameServiceState.ShuttingDown;
+                webService = _webService;
+                requestValidator = _requestValidator;
+            }
+
+            webService?.StopAsync().GetAwaiter().GetResult();
+            requestValidator?.Dispose();
+
+            lock (_lifecycleLock)
+                _state = GameServiceState.Shutdown;
         }
 
         public void Shutdown()
         {
-            if (State != GameServiceState.Running)
-                return;
+            WebService webService;
+            lock (_lifecycleLock)
+            {
+                if (_state == GameServiceState.Shutdown)
+                    return;
 
-            State = GameServiceState.ShuttingDown;
-            _webService?.Stop();
+                _shutdownRequested = true;
+                if (_state == GameServiceState.Running)
+                    _state = GameServiceState.ShuttingDown;
+                webService = _webService;
+            }
+
+            webService?.Stop();
             _shutdownEvent.Set();
         }
 
@@ -64,7 +106,8 @@ namespace MHServerEmu.PortalBridge
         public void GetStatus(Dictionary<string, long> statusDict)
         {
             statusDict["PortalBridgeAvailable"] = IsAvailable ? 1 : 0;
-            statusDict["PortalBridgeHandledRequests"] = _webService?.HandledRequests ?? 0;
+            lock (_lifecycleLock)
+                statusDict["PortalBridgeHandledRequests"] = _webService?.HandledRequests ?? 0;
         }
 
         private void TryStartListener()
@@ -75,16 +118,27 @@ namespace MHServerEmu.PortalBridge
                 return;
             }
 
-            PortalBridgeSettings settings = null;
+            PortalBridgeSettings settings;
+            try
+            {
+                if (_config.TryCreateSettings(out settings, out _) == false)
+                {
+                    Logger.Warn("PortalBridge configuration is invalid");
+                    return;
+                }
+            }
+            catch (Exception)
+            {
+                Logger.Warn("PortalBridge configuration is invalid");
+                return;
+            }
+
             HmacRequestValidator validator = null;
             WebService webService = null;
             try
             {
-                if (_config.TryCreateSettings(out settings, out string error) == false)
-                {
-                    Logger.Warn($"PortalBridge configuration is invalid: {error}");
+                if (IsShutdownRequested())
                     return;
-                }
 
                 validator = new HmacRequestValidator(settings.Secret, settings.KeyId, _replayCache, _timeProvider);
                 webService = new WebService(new WebServiceSettings
@@ -103,21 +157,33 @@ namespace MHServerEmu.PortalBridge
                 if (webService.Start() == false)
                     return;
 
-                _requestValidator = validator;
-                _webService = webService;
+                lock (_lifecycleLock)
+                {
+                    if (_shutdownRequested)
+                        webService.Stop();
+
+                    _requestValidator = validator;
+                    _webService = webService;
+                }
                 validator = null;
                 webService = null;
             }
             catch (Exception exception)
             {
-                Logger.Error($"PortalBridge listener failed to start: {exception.GetType().Name}");
+                Logger.ErrorException(exception, "PortalBridge listener failed to start");
             }
             finally
             {
-                webService?.Stop();
+                webService?.StopAsync().GetAwaiter().GetResult();
                 validator?.Dispose();
                 settings?.Dispose();
             }
+        }
+
+        private bool IsShutdownRequested()
+        {
+            lock (_lifecycleLock)
+                return _shutdownRequested;
         }
     }
 }

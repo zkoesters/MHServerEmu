@@ -9,9 +9,11 @@ namespace MHServerEmu.Core.Network.Web
         private static readonly Logger Logger = LogManager.CreateLogger();
 
         private readonly Dictionary<string, WebHandler> _handlers = new(StringComparer.OrdinalIgnoreCase);
+        private readonly object _lifecycleLock = new();
 
         private HttpListener _listener;
         private CancellationTokenSource _cts;
+        private Task _runTask = Task.CompletedTask;
 
         public WebServiceSettings Settings { get; }
         public bool IsRunning { get; private set; }
@@ -34,38 +36,35 @@ namespace MHServerEmu.Core.Network.Web
         /// </summary>
         public bool Start()
         {
-            if (IsRunning)
-                return false;
-
-            Debug.Assert(_listener == null);
-            Debug.Assert(_cts == null);
-
-            string url = Settings.ListenUrl;
-
-            HttpListener listener = new();
-
-            try
+            lock (_lifecycleLock)
             {
-                listener.Prefixes.Add(url);
-                listener.Start();
+                if (IsRunning)
+                    return false;
+
+                Debug.Assert(_listener == null);
+                Debug.Assert(_cts == null);
+
+                string url = Settings.ListenUrl;
+                HttpListener listener = new();
+
+                try
+                {
+                    listener.Prefixes.Add(url);
+                    listener.Start();
+                }
+                catch
+                {
+                    listener.Close();
+                    throw;
+                }
+
+                CancellationTokenSource cts = new();
+                _listener = listener;
+                _cts = cts;
+                IsRunning = true;
+                _runTask = Task.Run(() => HandleRequestsAsync(listener, cts, cts.Token));
+                return true;
             }
-            catch
-            {
-                listener.Close();
-                _listener = null;
-                _cts = null;
-                IsRunning = false;
-                throw;
-            }
-
-            CancellationTokenSource cts = new();
-
-            _listener = listener;
-            _cts = cts;
-
-            IsRunning = true;
-            Task.Run(() => HandleRequestsAsync(listener, cts, cts.Token));
-            return true;
         }
 
         /// <summary>
@@ -73,27 +72,25 @@ namespace MHServerEmu.Core.Network.Web
         /// </summary>
         public bool Stop()
         {
-            if (_listener == null && _cts == null)
-                return false;
+            return Stop(out _);
+        }
 
-            HttpListener listener = _listener;
-            CancellationTokenSource cts = _cts;
+        /// <summary>
+        /// Stops accepting requests and returns a task that completes after accepted requests finish.
+        /// </summary>
+        public Task StopAsync()
+        {
+            Stop(out Task runTask);
+            return runTask;
+        }
 
-            _cts = null;
-            _listener = null;
-            IsRunning = false;
-
-            try
-            {
-                cts?.Cancel();
-                listener?.Close();
-            }
-            finally
-            {
-                cts?.Dispose();
-            }
-
-            return true;
+        /// <summary>
+        /// Returns a task that completes after the current accept loop and accepted request finish.
+        /// </summary>
+        public Task WaitForStopAsync()
+        {
+            lock (_lifecycleLock)
+                return _runTask;
         }
 
         /// <summary>
@@ -216,20 +213,22 @@ namespace MHServerEmu.Core.Network.Web
             }
             finally
             {
-                if (_listener == listener && _cts == cts)
+                try
                 {
-                    _listener = null;
-                    _cts = null;
-                    IsRunning = false;
-
-                    try
+                    listener.Close();
+                }
+                finally
+                {
+                    lock (_lifecycleLock)
                     {
-                        listener.Close();
+                        if (_listener == listener && _cts == cts)
+                        {
+                            _listener = null;
+                            _cts = null;
+                            IsRunning = false;
+                        }
                     }
-                    finally
-                    {
-                        cts.Dispose();
-                    }
+                    cts.Dispose();
                 }
             }
         }
@@ -244,6 +243,29 @@ namespace MHServerEmu.Core.Network.Web
             WebHandler handler = GetHandler(requestContext.LocalPath);
             if (handler != null)
                 await handler.HandleAsync(requestContext);
+        }
+
+        private bool Stop(out Task runTask)
+        {
+            HttpListener listener;
+            CancellationTokenSource cts;
+            lock (_lifecycleLock)
+            {
+                runTask = _runTask;
+                if (_listener == null && _cts == null)
+                    return false;
+
+                listener = _listener;
+                cts = _cts;
+                _listener = null;
+                _cts = null;
+                IsRunning = false;
+
+                cts?.Cancel();
+                listener?.Close();
+            }
+
+            return true;
         }
     }
 }
