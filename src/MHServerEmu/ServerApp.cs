@@ -19,6 +19,7 @@ using MHServerEmu.Games.Network.InstanceManagement;
 using MHServerEmu.Grouping;
 using MHServerEmu.Leaderboards;
 using MHServerEmu.PlayerManagement;
+using MHServerEmu.PortalBridge;
 using MHServerEmu.WebFrontend;
 
 namespace MHServerEmu
@@ -55,7 +56,8 @@ namespace MHServerEmu
         public const string BuildConfiguration = "Release";
 #endif
 
-        public static readonly string VersionInfo = $"Version {AssemblyHelper.GetAssemblyInformationalVersion()} | {AssemblyHelper.ParseAssemblyBuildTime():yyyy.MM.dd HH:mm:ss} UTC | {BuildConfiguration}";
+        public static readonly string EmulatorVersion = AssemblyHelper.GetAssemblyInformationalVersion();
+        public static readonly string VersionInfo = $"Version {EmulatorVersion} | {AssemblyHelper.ParseAssemblyBuildTime():yyyy.MM.dd HH:mm:ss} UTC | {BuildConfiguration} | Game Version {Game.Version}";
 
         private static readonly Logger Logger = LogManager.CreateLogger();
         private State _state = State.Created;
@@ -122,6 +124,21 @@ namespace MHServerEmu
             serverManager.RegisterGameService(new GroupingManagerService(), GameServiceType.GroupingManager);
             serverManager.RegisterGameService(new FrontendServer(), GameServiceType.Frontend);
             serverManager.RegisterGameService(new WebFrontendService(), GameServiceType.WebFrontend);
+
+            PortalBridgeConfig portalBridgeConfig = ConfigManager.Instance.GetConfig<PortalBridgeConfig>();
+            if (portalBridgeConfig.Enabled)
+            {
+                PortalBridgeMetadata metadata = new(
+                    EmulatorVersion,
+                    PortalBridgeBuildMetadata.UpstreamCommit,
+                    Game.Version);
+                serverManager.RegisterGameService(
+                    new PortalBridgeService(
+                        portalBridgeConfig,
+                        metadata,
+                        () => serverManager.GetGameService(GameServiceType.PlayerManager)?.State),
+                    GameServiceType.PortalBridge);
+            }
 
             serverManager.RunServices();
 
