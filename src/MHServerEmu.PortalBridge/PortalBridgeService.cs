@@ -15,6 +15,7 @@ namespace MHServerEmu.PortalBridge
         private readonly Func<GameServiceState?> _playerManagerStateProvider;
         private readonly TimeProvider _timeProvider;
         private readonly INonceReplayCache _replayCache;
+        private readonly Action _startingAction;
         private readonly object _lifecycleLock = new();
         private readonly ManualResetEventSlim _shutdownEvent = new(false);
 
@@ -44,12 +45,20 @@ namespace MHServerEmu.PortalBridge
         public PortalBridgeService(PortalBridgeConfig config, PortalBridgeMetadata metadata,
             Func<GameServiceState?> playerManagerStateProvider, TimeProvider timeProvider = null,
             INonceReplayCache replayCache = null)
+            : this(config, metadata, playerManagerStateProvider, timeProvider, replayCache, null)
+        {
+        }
+
+        internal PortalBridgeService(PortalBridgeConfig config, PortalBridgeMetadata metadata,
+            Func<GameServiceState?> playerManagerStateProvider, TimeProvider timeProvider, INonceReplayCache replayCache,
+            Action startingAction)
         {
             _config = config ?? throw new ArgumentNullException(nameof(config));
             _metadata = metadata ?? throw new ArgumentNullException(nameof(metadata));
             _playerManagerStateProvider = playerManagerStateProvider ?? throw new ArgumentNullException(nameof(playerManagerStateProvider));
             _timeProvider = timeProvider ?? TimeProvider.System;
             _replayCache = replayCache ?? new InMemoryNonceReplayCache();
+            _startingAction = startingAction;
         }
 
         public void Run()
@@ -57,6 +66,7 @@ namespace MHServerEmu.PortalBridge
             lock (_lifecycleLock)
                 _state = GameServiceState.Starting;
 
+            _startingAction?.Invoke();
             if (IsShutdownRequested() == false)
                 TryStartListener();
 
