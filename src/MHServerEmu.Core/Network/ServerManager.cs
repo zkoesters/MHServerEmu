@@ -15,6 +15,7 @@ namespace MHServerEmu.Core.Network
         GroupingManager,
         Frontend,
         WebFrontend,
+        PortalBridge = 6,
         NumServiceTypes
     }
 
