@@ -18,17 +18,19 @@ namespace MHServerEmu.Core.Config
         /// <summary>
         /// Provides access to the <see cref="ConfigManager"/> instance.
         /// </summary>
-        public static ConfigManager Instance { get; } = new();
+        public static ConfigManager Instance { get; } = new(ConfigDirectory);
 
         /// <summary>
         /// Constructs the <see cref="ConfigManager"/> instance.
         /// </summary>
-        private ConfigManager()
+        internal ConfigManager(string configDirectory)
         {
-            string configPath = Path.Combine(ConfigDirectory, "Config.ini");
+            Directory.CreateDirectory(configDirectory);
+
+            string configPath = Path.Combine(configDirectory, "Config.ini");
             _iniFile = new(configPath);
 
-            string overridePath = Path.Combine(ConfigDirectory, "ConfigOverride.ini");
+            string overridePath = Path.Combine(configDirectory, "ConfigOverride.ini");
             if (File.Exists(overridePath))
                 _overrideFile = new(overridePath);
             else
