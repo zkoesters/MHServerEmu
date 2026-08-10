@@ -8,6 +8,13 @@ namespace MHServerEmu.PortalBridge.Tests
             Assert.Equal("7ae81f6ba8816ad86c156c44b3284a5f271aa61f", PortalBridgeBuildMetadata.UpstreamCommit);
         }
 
+        [Theory]
+        [MemberData(nameof(InvalidUpstreamCommitMetadata))]
+        public void ReadUpstreamCommit_InvalidMetadata_ThrowsOnlyWhenRead(System.Reflection.AssemblyMetadataAttribute[] attributes)
+        {
+            Assert.Throws<InvalidOperationException>(() => PortalBridgeBuildMetadata.ReadUpstreamCommit(attributes));
+        }
+
         [Fact]
         public void Constructor_ValidValues_ExposesImmutableMetadata()
         {
@@ -26,6 +33,33 @@ namespace MHServerEmu.PortalBridge.Tests
         public void Constructor_InvalidValues_ThrowsArgumentException(string emulatorVersion, string upstreamCommit, string gameBuild)
         {
             Assert.Throws<ArgumentException>(() => new PortalBridgeMetadata(emulatorVersion, upstreamCommit, gameBuild));
+        }
+
+        public static IEnumerable<object[]> InvalidUpstreamCommitMetadata()
+        {
+            yield return new object[] { Array.Empty<System.Reflection.AssemblyMetadataAttribute>() };
+            yield return new object[]
+            {
+                new[]
+                {
+                    new System.Reflection.AssemblyMetadataAttribute("PortalBridgeUpstreamCommit", string.Empty),
+                },
+            };
+            yield return new object[]
+            {
+                new[]
+                {
+                    new System.Reflection.AssemblyMetadataAttribute("PortalBridgeUpstreamCommit", new string('A', 40)),
+                },
+            };
+            yield return new object[]
+            {
+                new[]
+                {
+                    new System.Reflection.AssemblyMetadataAttribute("PortalBridgeUpstreamCommit", new string('a', 40)),
+                    new System.Reflection.AssemblyMetadataAttribute("PortalBridgeUpstreamCommit", new string('b', 40)),
+                },
+            };
         }
     }
 }

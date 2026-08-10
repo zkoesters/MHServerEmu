@@ -46,6 +46,26 @@ namespace MHServerEmu.PortalBridge.Tests
             }
         }
 
+        [Fact]
+        public void TryCreateSettings_Base64Whitespace_DecodesExactKey()
+        {
+            byte[] expectedSecret = Enumerable.Range(0, 32).Select(value => (byte)value).ToArray();
+            string secretFile = Path.GetTempFileName();
+            File.WriteAllBytes(secretFile, System.Text.Encoding.UTF8.GetBytes($" \n{Convert.ToBase64String(expectedSecret)}\r\n "));
+            PortalBridgeConfig config = CreateValidConfiguration(secretFile);
+
+            try
+            {
+                Assert.True(config.TryCreateSettings(out PortalBridgeSettings settings, out string error), error);
+                using (settings)
+                    Assert.Equal(expectedSecret, settings.Secret.ToArray());
+            }
+            finally
+            {
+                File.Delete(secretFile);
+            }
+        }
+
         [Theory]
         [InlineData("")]
         [InlineData("bad/address")]
@@ -54,6 +74,80 @@ namespace MHServerEmu.PortalBridge.Tests
         public void TryCreateSettings_InvalidAddress_FailsWithoutSecretContents(string address)
         {
             AssertInvalidConfiguration(address, 8090, "portal-primary", "4b56bb3d-8b6e-4be4-a754-2f99ab40f26a");
+        }
+
+        [Theory]
+        [InlineData("http:")]
+        [InlineData(":")]
+        [InlineData("127.0.0.1:8090")]
+        [InlineData("host name")]
+        public void TryCreateSettings_InvalidAddressGrammar_FailsWithoutSecretContents(string address)
+        {
+            AssertInvalidConfiguration(address, 8090, "portal-primary", "4b56bb3d-8b6e-4be4-a754-2f99ab40f26a");
+        }
+
+        [Theory]
+        [InlineData("*")]
+        [InlineData("+")]
+        [InlineData("127.0.0.1")]
+        [InlineData("bridge.example.test")]
+        public void TryCreateSettings_ValidAddressGrammar_AcceptsAddress(string address)
+        {
+            string secretFile = Path.GetTempFileName();
+            File.WriteAllText(secretFile, Convert.ToBase64String(new byte[32]));
+            PortalBridgeConfig config = CreateValidConfiguration(secretFile);
+            config.Address = address;
+
+            try
+            {
+                Assert.True(config.TryCreateSettings(out PortalBridgeSettings settings, out string error), error);
+                settings.Dispose();
+            }
+            finally
+            {
+                File.Delete(secretFile);
+            }
+        }
+
+        [Fact]
+        public void ConfigManager_BaseAndOverrideIni_MapsPortalBridgeProperties()
+        {
+            string configDirectory = Path.Combine(Path.GetTempPath(), $"mhserveremu-portal-bridge-{Guid.NewGuid()}");
+            Directory.CreateDirectory(configDirectory);
+            File.WriteAllText(Path.Combine(configDirectory, "Config.ini"), """
+                [PortalBridge]
+                Enabled=false
+                Address=127.0.0.1
+                Port=8090
+                KeyId=base-key
+                SecretFile=/base/secret
+                ServerInstanceId=4b56bb3d-8b6e-4be4-a754-2f99ab40f26a
+                """);
+            File.WriteAllText(Path.Combine(configDirectory, "ConfigOverride.ini"), """
+                [PortalBridge]
+                Enabled=true
+                Address=bridge.example.test
+                Port=9100
+                KeyId=override-key
+                """);
+
+            try
+            {
+                MHServerEmu.Core.Config.ConfigManager manager = new(configDirectory);
+
+                PortalBridgeConfig config = manager.GetConfig<PortalBridgeConfig>();
+
+                Assert.True(config.Enabled);
+                Assert.Equal("bridge.example.test", config.Address);
+                Assert.Equal(9100, config.Port);
+                Assert.Equal("override-key", config.KeyId);
+                Assert.Equal("/base/secret", config.SecretFile);
+                Assert.Equal("4b56bb3d-8b6e-4be4-a754-2f99ab40f26a", config.ServerInstanceId);
+            }
+            finally
+            {
+                Directory.Delete(configDirectory, true);
+            }
         }
 
         [Theory]
@@ -152,6 +246,19 @@ namespace MHServerEmu.PortalBridge.Tests
 
             Assert.False(config.TryCreateSettings(out _, out string error));
             Assert.DoesNotContain(secretContents, error, StringComparison.Ordinal);
+        }
+
+        private static PortalBridgeConfig CreateValidConfiguration(string secretFile)
+        {
+            return new()
+            {
+                Enabled = true,
+                Address = "*",
+                Port = 8090,
+                KeyId = "portal-primary",
+                SecretFile = secretFile,
+                ServerInstanceId = "4b56bb3d-8b6e-4be4-a754-2f99ab40f26a",
+            };
         }
     }
 }
