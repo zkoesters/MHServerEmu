@@ -84,6 +84,7 @@ namespace MHServerEmu.PortalBridge.Tests
         [InlineData("20.2")]
         [InlineData("0x2F")]
         [InlineData("1.1.1.010")]
+        [InlineData("::ffff:127.0.0.01")]
         public void TryCreateSettings_InvalidAddressGrammar_FailsWithoutSecretContents(string address)
         {
             AssertInvalidAddress(address);
@@ -94,6 +95,7 @@ namespace MHServerEmu.PortalBridge.Tests
         [InlineData("+")]
         [InlineData("127.0.0.1")]
         [InlineData("::1")]
+        [InlineData("::ffff:127.0.0.1")]
         [InlineData("bridge.example.test")]
         public void TryCreateSettings_ValidAddressGrammar_AcceptsAddress(string address)
         {

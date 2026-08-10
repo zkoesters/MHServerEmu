@@ -98,7 +98,15 @@ namespace MHServerEmu.PortalBridge
                 return true;
 
             if (IPAddress.TryParse(address, out IPAddress ipAddress))
-                return ipAddress.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork || IsCanonicalIPv4(address);
+            {
+                if (ipAddress.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                    return IsCanonicalIPv4(address);
+
+                if (ipAddress.IsIPv4MappedToIPv6)
+                    return IsCanonicalIPv4(address[(address.LastIndexOf(':') + 1)..]);
+
+                return true;
+            }
 
             if (address.Length > 253 || address.Contains(':'))
                 return false;
