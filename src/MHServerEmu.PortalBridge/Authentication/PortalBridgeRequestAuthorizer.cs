@@ -21,7 +21,7 @@ namespace MHServerEmu.PortalBridge.Authentication
         {
             bool authorized = _validator.TryValidate(PortalBridgeRequest.FromContext(context), out Guid correlationId);
             string client = context.GetIPAddressHandle();
-            Logger.Info($"PortalBridge authorization route={context.RawUrl}, result={authorized}, correlationId={correlationId}, client={client}");
+            Logger.Info($"PortalBridge authorization route={context.LocalPath}, result={authorized}, correlationId={correlationId}, client={client}");
 
             if (authorized)
                 return true;

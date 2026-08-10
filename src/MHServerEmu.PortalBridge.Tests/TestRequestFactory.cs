@@ -49,6 +49,19 @@ namespace MHServerEmu.PortalBridge.Tests
             };
         }
 
+        internal static HttpRequestMessage CreateSignedGetRequest(string listenUrl, string rawUrl, string nonce)
+        {
+            Guid operationId = Guid.Parse("4b56bb3d-8b6e-4be4-a754-2f99ab40f26a");
+            Dictionary<string, string[]> headers = CreateSignedHeaders("GET", rawUrl, FixedNow.ToUnixTimeSeconds(),
+                nonce, operationId);
+            HttpRequestMessage request = new(HttpMethod.Get, new Uri(new Uri(listenUrl), rawUrl));
+
+            foreach ((string name, string[] values) in headers)
+                request.Headers.TryAddWithoutValidation(name, values);
+
+            return request;
+        }
+
         private sealed class FixedTimeProvider : TimeProvider
         {
             private readonly DateTimeOffset _now;
