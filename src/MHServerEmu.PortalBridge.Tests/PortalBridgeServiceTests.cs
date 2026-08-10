@@ -208,6 +208,17 @@ namespace MHServerEmu.PortalBridge.Tests
             Assert.Equal(6, (int)GameServiceType.PortalBridge);
         }
 
+        [Theory]
+        [InlineData("::1", "http://[::1]:8090/")]
+        [InlineData("*", "http://*:8090/")]
+        [InlineData("+", "http://+:8090/")]
+        [InlineData("bridge.example.test", "http://bridge.example.test:8090/")]
+        [InlineData("127.0.0.1", "http://127.0.0.1:8090/")]
+        public void FormatListenUrl_FormatsSupportedListenerAddresses(string address, string expected)
+        {
+            Assert.Equal(expected, PortalBridgeService.FormatListenUrl(address, 8090));
+        }
+
         private static PortalBridgeService CreateService(PortalBridgeConfig config)
         {
             return new PortalBridgeService(config, new PortalBridgeMetadata("1.0.2", new string('a', 40), "1.52.0.1700"),

@@ -43,10 +43,21 @@ namespace MHServerEmu.PortalBridge.Tests
 
         internal static RunningBridge Start(GameServiceState? playerManagerState = GameServiceState.Running)
         {
-            return Start(playerManagerState, GetFreePort);
+            return Start("127.0.0.1", playerManagerState, () => GetFreePort(IPAddress.Loopback));
         }
 
         internal static RunningBridge Start(GameServiceState? playerManagerState, Func<int> portProvider)
+        {
+            return Start("127.0.0.1", playerManagerState, portProvider);
+        }
+
+        internal static RunningBridge Start(string address, GameServiceState? playerManagerState = GameServiceState.Running)
+        {
+            IPAddress ipAddress = IPAddress.Parse(address);
+            return Start(address, playerManagerState, () => GetFreePort(ipAddress));
+        }
+
+        private static RunningBridge Start(string address, GameServiceState? playerManagerState, Func<int> portProvider)
         {
             const int MaxAttempts = 10;
 
@@ -63,11 +74,11 @@ namespace MHServerEmu.PortalBridge.Tests
                 {
                     File.WriteAllText(secretFile, Convert.ToBase64String(key));
                     int port = portProvider();
-                    Uri baseAddress = new($"http://127.0.0.1:{port}/");
+                    Uri baseAddress = new(PortalBridgeService.FormatListenUrl(address, port));
                     PortalBridgeConfig config = new()
                     {
                         Enabled = true,
-                        Address = "127.0.0.1",
+                        Address = address,
                         Port = port,
                         KeyId = "portal-primary",
                         SecretFile = secretFile,
@@ -127,9 +138,9 @@ namespace MHServerEmu.PortalBridge.Tests
             File.Delete(_secretFile);
         }
 
-        private static int GetFreePort()
+        private static int GetFreePort(IPAddress address)
         {
-            using TcpListener listener = new(IPAddress.Loopback, 0);
+            using TcpListener listener = new(address, 0);
             listener.Start();
             return ((IPEndPoint)listener.LocalEndpoint).Port;
         }

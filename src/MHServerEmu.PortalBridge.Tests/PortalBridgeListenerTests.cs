@@ -136,6 +136,20 @@ namespace MHServerEmu.PortalBridge.Tests
             Assert.True(attempts >= 2);
         }
 
+        [Fact]
+        public async Task GetCapabilities_IPv6Loopback_ReturnsExactPayloadWhenAvailable()
+        {
+            if (CanStartIPv6LoopbackHttpListener() == false)
+                return;
+
+            using RunningBridge bridge = RunningBridge.Start("::1");
+            using HttpRequestMessage request = bridge.CreateSignedRequest(CapabilitiesWebHandler.Path);
+
+            using HttpResponseMessage response = await bridge.Client.SendAsync(request);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+
         [Theory]
         [InlineData(true)]
         [InlineData(false)]
@@ -162,6 +176,37 @@ namespace MHServerEmu.PortalBridge.Tests
             using TcpListener listener = new(IPAddress.Loopback, 0);
             listener.Start();
             return ((IPEndPoint)listener.LocalEndpoint).Port;
+        }
+
+        private static bool CanStartIPv6LoopbackHttpListener()
+        {
+            if (Socket.OSSupportsIPv6 == false)
+                return false;
+
+            try
+            {
+                using TcpListener reservation = new(IPAddress.IPv6Loopback, 0);
+                reservation.Start();
+                int port = ((IPEndPoint)reservation.LocalEndpoint).Port;
+                reservation.Stop();
+
+                using HttpListener listener = new();
+                listener.Prefixes.Add($"http://[::1]:{port}/");
+                listener.Start();
+                return true;
+            }
+            catch (HttpListenerException)
+            {
+                return false;
+            }
+            catch (SocketException)
+            {
+                return false;
+            }
+            catch (PlatformNotSupportedException)
+            {
+                return false;
+            }
         }
     }
 }

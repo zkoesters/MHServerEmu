@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Sockets;
 using MHServerEmu.Core.Logging;
 using MHServerEmu.Core.Network;
 using MHServerEmu.Core.Network.Web;
@@ -120,6 +122,14 @@ namespace MHServerEmu.PortalBridge
                 statusDict["PortalBridgeHandledRequests"] = _webService?.HandledRequests ?? 0;
         }
 
+        internal static string FormatListenUrl(string address, int port)
+        {
+            if (IPAddress.TryParse(address, out IPAddress ipAddress) && ipAddress.AddressFamily == AddressFamily.InterNetworkV6)
+                address = $"[{address}]";
+
+            return $"http://{address}:{port}/";
+        }
+
         private void TryStartListener()
         {
             if (_config.Enabled == false)
@@ -154,7 +164,7 @@ namespace MHServerEmu.PortalBridge
                 webService = new WebService(new WebServiceSettings
                 {
                     Name = "PortalBridge",
-                    ListenUrl = $"http://{settings.Address}:{settings.Port}/",
+                    ListenUrl = FormatListenUrl(settings.Address, settings.Port),
                     FallbackHandler = new PortalBridgeNotFoundWebHandler(),
                     RequestAuthorizer = new PortalBridgeRequestAuthorizer(validator),
                     ExceptionWriter = new PortalBridgeExceptionWriter(),
