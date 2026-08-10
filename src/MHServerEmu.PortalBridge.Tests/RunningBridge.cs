@@ -43,43 +43,56 @@ namespace MHServerEmu.PortalBridge.Tests
 
         internal static RunningBridge Start(GameServiceState? playerManagerState = GameServiceState.Running)
         {
-            byte[] key = RandomNumberGenerator.GetBytes(32);
-            string secretFile = Path.GetTempFileName();
-            PortalBridgeService service = null;
-            Thread thread = null;
+            return Start(playerManagerState, GetFreePort);
+        }
 
-            try
+        internal static RunningBridge Start(GameServiceState? playerManagerState, Func<int> portProvider)
+        {
+            const int MaxAttempts = 10;
+
+            ArgumentNullException.ThrowIfNull(portProvider);
+            for (int attempt = 0; attempt < MaxAttempts; attempt++)
             {
-                File.WriteAllText(secretFile, Convert.ToBase64String(key));
-                int port = GetFreePort();
-                Uri baseAddress = new($"http://127.0.0.1:{port}/");
-                PortalBridgeConfig config = new()
+                byte[] key = RandomNumberGenerator.GetBytes(32);
+                string secretFile = Path.GetTempFileName();
+                PortalBridgeService service = null;
+                Thread thread = null;
+                bool started = false;
+
+                try
                 {
-                    Enabled = true,
-                    Address = "127.0.0.1",
-                    Port = port,
-                    KeyId = "portal-primary",
-                    SecretFile = secretFile,
-                    ServerInstanceId = "4b56bb3d-8b6e-4be4-a754-2f99ab40f26a",
-                };
-                service = new PortalBridgeService(config, new PortalBridgeMetadata("1.0.2", PortalBridgeBuildMetadata.UpstreamCommit,
-                    "1.52.0.1700"), () => playerManagerState);
-                thread = new Thread(service.Run) { IsBackground = true };
-                thread.Start();
+                    File.WriteAllText(secretFile, Convert.ToBase64String(key));
+                    int port = portProvider();
+                    Uri baseAddress = new($"http://127.0.0.1:{port}/");
+                    PortalBridgeConfig config = new()
+                    {
+                        Enabled = true,
+                        Address = "127.0.0.1",
+                        Port = port,
+                        KeyId = "portal-primary",
+                        SecretFile = secretFile,
+                        ServerInstanceId = "4b56bb3d-8b6e-4be4-a754-2f99ab40f26a",
+                    };
+                    service = new PortalBridgeService(config, new PortalBridgeMetadata("1.0.2", PortalBridgeBuildMetadata.UpstreamCommit,
+                        "1.52.0.1700"), () => playerManagerState);
+                    thread = new Thread(service.Run) { IsBackground = true };
+                    thread.Start();
 
-                if (SpinWait.SpinUntil(() => service.IsAvailable, TimeSpan.FromSeconds(2)) == false)
-                    throw new TimeoutException("PortalBridge listener did not start within two seconds.");
+                    if (SpinWait.SpinUntil(() => service.State == GameServiceState.Running, TimeSpan.FromSeconds(2)) &&
+                        service.IsAvailable)
+                    {
+                        started = true;
+                        return new RunningBridge(key, secretFile, service, thread, baseAddress);
+                    }
+                }
+                finally
+                {
+                    if (started == false)
+                        StopAttempt(service, thread, key, secretFile);
+                }
+            }
 
-                return new RunningBridge(key, secretFile, service, thread, baseAddress);
-            }
-            catch
-            {
-                service?.Shutdown();
-                thread?.Join(TimeSpan.FromSeconds(2));
-                CryptographicOperations.ZeroMemory(key);
-                File.Delete(secretFile);
-                throw;
-            }
+            throw new InvalidOperationException($"Failed to start PortalBridge test listener after {MaxAttempts} attempts.");
         }
 
         internal HttpClient CreateSignedClient()
@@ -119,6 +132,21 @@ namespace MHServerEmu.PortalBridge.Tests
             using TcpListener listener = new(IPAddress.Loopback, 0);
             listener.Start();
             return ((IPEndPoint)listener.LocalEndpoint).Port;
+        }
+
+        private static void StopAttempt(PortalBridgeService service, Thread thread, byte[] key, string secretFile)
+        {
+            try
+            {
+                service?.Shutdown();
+                if (thread != null && thread.Join(TimeSpan.FromSeconds(2)) == false)
+                    throw new TimeoutException("PortalBridge service did not stop within two seconds.");
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(key);
+                File.Delete(secretFile);
+            }
         }
 
         private static void AddSignature(HttpRequestMessage request, byte[] key, string nonce)

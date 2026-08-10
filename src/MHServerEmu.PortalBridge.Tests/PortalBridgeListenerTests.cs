@@ -1,5 +1,7 @@
 using System.Net;
+using System.Net.Sockets;
 using System.Text.Json;
+using MHServerEmu.Core.Network;
 using MHServerEmu.PortalBridge.Handlers;
 
 namespace MHServerEmu.PortalBridge.Tests
@@ -117,6 +119,23 @@ namespace MHServerEmu.PortalBridge.Tests
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         }
 
+        [Fact]
+        public void Start_BindFailure_RetriesOnNewLoopbackPort()
+        {
+            using TcpListener occupied = new(IPAddress.Loopback, 0);
+            occupied.Start();
+            int occupiedPort = ((IPEndPoint)occupied.LocalEndpoint).Port;
+            int attempts = 0;
+
+            using RunningBridge bridge = RunningBridge.Start(GameServiceState.Running, () =>
+            {
+                attempts++;
+                return attempts == 1 ? occupiedPort : GetFreePort();
+            });
+
+            Assert.True(attempts >= 2);
+        }
+
         [Theory]
         [InlineData(true)]
         [InlineData(false)]
@@ -136,6 +155,13 @@ namespace MHServerEmu.PortalBridge.Tests
             Assert.Equal(new[] { "code", "correlationId" }, json.RootElement.EnumerateObject().Select(property => property.Name));
             Assert.Equal("bridge_authentication_failed", json.RootElement.GetProperty("code").GetString());
             Assert.NotEqual(Guid.Empty, json.RootElement.GetProperty("correlationId").GetGuid());
+        }
+
+        private static int GetFreePort()
+        {
+            using TcpListener listener = new(IPAddress.Loopback, 0);
+            listener.Start();
+            return ((IPEndPoint)listener.LocalEndpoint).Port;
         }
     }
 }
