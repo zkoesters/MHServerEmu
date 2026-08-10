@@ -148,6 +148,25 @@ namespace MHServerEmu.PortalBridge.Tests
             using HttpResponseMessage response = await bridge.Client.SendAsync(request);
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using JsonDocument json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Equal(new[]
+                {
+                    "contractVersion",
+                    "emulatorVersion",
+                    "upstreamCommit",
+                    "gameBuild",
+                    "snapshotSchemaVersion",
+                    "serverInstanceId",
+                    "capabilities",
+                }, json.RootElement.EnumerateObject().Select(property => property.Name));
+            Assert.Equal("1.0", json.RootElement.GetProperty("contractVersion").GetString());
+            Assert.Equal("1.0.2", json.RootElement.GetProperty("emulatorVersion").GetString());
+            Assert.Equal(PortalBridgeBuildMetadata.UpstreamCommit, json.RootElement.GetProperty("upstreamCommit").GetString());
+            Assert.Equal("1.52.0.1700", json.RootElement.GetProperty("gameBuild").GetString());
+            Assert.Equal(1, json.RootElement.GetProperty("snapshotSchemaVersion").GetInt32());
+            Assert.Equal(Guid.Parse("4b56bb3d-8b6e-4be4-a754-2f99ab40f26a"),
+                json.RootElement.GetProperty("serverInstanceId").GetGuid());
+            Assert.Equal(new[] { "bridge.health" }, json.RootElement.GetProperty("capabilities").EnumerateArray().Select(item => item.GetString()));
         }
 
         [Theory]
