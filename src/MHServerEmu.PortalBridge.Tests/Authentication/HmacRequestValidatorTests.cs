@@ -19,6 +19,16 @@ namespace MHServerEmu.PortalBridge.Tests.Authentication
         }
 
         [Fact]
+        public void PortalBridgeRequest_HeadersReturnedArrayMutation_DoesNotChangeValidationSnapshot()
+        {
+            PortalBridgeRequest request = TestRequestFactory.Create();
+            request.Headers[HmacRequestValidator.SignatureHeader][0] = new string('0', 64);
+            using HmacRequestValidator validator = TestRequestFactory.CreateValidator();
+
+            Assert.True(validator.TryValidate(request, out _));
+        }
+
+        [Fact]
         public void TryValidate_ValidRequest_AcceptsAndReturnsOperationId()
         {
             Guid operationId = Guid.Parse("4b56bb3d-8b6e-4be4-a754-2f99ab40f26a");

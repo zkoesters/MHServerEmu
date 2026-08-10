@@ -77,7 +77,7 @@ namespace MHServerEmu.PortalBridge.Authentication
 
         private static Guid ReadCorrelationId(PortalBridgeRequest request)
         {
-            if (request?.Headers.TryGetValue(OperationIdHeader, out string[] values) == true && values?.Length == 1 &&
+            if (request?.TryGetHeaderValues(OperationIdHeader, out string[] values) == true && values?.Length == 1 &&
                 Guid.TryParseExact(values[0], "D", out Guid operationId))
                 return operationId;
 
@@ -109,7 +109,7 @@ namespace MHServerEmu.PortalBridge.Authentication
         private static bool TryGetSingleValue(PortalBridgeRequest request, string name, out string value)
         {
             value = null;
-            if (request.Headers.TryGetValue(name, out string[] values) == false || values?.Length != 1)
+            if (request.TryGetHeaderValues(name, out string[] values) == false || values?.Length != 1)
                 return false;
 
             value = values[0];
