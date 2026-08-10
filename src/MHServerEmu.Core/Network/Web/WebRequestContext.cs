@@ -18,9 +18,13 @@ namespace MHServerEmu.Core.Network.Web
 
         public string UserAgent { get => _httpRequest.UserAgent; }
         public string LocalPath { get => _httpRequest.Url.LocalPath; }
+        public string RawUrl { get => _httpRequest.RawUrl; }
         public string HttpMethod { get => _httpRequest.HttpMethod; }
         public string XForwardedFor { get => _httpRequest.Headers["X-Forwarded-For"]; }
         public string Authorization { get => _httpRequest.Headers["Authorization"]; }
+        public bool HasEntityBody { get => _httpRequest.HasEntityBody; }
+        public long ContentLength64 { get => _httpRequest.ContentLength64; }
+        public string TransferEncoding { get => _httpRequest.Headers["Transfer-Encoding"]; }
 
         public bool IsGameClientRequest { get => UserAgent.Equals("Secret Identity Studios Http Client", StringComparison.InvariantCulture); }
 
@@ -63,6 +67,16 @@ namespace MHServerEmu.Core.Network.Web
                 return null;
 
             return data[1];
+        }
+
+        public string GetHeader(string name)
+        {
+            return _httpRequest.Headers[name];
+        }
+
+        public string[] GetHeaderValues(string name)
+        {
+            return _httpRequest.Headers.GetValues(name);
         }
 
         public void Redirect(string url)
@@ -185,9 +199,9 @@ namespace MHServerEmu.Core.Network.Web
         /// <summary>
         /// Asynchronously responds to the request with the provided <typeparamref name="T"/> instance serialized to JSON.
         /// </summary>
-        public async Task SendJsonAsync<T>(T @object)
+        public async Task SendJsonAsync<T>(T @object, string contentType = "application/json")
         {
-            _httpResponse.ContentType = "application/json";
+            _httpResponse.ContentType = contentType;
             await JsonSerializer.SerializeAsync(_httpResponse.OutputStream, @object);
         }
     }

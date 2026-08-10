@@ -42,14 +42,17 @@ namespace MHServerEmu.Core.Network.Web
 
             string url = Settings.ListenUrl;
 
-            _listener = new();
-            _listener.Prefixes.Add(url);
-            _listener.Start();
+            HttpListener listener = new();
+            listener.Prefixes.Add(url);
+            listener.Start();
 
-            _cts = new();
-            Task.Run(HandleRequestsAsync);
+            CancellationTokenSource cts = new();
+
+            _listener = listener;
+            _cts = cts;
 
             IsRunning = true;
+            Task.Run(() => HandleRequestsAsync(listener, cts.Token));
             return true;
         }
 
@@ -58,20 +61,26 @@ namespace MHServerEmu.Core.Network.Web
         /// </summary>
         public bool Stop()
         {
-            if (IsRunning == false)
+            if (_listener == null && _cts == null)
                 return false;
 
-            Debug.Assert(_listener != null);
-            Debug.Assert(_cts != null);
+            HttpListener listener = _listener;
+            CancellationTokenSource cts = _cts;
 
-            _cts.Cancel();
-            _cts.Dispose();
             _cts = null;
-
-            _listener.Stop();
             _listener = null;
-
             IsRunning = false;
+
+            try
+            {
+                cts?.Cancel();
+                listener?.Close();
+            }
+            finally
+            {
+                cts?.Dispose();
+            }
+
             return true;
         }
 
@@ -119,40 +128,102 @@ namespace MHServerEmu.Core.Network.Web
             return removed;
         }
 
+        internal async Task WriteExceptionAsync(WebRequestContext context, Exception exception)
+        {
+            context.StatusCode = (int)HttpStatusCode.InternalServerError;
+
+            IWebExceptionWriter exceptionWriter = Settings.ExceptionWriter;
+            if (exceptionWriter == null)
+                return;
+
+            try
+            {
+                await exceptionWriter.WriteAsync(context, exception);
+            }
+            catch (Exception e)
+            {
+                context.StatusCode = (int)HttpStatusCode.InternalServerError;
+                Logger.Warn($"WriteExceptionAsync(): {e}");
+            }
+        }
+
         /// <summary>
         /// Handles incoming requests asynchronously.
         /// </summary>
-        private async Task HandleRequestsAsync()
+        private async Task HandleRequestsAsync(HttpListener listener, CancellationToken cancellationToken)
         {
             Logger.Info($"{this} is listening on {Settings.ListenUrl}...");
 
-            while (_cts.IsCancellationRequested == false)
+            try
             {
-                try
+                while (cancellationToken.IsCancellationRequested == false)
                 {
-                    HttpListenerContext httpContext = await _listener.GetContextAsync().WaitAsync(_cts.Token);
+                    HttpListenerContext httpContext;
+
+                    try
+                    {
+                        httpContext = await listener.GetContextAsync().WaitAsync(cancellationToken);
+                    }
+                    catch (TaskCanceledException)
+                    {
+                        return;
+                    }
+                    catch (Exception e)
+                    {
+                        Logger.Error($"HandleRequestsAsync(): {e}");
+                        return;
+                    }
+
                     WebRequestContext requestContext = new(httpContext);
 
-                    // This may be either a registered handler or a fallback handler.
-                    WebHandler handler = GetHandler(requestContext.LocalPath);
-                    await handler?.HandleAsync(requestContext);
+                    try
+                    {
+                        await HandleRequestAsync(requestContext);
+                    }
+                    catch (Exception e)
+                    {
+                        Logger.Warn($"Error handling {requestContext}: {e}");
+                        await WriteExceptionAsync(requestContext, e);
+                    }
+                    finally
+                    {
+                        try
+                        {
+                            httpContext.Response.Close();
+                        }
+                        catch (Exception e)
+                        {
+                            Logger.Warn($"Failed to close response for {requestContext}: {e}");
+                        }
 
-                    httpContext.Response.Close();
-
-                    HandledRequests++;
-                }
-                catch (TaskCanceledException)
-                {
-                    return;
-                }
-                catch (Exception e)
-                {
-                    // NOTE: HandleRequest() should catch and handle exceptions when processing requests.
-                    // If we got to this part, something must be wrong with the listener.
-                    Logger.Error($"HandleRequestAsync(): {e}");
-                    return;
+                        HandledRequests++;
+                    }
                 }
             }
+            finally
+            {
+                IsRunning = false;
+            }
+        }
+
+        private async Task HandleRequestAsync(WebRequestContext requestContext)
+        {
+            IWebRequestAuthorizer requestAuthorizer = Settings.RequestAuthorizer;
+            if (requestAuthorizer != null && await requestAuthorizer.AuthorizeAsync(requestContext) == false)
+            {
+                requestContext.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            // This may be either a registered handler or a fallback handler.
+            WebHandler handler = GetHandler(requestContext.LocalPath);
+            if (handler == null)
+            {
+                requestContext.StatusCode = (int)HttpStatusCode.NotFound;
+                return;
+            }
+
+            await handler.HandleAsync(requestContext);
         }
     }
 }

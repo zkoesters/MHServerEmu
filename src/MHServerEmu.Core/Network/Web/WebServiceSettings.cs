@@ -5,5 +5,7 @@
         public string Name { get; init; }
         public string ListenUrl { get; init; }
         public WebHandler FallbackHandler { get; init; }
+        public IWebRequestAuthorizer RequestAuthorizer { get; init; }
+        public IWebExceptionWriter ExceptionWriter { get; init; }
     }
 }

@@ -65,8 +65,8 @@ namespace MHServerEmu.Core.Network.Web
             }
             catch (Exception e)
             {
-                context.StatusCode = (int)HttpStatusCode.InternalServerError;
                 Logger.Warn($"Error handling {context}: {e}");
+                await Service.WriteExceptionAsync(context, e);
             }
         }
 
