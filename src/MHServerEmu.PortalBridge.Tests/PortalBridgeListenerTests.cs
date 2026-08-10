@@ -17,8 +17,23 @@ namespace MHServerEmu.PortalBridge.Tests
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             using JsonDocument json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Equal(new[]
+                {
+                    "contractVersion",
+                    "emulatorVersion",
+                    "upstreamCommit",
+                    "gameBuild",
+                    "snapshotSchemaVersion",
+                    "serverInstanceId",
+                    "capabilities",
+                }, json.RootElement.EnumerateObject().Select(property => property.Name));
             Assert.Equal("1.0", json.RootElement.GetProperty("contractVersion").GetString());
+            Assert.Equal("1.0.2", json.RootElement.GetProperty("emulatorVersion").GetString());
             Assert.Equal(PortalBridgeBuildMetadata.UpstreamCommit, json.RootElement.GetProperty("upstreamCommit").GetString());
+            Assert.Equal("1.52.0.1700", json.RootElement.GetProperty("gameBuild").GetString());
+            Assert.Equal(1, json.RootElement.GetProperty("snapshotSchemaVersion").GetInt32());
+            Assert.Equal(Guid.Parse("4b56bb3d-8b6e-4be4-a754-2f99ab40f26a"),
+                json.RootElement.GetProperty("serverInstanceId").GetGuid());
             Assert.Equal(new[] { "bridge.health" }, json.RootElement.GetProperty("capabilities").EnumerateArray().Select(item => item.GetString()));
         }
 
@@ -57,7 +72,12 @@ namespace MHServerEmu.PortalBridge.Tests
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             using JsonDocument json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Equal(new[] { "status", "checkedAtUtc", "services" },
+                json.RootElement.EnumerateObject().Select(property => property.Name));
             Assert.Equal("healthy", json.RootElement.GetProperty("status").GetString());
+            Assert.True(DateTimeOffset.TryParse(json.RootElement.GetProperty("checkedAtUtc").GetString(), out _));
+            Assert.Equal(new[] { "bridge", "playerManager" },
+                json.RootElement.GetProperty("services").EnumerateObject().Select(property => property.Name));
             Assert.Equal("healthy", json.RootElement.GetProperty("services").GetProperty("bridge").GetString());
             Assert.Equal("healthy", json.RootElement.GetProperty("services").GetProperty("playerManager").GetString());
         }
@@ -82,6 +102,19 @@ namespace MHServerEmu.PortalBridge.Tests
             using HttpResponseMessage response = await bridge.Client.SendAsync(request);
 
             Assert.Equal(HttpStatusCode.MethodNotAllowed, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task TamperedPost_ReturnsUnauthorizedBeforeMethodDispatch()
+        {
+            using RunningBridge bridge = RunningBridge.Start();
+            using HttpRequestMessage request = bridge.CreateSignedRequest(CapabilitiesWebHandler.Path, HttpMethod.Post);
+            request.Headers.Remove("X-Portal-Signature");
+            request.Headers.TryAddWithoutValidation("X-Portal-Signature", new string('0', 64));
+
+            using HttpResponseMessage response = await bridge.Client.SendAsync(request);
+
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         }
 
         [Theory]
