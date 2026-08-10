@@ -19,10 +19,12 @@ namespace MHServerEmu.PortalBridge.Authentication
         private static readonly TimeSpan ClockSkew = TimeSpan.FromSeconds(60);
         private static readonly TimeSpan NonceRetention = TimeSpan.FromMinutes(5);
 
+        private readonly object _lock = new();
         private readonly byte[] _key;
         private readonly string _keyId;
         private readonly INonceReplayCache _replayCache;
         private readonly TimeProvider _timeProvider;
+        private bool _disposed;
 
         public HmacRequestValidator(ReadOnlySpan<byte> key, string keyId, INonceReplayCache replayCache,
             TimeProvider timeProvider)
@@ -40,48 +42,53 @@ namespace MHServerEmu.PortalBridge.Authentication
 
         public bool TryValidate(PortalBridgeRequest request, out Guid correlationId)
         {
-            correlationId = ReadCorrelationId(request);
-            if (TryReadSingleHeaders(request, out HeaderValues headers) == false)
-                return false;
-            if (headers.ContractVersion != ContractVersion || headers.KeyId != _keyId)
-                return false;
-            if (IsLowerHex(headers.Nonce, 32) == false || IsLowerHex(headers.BodyDigest, 64) == false ||
-                IsLowerHex(headers.Signature, 64) == false)
-                return false;
-            if (request.HasEntityBody || request.ContentLength64 > 0 ||
-                string.IsNullOrWhiteSpace(request.TransferEncoding) == false)
-                return false;
-            if (headers.BodyDigest != EmptyBodyDigest)
-                return false;
-            if (long.TryParse(headers.Timestamp, NumberStyles.None, CultureInfo.InvariantCulture, out long timestamp) == false)
-                return false;
+            correlationId = Guid.NewGuid();
+            lock (_lock)
+            {
+                if (_disposed)
+                    return false;
+                if (request == null || request.Method != "GET" || string.IsNullOrEmpty(request.RawUrl))
+                    return false;
+                if (TryReadSingleHeaders(request, out HeaderValues headers) == false)
+                    return false;
+                if (headers.ContractVersion != ContractVersion || headers.KeyId != _keyId)
+                    return false;
+                if (IsLowerHex(headers.Nonce, 32) == false || IsLowerHex(headers.BodyDigest, 64) == false ||
+                    IsLowerHex(headers.Signature, 64) == false)
+                    return false;
+                if (request.HasEntityBody || request.ContentLength64 > 0 ||
+                    string.IsNullOrWhiteSpace(request.TransferEncoding) == false)
+                    return false;
+                if (headers.BodyDigest != EmptyBodyDigest)
+                    return false;
+                if (long.TryParse(headers.Timestamp, NumberStyles.None, CultureInfo.InvariantCulture, out long timestamp) == false)
+                    return false;
 
-            long now = _timeProvider.GetUtcNow().ToUnixTimeSeconds();
-            if (timestamp < now - (long)ClockSkew.TotalSeconds || timestamp > now + (long)ClockSkew.TotalSeconds)
-                return false;
+                long now = _timeProvider.GetUtcNow().ToUnixTimeSeconds();
+                if (timestamp < now - (long)ClockSkew.TotalSeconds || timestamp > now + (long)ClockSkew.TotalSeconds)
+                    return false;
 
-            string canonical = string.Join('\n', request.Method.ToUpperInvariant(), request.RawUrl, headers.Timestamp,
-                headers.Nonce, headers.BodyDigest);
-            byte[] expected = HMACSHA256.HashData(_key, Encoding.UTF8.GetBytes(canonical));
-            byte[] supplied = Convert.FromHexString(headers.Signature);
-            if (CryptographicOperations.FixedTimeEquals(expected, supplied) == false)
-                return false;
+                string canonical = string.Join('\n', request.Method, request.RawUrl, headers.Timestamp, headers.Nonce,
+                    headers.BodyDigest);
+                byte[] expected = HMACSHA256.HashData(_key, Encoding.UTF8.GetBytes(canonical));
+                byte[] supplied = Convert.FromHexString(headers.Signature);
+                if (CryptographicOperations.FixedTimeEquals(expected, supplied) == false)
+                    return false;
 
-            return _replayCache.TryReserve(headers.Nonce, _timeProvider.GetUtcNow(), NonceRetention);
+                return _replayCache.TryReserve(headers.Nonce, _timeProvider.GetUtcNow(), NonceRetention);
+            }
         }
 
         public void Dispose()
         {
-            CryptographicOperations.ZeroMemory(_key);
-        }
+            lock (_lock)
+            {
+                if (_disposed)
+                    return;
 
-        private static Guid ReadCorrelationId(PortalBridgeRequest request)
-        {
-            if (request?.TryGetHeaderValues(OperationIdHeader, out string[] values) == true && values?.Length == 1 &&
-                Guid.TryParseExact(values[0], "D", out Guid operationId))
-                return operationId;
-
-            return Guid.NewGuid();
+                _disposed = true;
+                CryptographicOperations.ZeroMemory(_key);
+            }
         }
 
         private static bool TryReadSingleHeaders(PortalBridgeRequest request, out HeaderValues headers)

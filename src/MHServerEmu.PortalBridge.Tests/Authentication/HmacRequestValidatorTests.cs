@@ -29,7 +29,7 @@ namespace MHServerEmu.PortalBridge.Tests.Authentication
         }
 
         [Fact]
-        public void TryValidate_ValidRequest_AcceptsAndReturnsOperationId()
+        public void TryValidate_ValidRequest_AcceptsAndReturnsGeneratedCorrelationId()
         {
             Guid operationId = Guid.Parse("4b56bb3d-8b6e-4be4-a754-2f99ab40f26a");
             PortalBridgeRequest request = TestRequestFactory.Create(operationId: operationId);
@@ -38,7 +38,20 @@ namespace MHServerEmu.PortalBridge.Tests.Authentication
             bool result = validator.TryValidate(request, out Guid correlationId);
 
             Assert.True(result);
-            Assert.Equal(operationId, correlationId);
+            Assert.NotEqual(Guid.Empty, correlationId);
+            Assert.NotEqual(operationId, correlationId);
+        }
+
+        [Fact]
+        public void TryValidate_OperationIdChangedAfterSigning_AcceptsAndReturnsGeneratedCorrelationId()
+        {
+            Guid operationId = Guid.Parse("1b56bb3d-8b6e-4be4-a754-2f99ab40f26a");
+            PortalBridgeRequest request = TestRequestFactory.Create(mutateHeaders: headers =>
+                headers[HmacRequestValidator.OperationIdHeader] = new[] { operationId.ToString("D") });
+            using HmacRequestValidator validator = TestRequestFactory.CreateValidator();
+
+            Assert.True(validator.TryValidate(request, out Guid correlationId));
+            Assert.NotEqual(operationId, correlationId);
         }
 
         [Theory]
@@ -117,6 +130,34 @@ namespace MHServerEmu.PortalBridge.Tests.Authentication
             Assert.False(validator.TryValidate(request, out _));
         }
 
+        [Theory]
+        [InlineData("get")]
+        [InlineData("POST")]
+        [InlineData("")]
+        [InlineData(null)]
+        public void TryValidate_UnsupportedMethod_Rejects(string method)
+        {
+            Dictionary<string, string[]> headers = TestRequestFactory.CreateSignedHeaders("GET", "/portal-bridge/v1/health",
+                TestRequestFactory.FixedNow.ToUnixTimeSeconds(), "00112233445566778899aabbccddeeff", Guid.NewGuid());
+            PortalBridgeRequest request = new(method, "/portal-bridge/v1/health", false, 0, null, headers);
+            using HmacRequestValidator validator = TestRequestFactory.CreateValidator();
+
+            Assert.False(validator.TryValidate(request, out _));
+        }
+
+        [Theory]
+        [InlineData("")]
+        [InlineData(null)]
+        public void TryValidate_MissingRawUrl_Rejects(string rawUrl)
+        {
+            Dictionary<string, string[]> headers = TestRequestFactory.CreateSignedHeaders("GET", "/portal-bridge/v1/health",
+                TestRequestFactory.FixedNow.ToUnixTimeSeconds(), "00112233445566778899aabbccddeeff", Guid.NewGuid());
+            PortalBridgeRequest request = new("GET", rawUrl, false, 0, null, headers);
+            using HmacRequestValidator validator = TestRequestFactory.CreateValidator();
+
+            Assert.False(validator.TryValidate(request, out _));
+        }
+
         [Fact]
         public void TryValidate_EntityBody_Rejects()
         {
@@ -186,6 +227,19 @@ namespace MHServerEmu.PortalBridge.Tests.Authentication
             byte[] ownedKey = (byte[])typeof(HmacRequestValidator)
                 .GetField("_key", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(validator);
             Assert.Equal(new byte[32], ownedKey);
+        }
+
+        [Fact]
+        public void TryValidate_AfterDispose_RejectsWithGeneratedCorrelationId()
+        {
+            Guid operationId = Guid.Parse("4b56bb3d-8b6e-4be4-a754-2f99ab40f26a");
+            PortalBridgeRequest request = TestRequestFactory.Create(operationId);
+            using HmacRequestValidator validator = TestRequestFactory.CreateValidator();
+            validator.Dispose();
+
+            Assert.False(validator.TryValidate(request, out Guid correlationId));
+            Assert.NotEqual(Guid.Empty, correlationId);
+            Assert.NotEqual(operationId, correlationId);
         }
 
         public static IEnumerable<object[]> RequiredHeaders()

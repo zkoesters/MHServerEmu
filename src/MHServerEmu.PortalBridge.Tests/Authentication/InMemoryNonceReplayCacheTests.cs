@@ -40,5 +40,34 @@ namespace MHServerEmu.PortalBridge.Tests.Authentication
 
             Assert.Equal(1, accepted);
         }
+
+        [Fact]
+        public void TryReserve_CapacityReached_RejectsNewNonce()
+        {
+            InMemoryNonceReplayCache cache = new();
+            DateTimeOffset now = DateTimeOffset.FromUnixTimeSeconds(1710000000);
+
+            for (int index = 0; index < InMemoryNonceReplayCache.Capacity; index++)
+                Assert.True(cache.TryReserve(CreateNonce(index), now, TimeSpan.FromMinutes(5)));
+
+            Assert.False(cache.TryReserve(CreateNonce(InMemoryNonceReplayCache.Capacity), now, TimeSpan.FromMinutes(5)));
+        }
+
+        [Fact]
+        public void TryReserve_ExpiredCapacityEntries_AllowNewNonce()
+        {
+            InMemoryNonceReplayCache cache = new();
+            DateTimeOffset now = DateTimeOffset.FromUnixTimeSeconds(1710000000);
+
+            for (int index = 0; index < InMemoryNonceReplayCache.Capacity; index++)
+                Assert.True(cache.TryReserve(CreateNonce(index), now, TimeSpan.FromMinutes(5)));
+
+            Assert.True(cache.TryReserve(CreateNonce(InMemoryNonceReplayCache.Capacity), now.AddMinutes(5), TimeSpan.FromMinutes(5)));
+        }
+
+        private static string CreateNonce(int value)
+        {
+            return value.ToString("x32");
+        }
     }
 }
