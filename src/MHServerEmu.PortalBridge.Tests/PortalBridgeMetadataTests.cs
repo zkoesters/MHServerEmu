@@ -3,9 +3,9 @@ namespace MHServerEmu.PortalBridge.Tests
     public class PortalBridgeMetadataTests
     {
         [Fact]
-        public void UpstreamCommit_MasterBranch_MatchesApprovedBase()
+        public void UpstreamCommit_ReleaseBranch_MatchesApprovedBase()
         {
-            Assert.Equal("7ae81f6ba8816ad86c156c44b3284a5f271aa61f", PortalBridgeBuildMetadata.UpstreamCommit);
+            Assert.Equal("405d278054abfed20fc470800056df72d42f2b82", PortalBridgeBuildMetadata.UpstreamCommit);
         }
 
         [Theory]

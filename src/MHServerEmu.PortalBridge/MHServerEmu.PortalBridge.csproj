@@ -5,14 +5,14 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>disable</Nullable>
     <Platforms>x64</Platforms>
-    <Configurations>Debug;Release;Debug 1.48;Release 1.48;Debug 1.53;Release 1.53</Configurations>
-    <AssemblyVersion>1.0.2.0</AssemblyVersion>
+    <Configurations>Debug;Release</Configurations>
+    <AssemblyVersion>1.0.1.0</AssemblyVersion>
     <FileVersion>$(AssemblyVersion)</FileVersion>
     <InformationalVersion>$(AssemblyVersion)</InformationalVersion>
   </PropertyGroup>
 
   <ItemGroup>
-    <AssemblyMetadata Include="PortalBridgeUpstreamCommit" Value="7ae81f6ba8816ad86c156c44b3284a5f271aa61f" />
+    <AssemblyMetadata Include="PortalBridgeUpstreamCommit" Value="405d278054abfed20fc470800056df72d42f2b82" />
     <ProjectReference Include="..\MHServerEmu.Core\MHServerEmu.Core.csproj" />
   </ItemGroup>
 

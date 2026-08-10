@@ -64,10 +64,10 @@ namespace MHServerEmu.PortalBridge.Tests.Contract
         }
 
         [Fact]
-        public void BuildMetadata_MatchesMasterUpstreamBase()
+        public void BuildMetadata_MatchesReleaseUpstreamBase()
         {
             Assert.True(IsLowercaseCommit(PortalBridgeBuildMetadata.UpstreamCommit));
-            Assert.Equal("7ae81f6ba8816ad86c156c44b3284a5f271aa61f", PortalBridgeBuildMetadata.UpstreamCommit);
+            Assert.Equal("405d278054abfed20fc470800056df72d42f2b82", PortalBridgeBuildMetadata.UpstreamCommit);
         }
 
         private static void AssertOperation(YamlMappingNode path, string operationId, string responseSchema)
