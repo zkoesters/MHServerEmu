@@ -73,7 +73,7 @@ namespace MHServerEmu.PortalBridge.Tests
         [InlineData("bad\u0001address")]
         public void TryCreateSettings_InvalidAddress_FailsWithoutSecretContents(string address)
         {
-            AssertInvalidConfiguration(address, 8090, "portal-primary", "4b56bb3d-8b6e-4be4-a754-2f99ab40f26a");
+            AssertInvalidAddress(address);
         }
 
         [Theory]
@@ -81,15 +81,19 @@ namespace MHServerEmu.PortalBridge.Tests
         [InlineData(":")]
         [InlineData("127.0.0.1:8090")]
         [InlineData("host name")]
+        [InlineData("20.2")]
+        [InlineData("0x2F")]
+        [InlineData("1.1.1.010")]
         public void TryCreateSettings_InvalidAddressGrammar_FailsWithoutSecretContents(string address)
         {
-            AssertInvalidConfiguration(address, 8090, "portal-primary", "4b56bb3d-8b6e-4be4-a754-2f99ab40f26a");
+            AssertInvalidAddress(address);
         }
 
         [Theory]
         [InlineData("*")]
         [InlineData("+")]
         [InlineData("127.0.0.1")]
+        [InlineData("::1")]
         [InlineData("bridge.example.test")]
         public void TryCreateSettings_ValidAddressGrammar_AcceptsAddress(string address)
         {
@@ -246,6 +250,24 @@ namespace MHServerEmu.PortalBridge.Tests
 
             Assert.False(config.TryCreateSettings(out _, out string error));
             Assert.DoesNotContain(secretContents, error, StringComparison.Ordinal);
+        }
+
+        private static void AssertInvalidAddress(string address)
+        {
+            string secretFile = Path.GetTempFileName();
+            File.WriteAllText(secretFile, Convert.ToBase64String(new byte[32]));
+            PortalBridgeConfig config = CreateValidConfiguration(secretFile);
+            config.Address = address;
+
+            try
+            {
+                Assert.False(config.TryCreateSettings(out _, out string error));
+                Assert.Equal("PortalBridge address is invalid.", error);
+            }
+            finally
+            {
+                File.Delete(secretFile);
+            }
         }
 
         private static PortalBridgeConfig CreateValidConfiguration(string secretFile)

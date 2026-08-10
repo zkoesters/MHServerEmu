@@ -97,8 +97,8 @@ namespace MHServerEmu.PortalBridge
             if (address is "*" or "+")
                 return true;
 
-            if (IPAddress.TryParse(address, out _))
-                return true;
+            if (IPAddress.TryParse(address, out IPAddress ipAddress))
+                return ipAddress.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork || IsCanonicalIPv4(address);
 
             if (address.Length > 253 || address.Contains(':'))
                 return false;
@@ -111,6 +111,33 @@ namespace MHServerEmu.PortalBridge
                     return false;
 
                 if (label.Any(character => char.IsAsciiLetterOrDigit(character) == false && character != '-'))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static bool IsCanonicalIPv4(string address)
+        {
+            string[] octets = address.Split('.');
+            if (octets.Length != 4)
+                return false;
+
+            foreach (string octet in octets)
+            {
+                if (octet.Length is < 1 or > 3 || (octet.Length > 1 && octet[0] == '0'))
+                    return false;
+
+                int value = 0;
+                foreach (char character in octet)
+                {
+                    if (character is < '0' or > '9')
+                        return false;
+
+                    value = value * 10 + character - '0';
+                }
+
+                if (value > 255)
                     return false;
             }
 
