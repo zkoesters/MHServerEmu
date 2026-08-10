@@ -97,7 +97,13 @@ namespace MHServerEmu.Core.Helpers
         /// </summary>
         public static void SaveTextFileToRoot(string fileName, string text)
         {
-            File.WriteAllText(Path.Combine(RuntimeDirectory, fileName), text);
+            SaveTextFileToDirectory(RuntimeDirectory, fileName, text);
+        }
+
+        internal static void SaveTextFileToDirectory(string directory, string fileName, string text)
+        {
+            Directory.CreateDirectory(directory);
+            File.WriteAllText(Path.Combine(directory, fileName), text);
         }
 
         /// <summary>
