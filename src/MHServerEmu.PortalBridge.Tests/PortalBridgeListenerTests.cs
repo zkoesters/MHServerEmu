@@ -26,7 +26,7 @@ namespace MHServerEmu.PortalBridge.Tests
             Assert.Equal(new[] { "emulatorAccountId" }, json.RootElement.EnumerateObject().Select(property => property.Name));
             string externalAccountId = json.RootElement.GetProperty("emulatorAccountId").GetString();
             Assert.StartsWith("acct_", externalAccountId, StringComparison.Ordinal);
-            Assert.NotEqual(database.Database.Account.Id.ToString(), externalAccountId);
+            Assert.DoesNotContain(database.Database.Account.Id.ToString(), externalAccountId, StringComparison.Ordinal);
         }
 
         [Theory]
