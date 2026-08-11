@@ -111,9 +111,10 @@ namespace MHServerEmu.PortalBridge.Tests
             return new HttpClient(new SigningHandler(_key)) { BaseAddress = _baseAddress };
         }
 
-        internal HttpRequestMessage CreateSignedRequest(string rawUrl, HttpMethod method = null, string nonce = null)
+        internal HttpRequestMessage CreateSignedRequest(string rawUrl, HttpMethod method = null, string nonce = null,
+            HttpContent content = null)
         {
-            HttpRequestMessage request = new(method ?? HttpMethod.Get, new Uri(_baseAddress, rawUrl));
+            HttpRequestMessage request = new(method ?? HttpMethod.Get, new Uri(_baseAddress, rawUrl)) { Content = content };
             AddSignature(request, _key, nonce);
             return request;
         }

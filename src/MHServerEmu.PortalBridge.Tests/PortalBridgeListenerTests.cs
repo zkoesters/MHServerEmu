@@ -24,7 +24,52 @@ namespace MHServerEmu.PortalBridge.Tests
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(new[] { "emulatorAccountId" }, json.RootElement.EnumerateObject().Select(property => property.Name));
-            Assert.False(string.IsNullOrWhiteSpace(json.RootElement.GetProperty("emulatorAccountId").GetString()));
+            string externalAccountId = json.RootElement.GetProperty("emulatorAccountId").GetString();
+            Assert.StartsWith("acct_", externalAccountId, StringComparison.Ordinal);
+            Assert.NotEqual(database.Database.Account.Id.ToString(), externalAccountId);
+        }
+
+        [Theory]
+        [InlineData(PortalAuthenticationWebHandler.RegisterPath, "{\"email\":\"player@example.test\",\"playerName\":\"StarLord\",\"password\":\"correct horse battery staple\"}")]
+        [InlineData(PortalAuthenticationWebHandler.VerifyPath, "{\"identifier\":\"player@example.test\",\"password\":\"correct horse battery staple\"}")]
+        public async Task Authentication_CredentialsUnsupportedBackend_ReturnsUnavailable(string path, string requestBody)
+        {
+            using AccountDatabaseScope database = new(verifyAccounts: false);
+            using RunningBridge bridge = RunningBridge.Start();
+            using HttpClient client = bridge.CreateSignedClient();
+
+            using HttpResponseMessage response = await client.PostAsync(path, JsonContent(requestBody));
+            using JsonDocument json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+            Assert.Equal("account_service_unavailable", json.RootElement.GetProperty("code").GetString());
+        }
+
+        [Fact]
+        public async Task Register_SignedNonEmptyBody_ReturnsAccount()
+        {
+            using AccountDatabaseScope database = new();
+            using RunningBridge bridge = RunningBridge.Start();
+            using HttpClient client = bridge.CreateSignedClient();
+
+            using HttpResponseMessage response = await client.PostAsync(PortalAuthenticationWebHandler.RegisterPath,
+                JsonContent("{\"email\":\"player@example.test\",\"playerName\":\"StarLord\",\"password\":\"correct horse battery staple\"}"));
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task Register_BodyMutatedAfterSigning_ReturnsUnauthorized()
+        {
+            using AccountDatabaseScope database = new();
+            using RunningBridge bridge = RunningBridge.Start();
+            using HttpRequestMessage request = bridge.CreateSignedRequest(PortalAuthenticationWebHandler.RegisterPath, HttpMethod.Post,
+                content: JsonContent("{\"email\":\"player@example.test\",\"playerName\":\"StarLord\",\"password\":\"correct horse battery staple\"}"));
+            request.Content = JsonContent("{\"email\":\"player@example.test\",\"playerName\":\"Nova\",\"password\":\"correct horse battery staple\"}");
+
+            using HttpResponseMessage response = await bridge.Client.SendAsync(request);
+
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         }
 
         [Theory]
@@ -53,8 +98,10 @@ namespace MHServerEmu.PortalBridge.Tests
             using AccountDatabaseScope database = new();
             using RunningBridge bridge = RunningBridge.Start();
             using HttpClient client = bridge.CreateSignedClient();
-            await client.PostAsync(PortalAuthenticationWebHandler.RegisterPath,
+            using HttpResponseMessage registration = await client.PostAsync(PortalAuthenticationWebHandler.RegisterPath,
                 JsonContent("{\"email\":\"player@example.test\",\"playerName\":\"StarLord\",\"password\":\"correct horse battery staple\"}"));
+            using JsonDocument registrationJson = JsonDocument.Parse(await registration.Content.ReadAsStringAsync());
+            string externalAccountId = registrationJson.RootElement.GetProperty("emulatorAccountId").GetString();
 
             using HttpResponseMessage response = await client.PostAsync(PortalAuthenticationWebHandler.VerifyPath,
                 JsonContent($"{{\"identifier\":\"{identifier}\",\"password\":\"correct horse battery staple\"}}"));
@@ -62,6 +109,7 @@ namespace MHServerEmu.PortalBridge.Tests
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(new[] { "emulatorAccountId" }, json.RootElement.EnumerateObject().Select(property => property.Name));
+            Assert.Equal(externalAccountId, json.RootElement.GetProperty("emulatorAccountId").GetString());
         }
 
         [Theory]
@@ -277,10 +325,12 @@ namespace MHServerEmu.PortalBridge.Tests
         private sealed class AccountDatabaseScope : IDisposable
         {
             private readonly IDBManager _previous = IDBManager.Instance;
+            public InMemoryAccountDatabase Database { get; }
 
-            public AccountDatabaseScope()
+            public AccountDatabaseScope(bool verifyAccounts = true)
             {
-                IDBManager.Instance = new InMemoryAccountDatabase();
+                Database = new InMemoryAccountDatabase(verifyAccounts);
+                IDBManager.Instance = Database;
             }
 
             public void Dispose()
@@ -292,6 +342,15 @@ namespace MHServerEmu.PortalBridge.Tests
         private sealed class InMemoryAccountDatabase : IDBManager
         {
             private readonly Dictionary<string, DBAccount> _accountsByEmail = new(StringComparer.OrdinalIgnoreCase);
+            private readonly bool _verifyAccounts;
+
+            public DBAccount Account { get => Assert.Single(_accountsByEmail.Values); }
+            public bool VerifyAccounts { get => _verifyAccounts; }
+
+            public InMemoryAccountDatabase(bool verifyAccounts)
+            {
+                _verifyAccounts = verifyAccounts;
+            }
 
             public bool TryQueryAccountByEmail(string email, out DBAccount account) => _accountsByEmail.TryGetValue(email, out account);
 

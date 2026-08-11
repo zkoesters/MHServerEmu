@@ -90,6 +90,11 @@ namespace MHServerEmu.PlayerManagement.Players
             return IDBManager.Instance.TryQueryAccountByPlayerName(playerName, out account);
         }
 
+        public static bool SupportsCredentialVerification()
+        {
+            return IDBManager.Instance.VerifyAccounts;
+        }
+
         public static bool TryVerifyAccount(string identifier, string password, out DBAccount account)
         {
             account = null;

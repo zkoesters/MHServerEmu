@@ -1,4 +1,5 @@
 ﻿using System.Text.Json.Serialization;
+using System.Security.Cryptography;
 using MHServerEmu.Core.Helpers;
 using MHServerEmu.Core.System;
 
@@ -39,6 +40,7 @@ namespace MHServerEmu.DatabaseAccess.Models
         public long Id { get; set; }
         public string Email { get; set; }
         public string PlayerName { get; set; }
+        public string PortalAccountId { get; set; }
         public byte[] PasswordHash { get; set; }
         public byte[] Salt { get; set; }
         public AccountUserLevel UserLevel { get; set; }
@@ -73,6 +75,7 @@ namespace MHServerEmu.DatabaseAccess.Models
             Id = (long)IdGenerator.Generate();
             Email = email;
             PlayerName = playerName;
+            PortalAccountId = "acct_" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
             PasswordHash = CryptographyHelper.HashPassword(password, out byte[] salt);
             Salt = salt;
             UserLevel = userLevel;
@@ -87,6 +90,7 @@ namespace MHServerEmu.DatabaseAccess.Models
             Id = 0x2000000000000001;
             Email = "default@mhserveremu";
             PlayerName = playerName;
+            PortalAccountId = "acct_" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
             PasswordHash = Array.Empty<byte>();
             Salt = Array.Empty<byte>();
             UserLevel = AccountUserLevel.Admin;
