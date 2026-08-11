@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Net;
 using MHServerEmu.Core.Network.Web;
 using MHServerEmu.DatabaseAccess.Models;
@@ -31,6 +30,12 @@ namespace MHServerEmu.PortalBridge.Handlers
 
         private static async Task RegisterAsync(WebRequestContext context)
         {
+            if (AccountManager.SupportsCredentialVerification() == false)
+            {
+                await WriteProblemAsync(context, HttpStatusCode.ServiceUnavailable, "account_service_unavailable");
+                return;
+            }
+
             PortalRegisterRequest request = await context.ReadJsonAsync<PortalRegisterRequest>();
             if (request == null || string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.PlayerName) ||
                 string.IsNullOrEmpty(request.Password))
@@ -43,7 +48,7 @@ namespace MHServerEmu.PortalBridge.Handlers
                 out DBAccount account);
             if (result == AccountOperationResult.Success)
             {
-                await context.SendJsonAsync(new EmulatorAccountResponse(AccountId(account)));
+                await context.SendJsonAsync(new EmulatorAccountResponse(account.PortalAccountId));
                 return;
             }
 
@@ -62,6 +67,12 @@ namespace MHServerEmu.PortalBridge.Handlers
 
         private static async Task VerifyAsync(WebRequestContext context)
         {
+            if (AccountManager.SupportsCredentialVerification() == false)
+            {
+                await WriteProblemAsync(context, HttpStatusCode.ServiceUnavailable, "account_service_unavailable");
+                return;
+            }
+
             PortalVerifyRequest request = await context.ReadJsonAsync<PortalVerifyRequest>();
             if (request == null || AccountManager.TryVerifyAccount(request.Identifier, request.Password, out DBAccount account) == false)
             {
@@ -69,7 +80,7 @@ namespace MHServerEmu.PortalBridge.Handlers
                 return;
             }
 
-            await context.SendJsonAsync(new EmulatorAccountResponse(AccountId(account)));
+            await context.SendJsonAsync(new EmulatorAccountResponse(account.PortalAccountId));
         }
 
         private static Task WriteProblemAsync(WebRequestContext context, HttpStatusCode statusCode, string code)
@@ -78,9 +89,5 @@ namespace MHServerEmu.PortalBridge.Handlers
             return context.SendJsonAsync(new BridgeProblemResponse(code, Guid.NewGuid()), "application/problem+json");
         }
 
-        private static string AccountId(DBAccount account)
-        {
-            return account.Id.ToString(CultureInfo.InvariantCulture);
-        }
     }
 }

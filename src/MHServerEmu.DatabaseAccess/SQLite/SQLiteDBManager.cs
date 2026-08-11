@@ -13,7 +13,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
     /// </summary>
     public class SQLiteDBManager : IDBManager
     {
-        private const int CurrentSchemaVersion = 6;         // Increment this when making changes to the database schema
+        private const int CurrentSchemaVersion = 7;         // Increment this when making changes to the database schema
         private const int MinimumSchemaVersion = 6;         // Used to ignore legacy 0.x database files.
         private const int NumTestAccounts = 5;              // Number of test accounts to create for new database files
         private const int NumPlayerDataWriteAttempts = 3;   // Number of write attempts to do when saving player data
@@ -141,8 +141,8 @@ namespace MHServerEmu.DatabaseAccess.SQLite
 
                 try
                 {
-                    connection.Execute(@"INSERT INTO Account (Id, Email, PlayerName, PasswordHash, Salt, UserLevel, Flags)
-                        VALUES (@Id, @Email, @PlayerName, @PasswordHash, @Salt, @UserLevel, @Flags)", account);
+                    connection.Execute(@"INSERT INTO Account (Id, Email, PlayerName, PortalAccountId, PasswordHash, Salt, UserLevel, Flags)
+                        VALUES (@Id, @Email, @PlayerName, @PortalAccountId, @PasswordHash, @Salt, @UserLevel, @Flags)", account);
                     return true;
                 }
                 catch (Exception e)
@@ -161,7 +161,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
 
                 try
                 {
-                    connection.Execute(@"UPDATE Account SET Email=@Email, PlayerName=@PlayerName, PasswordHash=@PasswordHash, Salt=@Salt,
+                    connection.Execute(@"UPDATE Account SET Email=@Email, PlayerName=@PlayerName, PortalAccountId=@PortalAccountId, PasswordHash=@PasswordHash, Salt=@Salt,
                         UserLevel=@UserLevel, Flags=@Flags WHERE Id=@Id", account);
                     return true;
                 }
