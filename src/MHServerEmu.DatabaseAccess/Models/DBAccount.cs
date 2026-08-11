@@ -1,5 +1,4 @@
 ﻿using System.Text.Json.Serialization;
-using System.Security.Cryptography;
 using MHServerEmu.Core.Helpers;
 using MHServerEmu.Core.System;
 
@@ -40,7 +39,6 @@ namespace MHServerEmu.DatabaseAccess.Models
         public long Id { get; set; }
         public string Email { get; set; }
         public string PlayerName { get; set; }
-        public string PortalAccountId { get; set; }
         public byte[] PasswordHash { get; set; }
         public byte[] Salt { get; set; }
         public AccountUserLevel UserLevel { get; set; }
@@ -75,7 +73,6 @@ namespace MHServerEmu.DatabaseAccess.Models
             Id = (long)IdGenerator.Generate();
             Email = email;
             PlayerName = playerName;
-            EnsurePortalAccountId();
             PasswordHash = CryptographyHelper.HashPassword(password, out byte[] salt);
             Salt = salt;
             UserLevel = userLevel;
@@ -90,7 +87,6 @@ namespace MHServerEmu.DatabaseAccess.Models
             Id = 0x2000000000000001;
             Email = "default@mhserveremu";
             PlayerName = playerName;
-            EnsurePortalAccountId();
             PasswordHash = Array.Empty<byte>();
             Salt = Array.Empty<byte>();
             UserLevel = AccountUserLevel.Admin;
@@ -99,20 +95,6 @@ namespace MHServerEmu.DatabaseAccess.Models
         public override string ToString()
         {
             return $"{PlayerName} (0x{Id:X})";
-        }
-
-        public void EnsurePortalAccountId()
-        {
-            if (IsPortalAccountId(PortalAccountId))
-                return;
-
-            PortalAccountId = "acct_" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
-        }
-
-        private static bool IsPortalAccountId(string value)
-        {
-            return value?.Length == 37 && value.StartsWith("acct_", StringComparison.Ordinal) &&
-                value.AsSpan(5).ToString().All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
         }
 
         public LockScope Lock()

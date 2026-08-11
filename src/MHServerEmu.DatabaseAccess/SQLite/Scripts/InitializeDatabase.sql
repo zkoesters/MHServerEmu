@@ -1,13 +1,12 @@
 -- Initialize a new database file using the current schema version
 
-PRAGMA user_version=7;
+PRAGMA user_version=6;
 PRAGMA journal_mode=WAL;
 
 CREATE TABLE "Account" (
 	"Id"	INTEGER NOT NULL UNIQUE,
 	"Email"	TEXT NOT NULL UNIQUE,
 	"PlayerName"	TEXT NOT NULL UNIQUE,
-	"PortalAccountId"	TEXT NOT NULL UNIQUE,
 	"PasswordHash"	BLOB NOT NULL,
 	"Salt"	BLOB NOT NULL,
 	"UserLevel"	INTEGER NOT NULL,

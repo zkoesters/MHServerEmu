@@ -2,6 +2,7 @@ using System.Net;
 using MHServerEmu.Core.Network.Web;
 using MHServerEmu.DatabaseAccess.Models;
 using MHServerEmu.PlayerManagement.Players;
+using MHServerEmu.PortalBridge.Authentication;
 using MHServerEmu.PortalBridge.Models;
 
 namespace MHServerEmu.PortalBridge.Handlers
@@ -10,6 +11,13 @@ namespace MHServerEmu.PortalBridge.Handlers
     {
         public const string RegisterPath = "/portal-bridge/v1/auth/register";
         public const string VerifyPath = "/portal-bridge/v1/auth/verify";
+
+        private readonly OpaqueAccountIdGenerator _accountIdGenerator;
+
+        internal PortalAuthenticationWebHandler(OpaqueAccountIdGenerator accountIdGenerator)
+        {
+            _accountIdGenerator = accountIdGenerator ?? throw new ArgumentNullException(nameof(accountIdGenerator));
+        }
 
         protected override async Task Post(WebRequestContext context)
         {
@@ -28,7 +36,7 @@ namespace MHServerEmu.PortalBridge.Handlers
             context.StatusCode = (int)HttpStatusCode.NotFound;
         }
 
-        private static async Task RegisterAsync(WebRequestContext context)
+        private async Task RegisterAsync(WebRequestContext context)
         {
             if (AccountManager.SupportsCredentialVerification() == false)
             {
@@ -48,7 +56,7 @@ namespace MHServerEmu.PortalBridge.Handlers
                 out DBAccount account);
             if (result == AccountOperationResult.Success)
             {
-                await context.SendJsonAsync(new EmulatorAccountResponse(account.PortalAccountId));
+                await context.SendJsonAsync(new EmulatorAccountResponse(_accountIdGenerator.GetAccountId(account.Id)));
                 return;
             }
 
@@ -65,7 +73,7 @@ namespace MHServerEmu.PortalBridge.Handlers
                     : "invalid_credentials");
         }
 
-        private static async Task VerifyAsync(WebRequestContext context)
+        private async Task VerifyAsync(WebRequestContext context)
         {
             if (AccountManager.SupportsCredentialVerification() == false)
             {
@@ -80,7 +88,7 @@ namespace MHServerEmu.PortalBridge.Handlers
                 return;
             }
 
-            await context.SendJsonAsync(new EmulatorAccountResponse(account.PortalAccountId));
+            await context.SendJsonAsync(new EmulatorAccountResponse(_accountIdGenerator.GetAccountId(account.Id)));
         }
 
         private static Task WriteProblemAsync(WebRequestContext context, HttpStatusCode statusCode, string code)

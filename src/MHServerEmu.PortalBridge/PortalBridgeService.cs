@@ -23,6 +23,7 @@ namespace MHServerEmu.PortalBridge
 
         private WebService _webService;
         private HmacRequestValidator _requestValidator;
+        private OpaqueAccountIdGenerator _accountIdGenerator;
         private GameServiceState _state = GameServiceState.Created;
         private bool _shutdownRequested;
 
@@ -78,15 +79,18 @@ namespace MHServerEmu.PortalBridge
 
             WebService webService;
             HmacRequestValidator requestValidator;
+            OpaqueAccountIdGenerator accountIdGenerator;
             lock (_lifecycleLock)
             {
                 _state = GameServiceState.ShuttingDown;
                 webService = _webService;
                 requestValidator = _requestValidator;
+                accountIdGenerator = _accountIdGenerator;
             }
 
             webService?.StopAsync().GetAwaiter().GetResult();
             requestValidator?.Dispose();
+            accountIdGenerator?.Dispose();
 
             lock (_lifecycleLock)
                 _state = GameServiceState.Shutdown;
@@ -154,6 +158,7 @@ namespace MHServerEmu.PortalBridge
             }
 
             HmacRequestValidator validator = null;
+            OpaqueAccountIdGenerator accountIdGenerator = null;
             WebService webService = null;
             try
             {
@@ -161,6 +166,7 @@ namespace MHServerEmu.PortalBridge
                     return;
 
                 validator = new HmacRequestValidator(settings.Secret, settings.KeyId, _replayCache, _timeProvider);
+                accountIdGenerator = new OpaqueAccountIdGenerator(settings.Secret);
                 webService = new WebService(new WebServiceSettings
                 {
                     Name = "PortalBridge",
@@ -173,8 +179,8 @@ namespace MHServerEmu.PortalBridge
                     new CapabilitiesWebHandler(_metadata, settings.ServerInstanceId));
                 webService.RegisterHandler(HealthWebHandler.Path,
                     new HealthWebHandler(_playerManagerStateProvider, _timeProvider));
-                webService.RegisterHandler(PortalAuthenticationWebHandler.RegisterPath, new PortalAuthenticationWebHandler());
-                webService.RegisterHandler(PortalAuthenticationWebHandler.VerifyPath, new PortalAuthenticationWebHandler());
+                webService.RegisterHandler(PortalAuthenticationWebHandler.RegisterPath, new PortalAuthenticationWebHandler(accountIdGenerator));
+                webService.RegisterHandler(PortalAuthenticationWebHandler.VerifyPath, new PortalAuthenticationWebHandler(accountIdGenerator));
 
                 if (webService.Start() == false)
                     return;
@@ -185,9 +191,11 @@ namespace MHServerEmu.PortalBridge
                         webService.Stop();
 
                     _requestValidator = validator;
+                    _accountIdGenerator = accountIdGenerator;
                     _webService = webService;
                 }
                 validator = null;
+                accountIdGenerator = null;
                 webService = null;
             }
             catch (Exception exception)
@@ -198,6 +206,7 @@ namespace MHServerEmu.PortalBridge
             {
                 webService?.StopAsync().GetAwaiter().GetResult();
                 validator?.Dispose();
+                accountIdGenerator?.Dispose();
                 settings?.Dispose();
             }
         }

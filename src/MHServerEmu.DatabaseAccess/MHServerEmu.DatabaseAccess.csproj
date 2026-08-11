@@ -22,7 +22,6 @@
     <None Remove="SQLite\Scripts\Migrations\3.sql" />
     <None Remove="SQLite\Scripts\Migrations\4.sql" />
     <None Remove="SQLite\Scripts\Migrations\5.sql" />
-    <None Remove="SQLite\Scripts\Migrations\6.sql" />
   </ItemGroup>
 
   <ItemGroup>
@@ -34,7 +33,6 @@
     <EmbeddedResource Include="SQLite\Scripts\Migrations\3.sql" />
     <EmbeddedResource Include="SQLite\Scripts\Migrations\4.sql" />
     <EmbeddedResource Include="SQLite\Scripts\Migrations\5.sql" />
-    <EmbeddedResource Include="SQLite\Scripts\Migrations\6.sql" />
   </ItemGroup>
   
   <ItemGroup>
