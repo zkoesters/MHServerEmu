@@ -1,4 +1,5 @@
 ﻿using System.Text.Json;
+using System.Text.Json.Serialization;
 using MHServerEmu.Core.Logging;
 using MHServerEmu.Core.RateLimiting;
 using MHServerEmu.DatabaseAccess.Models;
@@ -10,6 +11,7 @@ namespace MHServerEmu.DatabaseAccess.Json
     /// </summary>
     public class DBAccountJsonSerializer
     {
+        private const int CurrentFormatVersion = 1;
         private static readonly Logger Logger = LogManager.CreateLogger();
 
         private readonly JsonSerializerOptions _options = new();
@@ -33,7 +35,7 @@ namespace MHServerEmu.DatabaseAccess.Json
 
             try
             {
-                json = JsonSerializer.Serialize(account, _options);
+                json = JsonSerializer.Serialize(new AccountEnvelope(CurrentFormatVersion, account), _options);
             }
             catch (Exception e)
             {
@@ -42,6 +44,53 @@ namespace MHServerEmu.DatabaseAccess.Json
             }
 
             return true;
+        }
+
+        public bool TryDeserializeAccount(string json, out DBAccount account)
+        {
+            account = null;
+            if (string.IsNullOrWhiteSpace(json))
+                return false;
+
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(json);
+                JsonElement root = document.RootElement;
+                JsonElement accountElement = root;
+                if (root.TryGetProperty("formatVersion", out JsonElement versionElement))
+                {
+                    if (versionElement.TryGetInt32(out int version) == false || version != CurrentFormatVersion ||
+                        root.TryGetProperty("account", out accountElement) == false)
+                        return false;
+                }
+
+                account = JsonSerializer.Deserialize<DBAccount>(accountElement.GetRawText(), _options);
+                if (account == null)
+                    return false;
+
+                account.EnsurePortalAccountId();
+                return true;
+            }
+            catch (JsonException)
+            {
+                account = null;
+                return false;
+            }
+        }
+
+        private sealed class AccountEnvelope
+        {
+            [JsonPropertyName("formatVersion")]
+            public int FormatVersion { get; }
+
+            [JsonPropertyName("account")]
+            public DBAccount Account { get; }
+
+            public AccountEnvelope(int formatVersion, DBAccount account)
+            {
+                FormatVersion = formatVersion;
+                Account = account;
+            }
         }
     }
 }
