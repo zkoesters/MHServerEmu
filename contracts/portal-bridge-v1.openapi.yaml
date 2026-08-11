@@ -31,6 +31,48 @@ paths:
                 $ref: '#/components/schemas/BridgeHealth'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /auth/register:
+    post:
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '200':
+          description: Emulator account registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmulatorAccount'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /auth/verify:
+    post:
+      operationId: verify
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyRequest'
+      responses:
+        '200':
+          description: Emulator credentials verified.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmulatorAccount'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '503':
+          $ref: '#/components/responses/Unavailable'
 components:
   securitySchemes:
     portalHmac:
@@ -53,7 +95,75 @@ components:
         application/problem+json:
           schema:
             $ref: '#/components/schemas/Problem'
+    Conflict:
+      description: An account already exists for the email address or player name.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    InvalidCredentials:
+      description: Credentials are invalid.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Unavailable:
+      description: The emulator account service is unavailable.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
   schemas:
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - email
+        - playerName
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          minLength: 1
+          maxLength: 320
+          description: Normalized email address.
+        playerName:
+          type: string
+          minLength: 1
+          maxLength: 16
+          description: Normalized player name.
+        password:
+          type: string
+          minLength: 1
+          maxLength: 256
+          writeOnly: true
+    VerifyRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - identifier
+        - password
+      properties:
+        identifier:
+          type: string
+          minLength: 1
+          maxLength: 320
+          description: Normalized email address or player name.
+        password:
+          type: string
+          minLength: 1
+          maxLength: 256
+          writeOnly: true
+    EmulatorAccount:
+      type: object
+      additionalProperties: false
+      required:
+        - emulatorAccountId
+      properties:
+        emulatorAccountId:
+          type: string
+          minLength: 1
     BridgeCapabilities:
       type: object
       additionalProperties: false

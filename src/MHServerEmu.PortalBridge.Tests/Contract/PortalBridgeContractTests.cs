@@ -5,7 +5,7 @@ namespace MHServerEmu.PortalBridge.Tests.Contract
     public class PortalBridgeContractTests
     {
         [Fact]
-        public void VendoredContract_DefinesOnlyFoundationOperationsAndResponses()
+        public void VendoredContract_DefinesFoundationAndAuthenticationOperationsAndResponses()
         {
             YamlMappingNode contract = ParseContract();
 
@@ -19,9 +19,11 @@ namespace MHServerEmu.PortalBridge.Tests.Contract
             Assert.Equal("portalHmac", Scalar(Assert.Single(security.Children.Keys)));
 
             YamlMappingNode paths = Map(contract, "paths");
-            Assert.Equal(new[] { "/capabilities", "/health" }, Keys(paths));
+            Assert.Equal(new[] { "/capabilities", "/health", "/auth/register", "/auth/verify" }, Keys(paths));
             AssertOperation(Map(paths, "/capabilities"), "getCapabilities", "BridgeCapabilities");
             AssertOperation(Map(paths, "/health"), "getHealth", "BridgeHealth");
+            AssertAuthenticationOperation(Map(paths, "/auth/register"), "register", "RegisterRequest", true);
+            AssertAuthenticationOperation(Map(paths, "/auth/verify"), "verify", "VerifyRequest", false);
         }
 
         [Fact]
@@ -52,11 +54,14 @@ namespace MHServerEmu.PortalBridge.Tests.Contract
         {
             YamlMappingNode components = Map(ParseContract(), "components");
             YamlMappingNode responses = Map(components, "responses");
-            Assert.Equal(new[] { "Unauthorized" }, Keys(responses));
+            Assert.Equal(new[] { "Unauthorized", "Conflict", "InvalidCredentials", "Unavailable" }, Keys(responses));
             AssertSchemaReference(Map(Map(Map(Map(responses, "Unauthorized"), "content"), "application/problem+json"), "schema"), "Problem");
 
             YamlMappingNode schemas = Map(components, "schemas");
-            Assert.Equal(new[] { "BridgeCapabilities", "BridgeHealth", "HealthStatus", "Problem" }, Keys(schemas));
+            Assert.Equal(new[] { "RegisterRequest", "VerifyRequest", "EmulatorAccount", "BridgeCapabilities", "BridgeHealth", "HealthStatus", "Problem" }, Keys(schemas));
+            AssertRegisterRequestSchema(Map(schemas, "RegisterRequest"));
+            AssertVerifyRequestSchema(Map(schemas, "VerifyRequest"));
+            AssertEmulatorAccountSchema(Map(schemas, "EmulatorAccount"));
             AssertCapabilitiesSchema(Map(schemas, "BridgeCapabilities"));
             AssertHealthSchema(Map(schemas, "BridgeHealth"));
             AssertHealthStatusSchema(Map(schemas, "HealthStatus"));
@@ -81,6 +86,45 @@ namespace MHServerEmu.PortalBridge.Tests.Contract
             Assert.Equal(new[] { "200", "401" }, Keys(responses));
             AssertSchemaReference(Map(Map(Map(Map(responses, "200"), "content"), "application/json"), "schema"), responseSchema);
             AssertScalar(Map(responses, "401"), "$ref", "#/components/responses/Unauthorized");
+        }
+
+        private static void AssertAuthenticationOperation(YamlMappingNode path, string operationId, string requestSchema, bool conflict)
+        {
+            Assert.Equal(new[] { "post" }, Keys(path));
+            YamlMappingNode operation = Map(path, "post");
+            Assert.Equal(new[] { "operationId", "requestBody", "responses" }, Keys(operation));
+            AssertScalar(operation, "operationId", operationId);
+            AssertSchemaReference(Map(Map(Map(Map(operation, "requestBody"), "content"), "application/json"), "schema"), requestSchema);
+
+            YamlMappingNode responses = Map(operation, "responses");
+            Assert.Equal(conflict ? new[] { "200", "401", "409", "503" } : new[] { "200", "401", "503" }, Keys(responses));
+            AssertSchemaReference(Map(Map(Map(Map(responses, "200"), "content"), "application/json"), "schema"), "EmulatorAccount");
+            AssertScalar(Map(responses, "401"), "$ref", "#/components/responses/InvalidCredentials");
+            if (conflict)
+                AssertScalar(Map(responses, "409"), "$ref", "#/components/responses/Conflict");
+            AssertScalar(Map(responses, "503"), "$ref", "#/components/responses/Unavailable");
+        }
+
+        private static void AssertRegisterRequestSchema(YamlMappingNode schema)
+        {
+            AssertObjectSchema(schema, new[] { "email", "playerName", "password" });
+            YamlMappingNode properties = Map(schema, "properties");
+            AssertScalar(Map(properties, "email"), "format", "email");
+            AssertScalar(Map(properties, "playerName"), "minLength", "1");
+            AssertScalar(Map(properties, "playerName"), "maxLength", "16");
+            AssertScalar(Map(properties, "password"), "writeOnly", "true");
+        }
+
+        private static void AssertVerifyRequestSchema(YamlMappingNode schema)
+        {
+            AssertObjectSchema(schema, new[] { "identifier", "password" });
+            AssertScalar(Map(Map(schema, "properties"), "password"), "writeOnly", "true");
+        }
+
+        private static void AssertEmulatorAccountSchema(YamlMappingNode schema)
+        {
+            AssertObjectSchema(schema, new[] { "emulatorAccountId" });
+            AssertStringWithMinimumLength(Map(Map(schema, "properties"), "emulatorAccountId"));
         }
 
         private static void AssertCapabilitiesSchema(YamlMappingNode schema)

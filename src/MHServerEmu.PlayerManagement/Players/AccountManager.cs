@@ -34,6 +34,7 @@ namespace MHServerEmu.PlayerManagement.Players
         private const int PasswordMaxLength = 64;
 
         private static readonly Logger Logger = LogManager.CreateLogger();
+        private static readonly object AccountCreationLock = new();
 
         /// <summary>
         /// Queries a <see cref="DBAccount"/> using the provided <see cref="LoginDataPB"/> instance.
@@ -81,6 +82,36 @@ namespace MHServerEmu.PlayerManagement.Players
             return IDBManager.Instance.TryQueryAccountByEmail(email, out account);
         }
 
+        /// <summary>
+        /// Queries a <see cref="DBAccount"/> using the provided player name. Returns <see langword="true"/> if successful.
+        /// </summary>
+        public static bool TryGetAccountByPlayerName(string playerName, out DBAccount account)
+        {
+            return IDBManager.Instance.TryQueryAccountByPlayerName(playerName, out account);
+        }
+
+        public static bool TryVerifyAccount(string identifier, string password, out DBAccount account)
+        {
+            account = null;
+            if (string.IsNullOrWhiteSpace(identifier) || string.IsNullOrEmpty(password))
+                return false;
+
+            IDBManager dbManager = IDBManager.Instance;
+            bool found = identifier.Contains('@')
+                ? dbManager.TryQueryAccountByEmail(identifier, out account)
+                : dbManager.TryQueryAccountByPlayerName(identifier, out account);
+            if (found == false)
+                return false;
+
+            if (dbManager.VerifyAccounts && CryptographyHelper.VerifyPassword(password, account.PasswordHash, account.Salt) == false)
+            {
+                account = null;
+                return false;
+            }
+
+            return true;
+        }
+
         public static bool LoadPlayerDataForAccount(DBAccount account)
         {
             return IDBManager.Instance.LoadPlayerData(account);
@@ -91,6 +122,12 @@ namespace MHServerEmu.PlayerManagement.Players
         /// </summary>
         public static AccountOperationResult CreateAccount(string email, string playerName, string password)
         {
+            return CreateAccount(email, playerName, password, out _);
+        }
+
+        public static AccountOperationResult CreateAccount(string email, string playerName, string password, out DBAccount account)
+        {
+            account = null;
             IDBManager dbManager = IDBManager.Instance;
 
             email = email.ToLowerInvariant();
@@ -106,20 +143,22 @@ namespace MHServerEmu.PlayerManagement.Players
             if (ValidatePassword(password) == false)
                 return AccountOperationResult.PasswordInvalid;
 
-            if (dbManager.TryQueryAccountByEmail(email, out _))
-                return AccountOperationResult.EmailAlreadyUsed;
+            lock (AccountCreationLock)
+            {
+                if (dbManager.TryQueryAccountByEmail(email, out _))
+                    return AccountOperationResult.EmailAlreadyUsed;
 
-            if (dbManager.TryGetPlayerDbIdByName(playerName, out _, out _))
-                return AccountOperationResult.PlayerNameAlreadyUsed;
+                if (dbManager.TryGetPlayerDbIdByName(playerName, out _, out _))
+                    return AccountOperationResult.PlayerNameAlreadyUsed;
 
-            // Create a new account and insert it into the database
-            DBAccount account = new(email, playerName, password);
+                DBAccount createdAccount = new(email, playerName, password);
+                if (dbManager.InsertAccount(createdAccount) == false)
+                    return AccountOperationResult.DatabaseError;
 
-            if (dbManager.InsertAccount(account) == false)
-                return AccountOperationResult.DatabaseError;
-
-            Logger.Info($"CreateAccount(): account=[{account}]");
-            return AccountOperationResult.Success;
+                account = createdAccount;
+                Logger.Info($"CreateAccount(): account=[{account}]");
+                return AccountOperationResult.Success;
+            }
         }
 
         // TODO AccountOperationResult ChangeAccountEmail(string oldEmail, string newEmail)

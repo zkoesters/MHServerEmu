@@ -1,6 +1,9 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Text;
 using System.Text.Json;
+using MHServerEmu.DatabaseAccess;
+using MHServerEmu.DatabaseAccess.Models;
 using MHServerEmu.Core.Network;
 using MHServerEmu.PortalBridge.Handlers;
 
@@ -9,6 +12,78 @@ namespace MHServerEmu.PortalBridge.Tests
     [Collection("PortalBridge logging")]
     public class PortalBridgeListenerTests
     {
+        [Fact]
+        public async Task Register_ValidCredentials_ReturnsOnlyOpaqueAccountId()
+        {
+            using AccountDatabaseScope database = new();
+            using RunningBridge bridge = RunningBridge.Start();
+            using HttpClient client = bridge.CreateSignedClient();
+            using HttpResponseMessage response = await client.PostAsync(PortalAuthenticationWebHandler.RegisterPath,
+                JsonContent("{\"email\":\"player@example.test\",\"playerName\":\"StarLord\",\"password\":\"correct horse battery staple\"}"));
+            using JsonDocument json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(new[] { "emulatorAccountId" }, json.RootElement.EnumerateObject().Select(property => property.Name));
+            Assert.False(string.IsNullOrWhiteSpace(json.RootElement.GetProperty("emulatorAccountId").GetString()));
+        }
+
+        [Theory]
+        [InlineData("{\"email\":\"player@example.test\",\"playerName\":\"Nova\",\"password\":\"correct horse battery staple\"}")]
+        [InlineData("{\"email\":\"other@example.test\",\"playerName\":\"StarLord\",\"password\":\"correct horse battery staple\"}")]
+        public async Task Register_DuplicateEmailOrPlayerName_ReturnsConflict(string duplicateRequest)
+        {
+            using AccountDatabaseScope database = new();
+            using RunningBridge bridge = RunningBridge.Start();
+            using HttpClient client = bridge.CreateSignedClient();
+            await client.PostAsync(PortalAuthenticationWebHandler.RegisterPath,
+                JsonContent("{\"email\":\"player@example.test\",\"playerName\":\"StarLord\",\"password\":\"correct horse battery staple\"}"));
+
+            using HttpResponseMessage response = await client.PostAsync(PortalAuthenticationWebHandler.RegisterPath, JsonContent(duplicateRequest));
+            using JsonDocument json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+            Assert.Equal("account_conflict", json.RootElement.GetProperty("code").GetString());
+        }
+
+        [Theory]
+        [InlineData("player@example.test")]
+        [InlineData("StarLord")]
+        public async Task Verify_EmailOrPlayerNameWithCorrectPassword_ReturnsOpaqueAccountId(string identifier)
+        {
+            using AccountDatabaseScope database = new();
+            using RunningBridge bridge = RunningBridge.Start();
+            using HttpClient client = bridge.CreateSignedClient();
+            await client.PostAsync(PortalAuthenticationWebHandler.RegisterPath,
+                JsonContent("{\"email\":\"player@example.test\",\"playerName\":\"StarLord\",\"password\":\"correct horse battery staple\"}"));
+
+            using HttpResponseMessage response = await client.PostAsync(PortalAuthenticationWebHandler.VerifyPath,
+                JsonContent($"{{\"identifier\":\"{identifier}\",\"password\":\"correct horse battery staple\"}}"));
+            using JsonDocument json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(new[] { "emulatorAccountId" }, json.RootElement.EnumerateObject().Select(property => property.Name));
+        }
+
+        [Theory]
+        [InlineData("player@example.test", "wrong password")]
+        [InlineData("missing@example.test", "correct horse battery staple")]
+        public async Task Verify_InvalidCredentials_ReturnsGenericProblem(string identifier, string password)
+        {
+            using AccountDatabaseScope database = new();
+            using RunningBridge bridge = RunningBridge.Start();
+            using HttpClient client = bridge.CreateSignedClient();
+            await client.PostAsync(PortalAuthenticationWebHandler.RegisterPath,
+                JsonContent("{\"email\":\"player@example.test\",\"playerName\":\"StarLord\",\"password\":\"correct horse battery staple\"}"));
+
+            using HttpResponseMessage response = await client.PostAsync(PortalAuthenticationWebHandler.VerifyPath,
+                JsonContent($"{{\"identifier\":\"{identifier}\",\"password\":\"{password}\"}}"));
+            using JsonDocument json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            Assert.Equal("invalid_credentials", json.RootElement.GetProperty("code").GetString());
+            Assert.Equal(new[] { "code", "correlationId" }, json.RootElement.EnumerateObject().Select(property => property.Name));
+        }
+
         [Fact]
         public async Task GetCapabilities_ValidSignature_ReturnsExactPayload()
         {
@@ -195,6 +270,66 @@ namespace MHServerEmu.PortalBridge.Tests
             using TcpListener listener = new(IPAddress.Loopback, 0);
             listener.Start();
             return ((IPEndPoint)listener.LocalEndpoint).Port;
+        }
+
+        private static StringContent JsonContent(string json) => new(json, Encoding.UTF8, "application/json");
+
+        private sealed class AccountDatabaseScope : IDisposable
+        {
+            private readonly IDBManager _previous = IDBManager.Instance;
+
+            public AccountDatabaseScope()
+            {
+                IDBManager.Instance = new InMemoryAccountDatabase();
+            }
+
+            public void Dispose()
+            {
+                IDBManager.Instance = _previous;
+            }
+        }
+
+        private sealed class InMemoryAccountDatabase : IDBManager
+        {
+            private readonly Dictionary<string, DBAccount> _accountsByEmail = new(StringComparer.OrdinalIgnoreCase);
+
+            public bool TryQueryAccountByEmail(string email, out DBAccount account) => _accountsByEmail.TryGetValue(email, out account);
+
+            public bool TryQueryAccountByPlayerName(string playerName, out DBAccount account)
+            {
+                account = _accountsByEmail.Values.SingleOrDefault(value => string.Equals(value.PlayerName, playerName, StringComparison.OrdinalIgnoreCase));
+                return account != null;
+            }
+
+            public bool TryGetPlayerDbIdByName(string playerName, out ulong playerDbId, out string playerNameOut)
+            {
+                bool found = TryQueryAccountByPlayerName(playerName, out DBAccount account);
+                playerDbId = found ? (ulong)account.Id : 0;
+                playerNameOut = found ? account.PlayerName : null;
+                return found;
+            }
+
+            public bool InsertAccount(DBAccount account)
+            {
+                if (_accountsByEmail.ContainsKey(account.Email) || TryQueryAccountByPlayerName(account.PlayerName, out _))
+                    return false;
+
+                _accountsByEmail.Add(account.Email, account);
+                return true;
+            }
+
+            public bool Initialize() => true;
+            public bool TryGetPlayerName(ulong playerDbId, out string playerName) { playerName = null; return false; }
+            public bool GetPlayerNames(Dictionary<ulong, string> playerNames) => false;
+            public bool TryGetLastLogoutTime(ulong playerDbId, out long lastLogoutTime) { lastLogoutTime = 0; return false; }
+            public bool UpdateAccount(DBAccount account) => false;
+            public bool LoadPlayerData(DBAccount account) => false;
+            public bool SavePlayerData(DBAccount account) => false;
+            public bool LoadGuilds(List<DBGuild> guilds) => false;
+            public bool SaveGuild(DBGuild guild) => false;
+            public bool DeleteGuild(DBGuild guild) => false;
+            public bool SaveGuildMember(DBGuildMember guildMember) => false;
+            public bool DeleteGuildMember(DBGuildMember guildMember) => false;
         }
 
         private static bool CanStartIPv6LoopbackHttpListener()

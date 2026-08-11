@@ -22,16 +22,18 @@ namespace MHServerEmu.PortalBridge.Authentication
         public bool HasEntityBody { get; }
         public long ContentLength64 { get; }
         public string TransferEncoding { get; }
+        public string BodySha256 { get; }
         public IReadOnlyDictionary<string, string[]> Headers { get => CopyHeaders(); }
 
         public PortalBridgeRequest(string method, string rawUrl, bool hasEntityBody, long contentLength64,
-            string transferEncoding, IReadOnlyDictionary<string, string[]> headers)
+            string transferEncoding, IReadOnlyDictionary<string, string[]> headers, string bodySha256 = null)
         {
             Method = method;
             RawUrl = rawUrl;
             HasEntityBody = hasEntityBody;
             ContentLength64 = contentLength64;
             TransferEncoding = transferEncoding;
+            BodySha256 = bodySha256;
 
             Dictionary<string, string[]> headerCopies = new(StringComparer.OrdinalIgnoreCase);
             if (headers != null)
@@ -43,14 +45,14 @@ namespace MHServerEmu.PortalBridge.Authentication
             _headers = new ReadOnlyDictionary<string, string[]>(headerCopies);
         }
 
-        public static PortalBridgeRequest FromContext(WebRequestContext context)
+        public static async Task<PortalBridgeRequest> FromContextAsync(WebRequestContext context)
         {
             Dictionary<string, string[]> headers = new(StringComparer.OrdinalIgnoreCase);
             foreach (string header in RequiredHeaders)
                 headers[header] = context.GetHeaderValues(header);
 
             return new PortalBridgeRequest(context.HttpMethod, context.RawUrl, context.HasEntityBody,
-                context.ContentLength64, context.TransferEncoding, headers);
+                context.ContentLength64, context.TransferEncoding, headers, await context.GetBodySha256Async());
         }
 
         internal bool TryGetHeaderValues(string name, out string[] values)

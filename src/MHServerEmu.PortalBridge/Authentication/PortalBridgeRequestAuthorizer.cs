@@ -19,7 +19,7 @@ namespace MHServerEmu.PortalBridge.Authentication
 
         public async Task<bool> AuthorizeAsync(WebRequestContext context)
         {
-            bool authorized = _validator.TryValidate(PortalBridgeRequest.FromContext(context), out Guid correlationId);
+            bool authorized = _validator.TryValidate(await PortalBridgeRequest.FromContextAsync(context), out Guid correlationId);
             string client = context.GetIPAddressHandle();
             Logger.Info($"PortalBridge authorization route={context.LocalPath}, result={authorized}, correlationId={correlationId}, client={client}");
 
