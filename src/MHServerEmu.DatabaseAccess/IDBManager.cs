@@ -28,6 +28,11 @@ namespace MHServerEmu.DatabaseAccess
         public bool TryQueryAccountByEmail(string email, out DBAccount account);
 
         /// <summary>
+        /// Queries a <see cref="DBAccount"/> from the database by its player name.
+        /// </summary>
+        public bool TryQueryAccountByPlayerName(string playerName, out DBAccount account);
+
+        /// <summary>
         /// Queries the id of the player with the specified name.
         /// </summary>
         /// <remarks>

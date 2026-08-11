@@ -73,6 +73,15 @@ namespace MHServerEmu.DatabaseAccess.SQLite
             return account != null;
         }
 
+        public bool TryQueryAccountByPlayerName(string playerName, out DBAccount account)
+        {
+            using SQLiteConnection connection = GetConnection();
+            account = connection.QueryFirstOrDefault<DBAccount>("SELECT * FROM Account WHERE PlayerName = @PlayerName COLLATE NOCASE",
+                new { PlayerName = playerName });
+
+            return account != null;
+        }
+
         public bool TryGetPlayerDbIdByName(string playerName, out ulong playerDbId, out string playerNameOut)
         {
             using SQLiteConnection connection = GetConnection();

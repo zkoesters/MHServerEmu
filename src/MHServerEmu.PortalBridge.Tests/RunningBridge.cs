@@ -165,14 +165,17 @@ namespace MHServerEmu.PortalBridge.Tests
             long timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             string requestNonce = nonce ?? Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
             string rawUrl = request.RequestUri.PathAndQuery;
+            string bodyDigest = request.Content == null
+                ? EmptyBodyDigest
+                : Convert.ToHexString(SHA256.HashData(request.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult())).ToLowerInvariant();
             string canonical = string.Join('\n', request.Method.Method.ToUpperInvariant(), rawUrl,
-                timestamp.ToString(CultureInfo.InvariantCulture), requestNonce, EmptyBodyDigest);
+                timestamp.ToString(CultureInfo.InvariantCulture), requestNonce, bodyDigest);
             string signature = Convert.ToHexString(HMACSHA256.HashData(key, Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
 
             request.Headers.TryAddWithoutValidation(ContractVersionHeader, "1.0");
             request.Headers.TryAddWithoutValidation(TimestampHeader, timestamp.ToString(CultureInfo.InvariantCulture));
             request.Headers.TryAddWithoutValidation(NonceHeader, requestNonce);
-            request.Headers.TryAddWithoutValidation(BodyDigestHeader, EmptyBodyDigest);
+            request.Headers.TryAddWithoutValidation(BodyDigestHeader, bodyDigest);
             request.Headers.TryAddWithoutValidation(OperationIdHeader, Guid.NewGuid().ToString("D"));
             request.Headers.TryAddWithoutValidation(KeyIdHeader, "portal-primary");
             request.Headers.TryAddWithoutValidation(SignatureHeader, signature);

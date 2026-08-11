@@ -71,6 +71,13 @@ namespace MHServerEmu.DatabaseAccess.Json
             return true;
         }
 
+        public bool TryQueryAccountByPlayerName(string playerName, out DBAccount account)
+        {
+            account = _account;
+            account.MigrationData.Reset();
+            return true;
+        }
+
         public bool TryGetPlayerDbIdByName(string playerName, out ulong playerDbId, out string playerNameOut)
         {
             playerDbId = 0;

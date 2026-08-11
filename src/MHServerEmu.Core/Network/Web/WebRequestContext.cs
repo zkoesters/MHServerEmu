@@ -3,6 +3,7 @@ using System.Collections.Specialized;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Security.Cryptography;
 using System.Web;
 using Google.ProtocolBuffers;
 
@@ -15,6 +16,7 @@ namespace MHServerEmu.Core.Network.Web
     {
         private readonly HttpListenerRequest _httpRequest;
         private readonly HttpListenerResponse _httpResponse;
+        private readonly RequestBody _requestBody;
 
         public string UserAgent { get => _httpRequest.UserAgent; }
         public string LocalPath { get => _httpRequest.Url.LocalPath; }
@@ -34,6 +36,7 @@ namespace MHServerEmu.Core.Network.Web
         {
             _httpRequest = httpContext.Request;
             _httpResponse = httpContext.Response;
+            _requestBody = new RequestBody(_httpRequest);
 
             _httpResponse.StatusCode = 200;
             _httpResponse.KeepAlive = false;
@@ -89,23 +92,7 @@ namespace MHServerEmu.Core.Network.Web
         /// </summary>
         public async Task<string> ReadUtf8StringAsync()
         {
-            const long MaxLength = 1024 * 16;
-
-            int length = (int)_httpRequest.ContentLength64;
-            if (length < 0 || length > MaxLength)
-                throw new InternalBufferOverflowException();
-
-            byte[] buffer = ArrayPool<byte>.Shared.Rent(length);
-
-            try
-            {
-                await _httpRequest.InputStream.ReadAsync(buffer.AsMemory(0, length));
-                return Encoding.UTF8.GetString(buffer, 0, length);
-            }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(buffer);
-            }
+            return Encoding.UTF8.GetString(await _requestBody.ReadAsync());
         }
 
         /// <summary>
@@ -113,7 +100,12 @@ namespace MHServerEmu.Core.Network.Web
         /// </summary>
         public async Task<T> ReadJsonAsync<T>()
         {
-            return await JsonSerializer.DeserializeAsync<T>(_httpRequest.InputStream);
+            return JsonSerializer.Deserialize<T>(await _requestBody.ReadAsync());
+        }
+
+        public async Task<string> GetBodySha256Async()
+        {
+            return Convert.ToHexString(SHA256.HashData(await _requestBody.ReadAsync())).ToLowerInvariant();
         }
 
         /// <summary>
@@ -203,6 +195,44 @@ namespace MHServerEmu.Core.Network.Web
         {
             _httpResponse.ContentType = contentType;
             await JsonSerializer.SerializeAsync(_httpResponse.OutputStream, @object);
+        }
+
+        private sealed class RequestBody
+        {
+            private const long MaxLength = 1024 * 16;
+
+            private readonly HttpListenerRequest _request;
+            private Task<byte[]> _readTask;
+
+            public RequestBody(HttpListenerRequest request)
+            {
+                _request = request;
+            }
+
+            public Task<byte[]> ReadAsync()
+            {
+                return _readTask ??= ReadCoreAsync();
+            }
+
+            private async Task<byte[]> ReadCoreAsync()
+            {
+                int length = (int)_request.ContentLength64;
+                if (length < 0 || length > MaxLength)
+                    throw new InternalBufferOverflowException();
+
+                byte[] body = new byte[length];
+                int offset = 0;
+                while (offset < length)
+                {
+                    int bytesRead = await _request.InputStream.ReadAsync(body.AsMemory(offset, length - offset));
+                    if (bytesRead == 0)
+                        throw new EndOfStreamException();
+
+                    offset += bytesRead;
+                }
+
+                return body;
+            }
         }
     }
 }

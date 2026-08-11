@@ -60,10 +60,11 @@ namespace MHServerEmu.PortalBridge.Authentication
                 if (IsLowerHex(headers.Nonce, 32) == false || IsLowerHex(headers.BodyDigest, 64) == false ||
                     IsLowerHex(headers.Signature, 64) == false)
                     return false;
-                if (request.HasEntityBody || request.ContentLength64 > 0 ||
-                    string.IsNullOrWhiteSpace(request.TransferEncoding) == false)
+                if (string.IsNullOrEmpty(request.BodySha256) && (request.HasEntityBody || request.ContentLength64 > 0 ||
+                    string.IsNullOrWhiteSpace(request.TransferEncoding) == false))
                     return false;
-                if (headers.BodyDigest != EmptyBodyDigest)
+                if (string.IsNullOrEmpty(request.BodySha256) == false &&
+                    CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(headers.BodyDigest), Encoding.ASCII.GetBytes(request.BodySha256)) == false)
                     return false;
                 if (long.TryParse(headers.Timestamp, NumberStyles.None, CultureInfo.InvariantCulture, out long timestamp) == false)
                     return false;
