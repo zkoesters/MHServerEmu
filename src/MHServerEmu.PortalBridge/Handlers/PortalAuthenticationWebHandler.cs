@@ -12,6 +12,7 @@ namespace MHServerEmu.PortalBridge.Handlers
         public const string RegisterPath = "/portal-bridge/v1/auth/register";
         public const string VerifyPath = "/portal-bridge/v1/auth/verify";
         public const string ChangePasswordPath = "/portal-bridge/v1/auth/password";
+        public const string GetPasswordChangeStatusPath = "/portal-bridge/v1/auth/password/status";
 
         private readonly OpaqueAccountIdGenerator _accountIdGenerator;
 
@@ -37,6 +38,12 @@ namespace MHServerEmu.PortalBridge.Handlers
             if (string.Equals(context.RawUrl, ChangePasswordPath, StringComparison.Ordinal))
             {
                 await ChangePasswordAsync(context);
+                return;
+            }
+
+            if (string.Equals(context.RawUrl, GetPasswordChangeStatusPath, StringComparison.Ordinal))
+            {
+                await GetPasswordChangeStatusAsync(context);
                 return;
             }
 
@@ -113,30 +120,65 @@ namespace MHServerEmu.PortalBridge.Handlers
             }
             catch (System.Text.Json.JsonException)
             {
-                await WriteProblemAsync(context, HttpStatusCode.Unauthorized, "invalid_credentials");
+                await WriteProblemAsync(context, HttpStatusCode.ServiceUnavailable, "account_service_unavailable");
                 return;
             }
 
             if (request == null || string.IsNullOrWhiteSpace(request.Identifier) || string.IsNullOrEmpty(request.CurrentPassword) ||
-                string.IsNullOrEmpty(request.NewPassword))
+                string.IsNullOrEmpty(request.NewPassword) || request.OperationId == Guid.Empty)
             {
-                await WriteProblemAsync(context, HttpStatusCode.Unauthorized, "invalid_credentials");
+                await WriteProblemAsync(context, HttpStatusCode.ServiceUnavailable, "account_service_unavailable");
                 return;
             }
 
-            AccountOperationResult result = AccountManager.ChangeAccountPassword(request.Identifier, request.CurrentPassword,
-                request.NewPassword);
-            if (result == AccountOperationResult.Success)
+            await WritePasswordChangeOutcomeAsync(context, AccountManager.ChangePortalPassword(request.Identifier,
+                request.OperationId, request.CurrentPassword, request.NewPassword));
+        }
+
+        private static async Task GetPasswordChangeStatusAsync(WebRequestContext context)
+        {
+            if (AccountManager.SupportsCredentialVerification() == false)
             {
-                context.StatusCode = (int)HttpStatusCode.NoContent;
+                await WriteProblemAsync(context, HttpStatusCode.ServiceUnavailable, "account_service_unavailable");
                 return;
             }
 
-            await WriteProblemAsync(context, result == AccountOperationResult.DatabaseError
-                ? HttpStatusCode.ServiceUnavailable
-                : HttpStatusCode.Unauthorized, result == AccountOperationResult.DatabaseError
-                    ? "account_service_unavailable"
-                    : "invalid_credentials");
+            PortalPasswordChangeStatusRequest request;
+            try
+            {
+                request = await context.ReadJsonAsync<PortalPasswordChangeStatusRequest>();
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                await WriteProblemAsync(context, HttpStatusCode.ServiceUnavailable, "account_service_unavailable");
+                return;
+            }
+
+            if (request == null || string.IsNullOrWhiteSpace(request.Identifier) || request.OperationId == Guid.Empty)
+            {
+                await WriteProblemAsync(context, HttpStatusCode.ServiceUnavailable, "account_service_unavailable");
+                return;
+            }
+
+            await WritePasswordChangeOutcomeAsync(context,
+                AccountManager.GetPortalPasswordChangeStatus(request.Identifier, request.OperationId));
+        }
+
+        private static Task WritePasswordChangeOutcomeAsync(WebRequestContext context,
+            PortalPasswordChangeOperationOutcome outcome)
+        {
+            if (outcome == PortalPasswordChangeOperationOutcome.Unavailable)
+                return WriteProblemAsync(context, HttpStatusCode.ServiceUnavailable, "account_service_unavailable");
+
+            string value = outcome switch
+            {
+                PortalPasswordChangeOperationOutcome.Succeeded => "succeeded",
+                PortalPasswordChangeOperationOutcome.Rejected => "rejected",
+                PortalPasswordChangeOperationOutcome.Cancelled => "cancelled",
+                _ => throw new ArgumentOutOfRangeException(nameof(outcome)),
+            };
+            context.StatusCode = (int)HttpStatusCode.OK;
+            return context.SendJsonAsync(new PortalPasswordChangeOutcomeResponse(value));
         }
 
         private static Task WriteProblemAsync(WebRequestContext context, HttpStatusCode statusCode, string code)

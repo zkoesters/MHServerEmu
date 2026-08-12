@@ -33,6 +33,29 @@ namespace MHServerEmu.PortalBridge.Models
 
         [JsonPropertyName("newPassword")]
         public string NewPassword { get; set; }
+
+        [JsonPropertyName("operationId")]
+        public Guid OperationId { get; set; }
+    }
+
+    public sealed class PortalPasswordChangeStatusRequest
+    {
+        [JsonPropertyName("identifier")]
+        public string Identifier { get; set; }
+
+        [JsonPropertyName("operationId")]
+        public Guid OperationId { get; set; }
+    }
+
+    public sealed class PortalPasswordChangeOutcomeResponse
+    {
+        [JsonPropertyName("outcome")]
+        public string Outcome { get; }
+
+        public PortalPasswordChangeOutcomeResponse(string outcome)
+        {
+            Outcome = outcome;
+        }
     }
 
     public sealed class EmulatorAccountResponse

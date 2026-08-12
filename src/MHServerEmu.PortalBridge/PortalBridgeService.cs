@@ -182,6 +182,7 @@ namespace MHServerEmu.PortalBridge
                 webService.RegisterHandler(PortalAuthenticationWebHandler.RegisterPath, new PortalAuthenticationWebHandler(accountIdGenerator));
                 webService.RegisterHandler(PortalAuthenticationWebHandler.VerifyPath, new PortalAuthenticationWebHandler(accountIdGenerator));
                 webService.RegisterHandler(PortalAuthenticationWebHandler.ChangePasswordPath, new PortalAuthenticationWebHandler(accountIdGenerator));
+                webService.RegisterHandler(PortalAuthenticationWebHandler.GetPasswordChangeStatusPath, new PortalAuthenticationWebHandler(accountIdGenerator));
 
                 if (webService.Start() == false)
                     return;
