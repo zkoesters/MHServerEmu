@@ -32,6 +32,7 @@ namespace MHServerEmu.PortalBridge.Tests
         [Theory]
         [InlineData(PortalAuthenticationWebHandler.RegisterPath, "{\"email\":\"player@example.test\",\"playerName\":\"StarLord\",\"password\":\"correct horse battery staple\"}")]
         [InlineData(PortalAuthenticationWebHandler.VerifyPath, "{\"identifier\":\"player@example.test\",\"password\":\"correct horse battery staple\"}")]
+        [InlineData(PortalAuthenticationWebHandler.ChangePasswordPath, "{\"identifier\":\"player@example.test\",\"currentPassword\":\"correct horse battery staple\",\"newPassword\":\"new correct horse battery staple\"}")]
         public async Task Authentication_CredentialsUnsupportedBackend_ReturnsUnavailable(string path, string requestBody)
         {
             using AccountDatabaseScope database = new(verifyAccounts: false);
@@ -130,6 +131,99 @@ namespace MHServerEmu.PortalBridge.Tests
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
             Assert.Equal("invalid_credentials", json.RootElement.GetProperty("code").GetString());
             Assert.Equal(new[] { "code", "correlationId" }, json.RootElement.EnumerateObject().Select(property => property.Name));
+        }
+
+        [Theory]
+        [InlineData("player@example.test")]
+        [InlineData("StarLord")]
+        public async Task ChangePassword_EmailOrPlayerNameWithCorrectCurrentPassword_UpdatesCredentials(string identifier)
+        {
+            using AccountDatabaseScope database = new();
+            using RunningBridge bridge = RunningBridge.Start();
+            using HttpClient client = bridge.CreateSignedClient();
+            await client.PostAsync(PortalAuthenticationWebHandler.RegisterPath,
+                JsonContent("{\"email\":\"player@example.test\",\"playerName\":\"StarLord\",\"password\":\"correct horse battery staple\"}"));
+
+            using HttpResponseMessage response = await client.PostAsync(PortalAuthenticationWebHandler.ChangePasswordPath,
+                JsonContent($"{{\"identifier\":\"{identifier}\",\"currentPassword\":\"correct horse battery staple\",\"newPassword\":\"new correct horse battery staple\"}}"));
+
+            Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+            Assert.Empty(await response.Content.ReadAsByteArrayAsync());
+            Assert.False(MHServerEmu.PlayerManagement.Players.AccountManager.TryVerifyAccount(identifier,
+                "correct horse battery staple", out _));
+            Assert.True(MHServerEmu.PlayerManagement.Players.AccountManager.TryVerifyAccount(identifier,
+                "new correct horse battery staple", out _));
+        }
+
+        [Fact]
+        public async Task ChangePassword_WrongCurrentPassword_ReturnsGenericProblemWithoutUpdatingCredentials()
+        {
+            using AccountDatabaseScope database = new();
+            using RunningBridge bridge = RunningBridge.Start();
+            using HttpClient client = bridge.CreateSignedClient();
+            await client.PostAsync(PortalAuthenticationWebHandler.RegisterPath,
+                JsonContent("{\"email\":\"player@example.test\",\"playerName\":\"StarLord\",\"password\":\"correct horse battery staple\"}"));
+
+            using HttpResponseMessage response = await client.PostAsync(PortalAuthenticationWebHandler.ChangePasswordPath,
+                JsonContent("{\"identifier\":\"StarLord\",\"currentPassword\":\"wrong password\",\"newPassword\":\"new correct horse battery staple\"}"));
+            using JsonDocument json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            Assert.Equal("invalid_credentials", json.RootElement.GetProperty("code").GetString());
+            Assert.True(MHServerEmu.PlayerManagement.Players.AccountManager.TryVerifyAccount("StarLord",
+                "correct horse battery staple", out _));
+        }
+
+        [Fact]
+        public async Task ChangePassword_InvalidNewPassword_ReturnsGenericProblemWithoutUpdatingCredentials()
+        {
+            using AccountDatabaseScope database = new();
+            using RunningBridge bridge = RunningBridge.Start();
+            using HttpClient client = bridge.CreateSignedClient();
+            await client.PostAsync(PortalAuthenticationWebHandler.RegisterPath,
+                JsonContent("{\"email\":\"player@example.test\",\"playerName\":\"StarLord\",\"password\":\"correct horse battery staple\"}"));
+
+            using HttpResponseMessage response = await client.PostAsync(PortalAuthenticationWebHandler.ChangePasswordPath,
+                JsonContent("{\"identifier\":\"StarLord\",\"currentPassword\":\"correct horse battery staple\",\"newPassword\":\"no\"}"));
+            using JsonDocument json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            Assert.Equal("invalid_credentials", json.RootElement.GetProperty("code").GetString());
+            Assert.True(MHServerEmu.PlayerManagement.Players.AccountManager.TryVerifyAccount("StarLord",
+                "correct horse battery staple", out _));
+        }
+
+        [Fact]
+        public async Task ChangePassword_PersistenceFailure_ReturnsUnavailableWithoutUpdatingCredentials()
+        {
+            using AccountDatabaseScope database = new(updateAccounts: false);
+            using RunningBridge bridge = RunningBridge.Start();
+            using HttpClient client = bridge.CreateSignedClient();
+            await client.PostAsync(PortalAuthenticationWebHandler.RegisterPath,
+                JsonContent("{\"email\":\"player@example.test\",\"playerName\":\"StarLord\",\"password\":\"correct horse battery staple\"}"));
+
+            using HttpResponseMessage response = await client.PostAsync(PortalAuthenticationWebHandler.ChangePasswordPath,
+                JsonContent("{\"identifier\":\"StarLord\",\"currentPassword\":\"correct horse battery staple\",\"newPassword\":\"new correct horse battery staple\"}"));
+            using JsonDocument json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+            Assert.Equal("account_service_unavailable", json.RootElement.GetProperty("code").GetString());
+            Assert.True(MHServerEmu.PlayerManagement.Players.AccountManager.TryVerifyAccount("StarLord",
+                "correct horse battery staple", out _));
+        }
+
+        [Fact]
+        public async Task ChangePassword_BodyMutatedAfterSigning_ReturnsUnauthorized()
+        {
+            using AccountDatabaseScope database = new();
+            using RunningBridge bridge = RunningBridge.Start();
+            using HttpRequestMessage request = bridge.CreateSignedRequest(PortalAuthenticationWebHandler.ChangePasswordPath,
+                HttpMethod.Post, content: JsonContent("{\"identifier\":\"StarLord\",\"currentPassword\":\"correct horse battery staple\",\"newPassword\":\"new correct horse battery staple\"}"));
+            request.Content = JsonContent("{\"identifier\":\"StarLord\",\"currentPassword\":\"correct horse battery staple\",\"newPassword\":\"another correct horse battery staple\"}");
+
+            using HttpResponseMessage response = await bridge.Client.SendAsync(request);
+
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         }
 
         [Fact]
@@ -327,9 +421,9 @@ namespace MHServerEmu.PortalBridge.Tests
             private readonly IDBManager _previous = IDBManager.Instance;
             public InMemoryAccountDatabase Database { get; }
 
-            public AccountDatabaseScope(bool verifyAccounts = true)
+            public AccountDatabaseScope(bool verifyAccounts = true, bool updateAccounts = true)
             {
-                Database = new InMemoryAccountDatabase(verifyAccounts);
+                Database = new InMemoryAccountDatabase(verifyAccounts, updateAccounts);
                 IDBManager.Instance = Database;
             }
 
@@ -343,13 +437,15 @@ namespace MHServerEmu.PortalBridge.Tests
         {
             private readonly Dictionary<string, DBAccount> _accountsByEmail = new(StringComparer.OrdinalIgnoreCase);
             private readonly bool _verifyAccounts;
+            private readonly bool _updateAccounts;
 
             public DBAccount Account { get => Assert.Single(_accountsByEmail.Values); }
             public bool VerifyAccounts { get => _verifyAccounts; }
 
-            public InMemoryAccountDatabase(bool verifyAccounts)
+            public InMemoryAccountDatabase(bool verifyAccounts, bool updateAccounts)
             {
                 _verifyAccounts = verifyAccounts;
+                _updateAccounts = updateAccounts;
             }
 
             public bool TryQueryAccountByEmail(string email, out DBAccount account) => _accountsByEmail.TryGetValue(email, out account);
@@ -381,7 +477,7 @@ namespace MHServerEmu.PortalBridge.Tests
             public bool TryGetPlayerName(ulong playerDbId, out string playerName) { playerName = null; return false; }
             public bool GetPlayerNames(Dictionary<ulong, string> playerNames) => false;
             public bool TryGetLastLogoutTime(ulong playerDbId, out long lastLogoutTime) { lastLogoutTime = 0; return false; }
-            public bool UpdateAccount(DBAccount account) => false;
+            public bool UpdateAccount(DBAccount account) => _updateAccounts;
             public bool LoadPlayerData(DBAccount account) => false;
             public bool SavePlayerData(DBAccount account) => false;
             public bool LoadGuilds(List<DBGuild> guilds) => false;

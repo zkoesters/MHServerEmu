@@ -35,6 +35,7 @@ namespace MHServerEmu.PlayerManagement.Players
 
         private static readonly Logger Logger = LogManager.CreateLogger();
         private static readonly object AccountCreationLock = new();
+        private static readonly object AccountPasswordLock = new();
 
         /// <summary>
         /// Queries a <see cref="DBAccount"/> using the provided <see cref="LoginDataPB"/> instance.
@@ -203,22 +204,61 @@ namespace MHServerEmu.PlayerManagement.Players
         /// </summary>
         public static AccountOperationResult ChangeAccountPassword(string email, string newPassword)
         {
-            IDBManager dbManager = IDBManager.Instance;
+            lock (AccountPasswordLock)
+            {
+                IDBManager dbManager = IDBManager.Instance;
 
-            // Validate input before doing database queries
-            if (ValidatePassword(newPassword) == false)
-                return AccountOperationResult.PasswordInvalid;
+                // Validate input before doing database queries
+                if (ValidatePassword(newPassword) == false)
+                    return AccountOperationResult.PasswordInvalid;
 
-            if (dbManager.TryQueryAccountByEmail(email, out DBAccount account) == false)
-                return AccountOperationResult.EmailNotFound;
+                if (dbManager.TryQueryAccountByEmail(email, out DBAccount account) == false)
+                    return AccountOperationResult.EmailNotFound;
 
-            account.PasswordHash = CryptographyHelper.HashPassword(newPassword, out byte[] salt);
-            account.Salt = salt;
-            account.Flags &= ~AccountFlags.IsPasswordExpired;
-            dbManager.UpdateAccount(account);
+                account.PasswordHash = CryptographyHelper.HashPassword(newPassword, out byte[] salt);
+                account.Salt = salt;
+                account.Flags &= ~AccountFlags.IsPasswordExpired;
+                dbManager.UpdateAccount(account);
 
-            Logger.Info($"ChangeAccountPassword(): account=[{account}]");
-            return AccountOperationResult.Success;
+                Logger.Info($"ChangeAccountPassword(): account=[{account}]");
+                return AccountOperationResult.Success;
+            }
+        }
+
+        public static AccountOperationResult ChangeAccountPassword(string identifier, string currentPassword, string newPassword)
+        {
+            lock (AccountPasswordLock)
+            {
+                if (string.IsNullOrWhiteSpace(identifier) || string.IsNullOrEmpty(currentPassword))
+                    return AccountOperationResult.EmailNotFound;
+
+                if (ValidatePassword(newPassword) == false)
+                    return AccountOperationResult.PasswordInvalid;
+
+                IDBManager dbManager = IDBManager.Instance;
+                bool found = identifier.Contains('@')
+                    ? dbManager.TryQueryAccountByEmail(identifier, out DBAccount account)
+                    : dbManager.TryQueryAccountByPlayerName(identifier, out account);
+                if (found == false)
+                    return AccountOperationResult.EmailNotFound;
+
+                if (CryptographyHelper.VerifyPassword(currentPassword, account.PasswordHash, account.Salt) == false)
+                    return AccountOperationResult.EmailNotFound;
+
+                byte[] passwordHash = account.PasswordHash;
+                byte[] salt = account.Salt;
+                AccountFlags flags = account.Flags;
+                account.PasswordHash = CryptographyHelper.HashPassword(newPassword, out byte[] newSalt);
+                account.Salt = newSalt;
+                account.Flags &= ~AccountFlags.IsPasswordExpired;
+                if (dbManager.UpdateAccount(account))
+                    return AccountOperationResult.Success;
+
+                account.PasswordHash = passwordHash;
+                account.Salt = salt;
+                account.Flags = flags;
+                return AccountOperationResult.DatabaseError;
+            }
         }
 
         /// <summary>

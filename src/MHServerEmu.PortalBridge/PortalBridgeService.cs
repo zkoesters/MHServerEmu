@@ -181,6 +181,7 @@ namespace MHServerEmu.PortalBridge
                     new HealthWebHandler(_playerManagerStateProvider, _timeProvider));
                 webService.RegisterHandler(PortalAuthenticationWebHandler.RegisterPath, new PortalAuthenticationWebHandler(accountIdGenerator));
                 webService.RegisterHandler(PortalAuthenticationWebHandler.VerifyPath, new PortalAuthenticationWebHandler(accountIdGenerator));
+                webService.RegisterHandler(PortalAuthenticationWebHandler.ChangePasswordPath, new PortalAuthenticationWebHandler(accountIdGenerator));
 
                 if (webService.Start() == false)
                     return;

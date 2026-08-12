@@ -11,6 +11,7 @@ namespace MHServerEmu.PortalBridge.Handlers
     {
         public const string RegisterPath = "/portal-bridge/v1/auth/register";
         public const string VerifyPath = "/portal-bridge/v1/auth/verify";
+        public const string ChangePasswordPath = "/portal-bridge/v1/auth/password";
 
         private readonly OpaqueAccountIdGenerator _accountIdGenerator;
 
@@ -30,6 +31,12 @@ namespace MHServerEmu.PortalBridge.Handlers
             if (string.Equals(context.RawUrl, VerifyPath, StringComparison.Ordinal))
             {
                 await VerifyAsync(context);
+                return;
+            }
+
+            if (string.Equals(context.RawUrl, ChangePasswordPath, StringComparison.Ordinal))
+            {
+                await ChangePasswordAsync(context);
                 return;
             }
 
@@ -89,6 +96,37 @@ namespace MHServerEmu.PortalBridge.Handlers
             }
 
             await context.SendJsonAsync(new EmulatorAccountResponse(_accountIdGenerator.GetAccountId(account.Id)));
+        }
+
+        private static async Task ChangePasswordAsync(WebRequestContext context)
+        {
+            if (AccountManager.SupportsCredentialVerification() == false)
+            {
+                await WriteProblemAsync(context, HttpStatusCode.ServiceUnavailable, "account_service_unavailable");
+                return;
+            }
+
+            PortalChangePasswordRequest request = await context.ReadJsonAsync<PortalChangePasswordRequest>();
+            if (request == null || string.IsNullOrWhiteSpace(request.Identifier) || string.IsNullOrEmpty(request.CurrentPassword) ||
+                string.IsNullOrEmpty(request.NewPassword))
+            {
+                await WriteProblemAsync(context, HttpStatusCode.Unauthorized, "invalid_credentials");
+                return;
+            }
+
+            AccountOperationResult result = AccountManager.ChangeAccountPassword(request.Identifier, request.CurrentPassword,
+                request.NewPassword);
+            if (result == AccountOperationResult.Success)
+            {
+                context.StatusCode = (int)HttpStatusCode.NoContent;
+                return;
+            }
+
+            await WriteProblemAsync(context, result == AccountOperationResult.DatabaseError
+                ? HttpStatusCode.ServiceUnavailable
+                : HttpStatusCode.Unauthorized, result == AccountOperationResult.DatabaseError
+                    ? "account_service_unavailable"
+                    : "invalid_credentials");
         }
 
         private static Task WriteProblemAsync(WebRequestContext context, HttpStatusCode statusCode, string code)

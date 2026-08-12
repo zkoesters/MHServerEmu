@@ -73,6 +73,22 @@ paths:
           $ref: '#/components/responses/InvalidCredentials'
         '503':
           $ref: '#/components/responses/Unavailable'
+  /auth/password:
+    post:
+      operationId: changePassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        '204':
+          description: Emulator account password changed.
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '503':
+          $ref: '#/components/responses/Unavailable'
 components:
   securitySchemes:
     portalHmac:
@@ -151,6 +167,29 @@ components:
           maxLength: 320
           description: Normalized email address or player name.
         password:
+          type: string
+          minLength: 1
+          maxLength: 256
+          writeOnly: true
+    ChangePasswordRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - identifier
+        - currentPassword
+        - newPassword
+      properties:
+        identifier:
+          type: string
+          minLength: 1
+          maxLength: 320
+          description: Normalized email address or player name.
+        currentPassword:
+          type: string
+          minLength: 1
+          maxLength: 256
+          writeOnly: true
+        newPassword:
           type: string
           minLength: 1
           maxLength: 256

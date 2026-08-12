@@ -19,11 +19,12 @@ namespace MHServerEmu.PortalBridge.Tests.Contract
             Assert.Equal("portalHmac", Scalar(Assert.Single(security.Children.Keys)));
 
             YamlMappingNode paths = Map(contract, "paths");
-            Assert.Equal(new[] { "/capabilities", "/health", "/auth/register", "/auth/verify" }, Keys(paths));
+            Assert.Equal(new[] { "/capabilities", "/health", "/auth/register", "/auth/verify", "/auth/password" }, Keys(paths));
             AssertOperation(Map(paths, "/capabilities"), "getCapabilities", "BridgeCapabilities");
             AssertOperation(Map(paths, "/health"), "getHealth", "BridgeHealth");
             AssertAuthenticationOperation(Map(paths, "/auth/register"), "register", "RegisterRequest", true);
             AssertAuthenticationOperation(Map(paths, "/auth/verify"), "verify", "VerifyRequest", false);
+            AssertChangePasswordOperation(Map(paths, "/auth/password"));
         }
 
         [Fact]
@@ -58,9 +59,10 @@ namespace MHServerEmu.PortalBridge.Tests.Contract
             AssertSchemaReference(Map(Map(Map(Map(responses, "Unauthorized"), "content"), "application/problem+json"), "schema"), "Problem");
 
             YamlMappingNode schemas = Map(components, "schemas");
-            Assert.Equal(new[] { "RegisterRequest", "VerifyRequest", "EmulatorAccount", "BridgeCapabilities", "BridgeHealth", "HealthStatus", "Problem" }, Keys(schemas));
+            Assert.Equal(new[] { "RegisterRequest", "VerifyRequest", "ChangePasswordRequest", "EmulatorAccount", "BridgeCapabilities", "BridgeHealth", "HealthStatus", "Problem" }, Keys(schemas));
             AssertRegisterRequestSchema(Map(schemas, "RegisterRequest"));
             AssertVerifyRequestSchema(Map(schemas, "VerifyRequest"));
+            AssertChangePasswordRequestSchema(Map(schemas, "ChangePasswordRequest"));
             AssertEmulatorAccountSchema(Map(schemas, "EmulatorAccount"));
             AssertCapabilitiesSchema(Map(schemas, "BridgeCapabilities"));
             AssertHealthSchema(Map(schemas, "BridgeHealth"));
@@ -105,6 +107,22 @@ namespace MHServerEmu.PortalBridge.Tests.Contract
             AssertScalar(Map(responses, "503"), "$ref", "#/components/responses/Unavailable");
         }
 
+        private static void AssertChangePasswordOperation(YamlMappingNode path)
+        {
+            Assert.Equal(new[] { "post" }, Keys(path));
+            YamlMappingNode operation = Map(path, "post");
+            Assert.Equal(new[] { "operationId", "requestBody", "responses" }, Keys(operation));
+            AssertScalar(operation, "operationId", "changePassword");
+            AssertSchemaReference(Map(Map(Map(Map(operation, "requestBody"), "content"), "application/json"), "schema"),
+                "ChangePasswordRequest");
+
+            YamlMappingNode responses = Map(operation, "responses");
+            Assert.Equal(new[] { "204", "401", "503" }, Keys(responses));
+            AssertScalar(Map(responses, "204"), "description", "Emulator account password changed.");
+            AssertScalar(Map(responses, "401"), "$ref", "#/components/responses/InvalidCredentials");
+            AssertScalar(Map(responses, "503"), "$ref", "#/components/responses/Unavailable");
+        }
+
         private static void AssertRegisterRequestSchema(YamlMappingNode schema)
         {
             AssertObjectSchema(schema, new[] { "email", "playerName", "password" });
@@ -119,6 +137,15 @@ namespace MHServerEmu.PortalBridge.Tests.Contract
         {
             AssertObjectSchema(schema, new[] { "identifier", "password" });
             AssertScalar(Map(Map(schema, "properties"), "password"), "writeOnly", "true");
+        }
+
+        private static void AssertChangePasswordRequestSchema(YamlMappingNode schema)
+        {
+            AssertObjectSchema(schema, new[] { "identifier", "currentPassword", "newPassword" });
+            YamlMappingNode properties = Map(schema, "properties");
+            AssertScalar(Map(properties, "identifier"), "maxLength", "320");
+            AssertScalar(Map(properties, "currentPassword"), "writeOnly", "true");
+            AssertScalar(Map(properties, "newPassword"), "writeOnly", "true");
         }
 
         private static void AssertEmulatorAccountSchema(YamlMappingNode schema)
