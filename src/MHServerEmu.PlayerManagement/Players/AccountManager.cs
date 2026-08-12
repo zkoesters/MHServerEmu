@@ -261,6 +261,30 @@ namespace MHServerEmu.PlayerManagement.Players
             }
         }
 
+        public static PortalPasswordChangeOperationOutcome ChangePortalPassword(string identifier, Guid operationId,
+            string currentPassword, string newPassword)
+        {
+            if (SupportsCredentialVerification() == false)
+                return PortalPasswordChangeOperationOutcome.Unavailable;
+
+            if (TryGetAccountByIdentifier(identifier, out DBAccount account) == false)
+                return PortalPasswordChangeOperationOutcome.Rejected;
+
+            return IDBManager.Instance.ResolvePortalPasswordChange(account, operationId, currentPassword, newPassword,
+                ValidatePassword(newPassword));
+        }
+
+        public static PortalPasswordChangeOperationOutcome GetPortalPasswordChangeStatus(string identifier, Guid operationId)
+        {
+            if (SupportsCredentialVerification() == false)
+                return PortalPasswordChangeOperationOutcome.Unavailable;
+
+            if (TryGetAccountByIdentifier(identifier, out DBAccount account) == false)
+                return PortalPasswordChangeOperationOutcome.Rejected;
+
+            return IDBManager.Instance.GetPortalPasswordChangeStatus(account, operationId);
+        }
+
         /// <summary>
         /// Changes the <see cref="AccountUserLevel"/> of the <see cref="DBAccount"/> with the specified email. Returns <see langword="true"/> if successful.
         /// </summary>
@@ -383,6 +407,17 @@ namespace MHServerEmu.PlayerManagement.Players
                 return false;
 
             return true;
+        }
+
+        private static bool TryGetAccountByIdentifier(string identifier, out DBAccount account)
+        {
+            account = null;
+            if (string.IsNullOrWhiteSpace(identifier))
+                return false;
+
+            return identifier.Contains('@')
+                ? IDBManager.Instance.TryQueryAccountByEmail(identifier, out account)
+                : IDBManager.Instance.TryQueryAccountByPlayerName(identifier, out account);
         }
 
         /// <summary>

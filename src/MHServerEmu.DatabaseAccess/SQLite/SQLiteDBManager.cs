@@ -13,7 +13,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
     /// </summary>
     public class SQLiteDBManager : IDBManager
     {
-        private const int CurrentSchemaVersion = 6;         // Increment this when making changes to the database schema
+        private const int CurrentSchemaVersion = 7;         // Increment this when making changes to the database schema
         private const int MinimumSchemaVersion = 6;         // Used to ignore legacy 0.x database files.
         private const int NumTestAccounts = 5;              // Number of test accounts to create for new database files
         private const int NumPlayerDataWriteAttempts = 3;   // Number of write attempts to do when saving player data
@@ -169,6 +169,89 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                 {
                     Logger.ErrorException(e, nameof(UpdateAccount));
                     return false;
+                }
+            }
+        }
+
+        public PortalPasswordChangeOperationOutcome ResolvePortalPasswordChange(DBAccount account, Guid operationId,
+            string currentPassword, string newPassword, bool newPasswordIsValid)
+        {
+            lock (_writeLock)
+            {
+                using SQLiteConnection connection = GetConnection();
+                using SQLiteTransaction transaction = connection.BeginTransaction();
+
+                try
+                {
+                    PortalPasswordChangeOperationOutcome? existingOutcome = GetPasswordChangeOutcome(connection, transaction,
+                        account.Id, operationId);
+                    if (existingOutcome.HasValue)
+                    {
+                        transaction.Commit();
+                        return existingOutcome.Value;
+                    }
+
+                    if (newPasswordIsValid == false ||
+                        CryptographyHelper.VerifyPassword(currentPassword, account.PasswordHash, account.Salt) == false)
+                    {
+                        InsertPasswordChangeOutcome(connection, transaction, account.Id, operationId,
+                            PortalPasswordChangeOperationOutcome.Rejected);
+                        transaction.Commit();
+                        return PortalPasswordChangeOperationOutcome.Rejected;
+                    }
+
+                    byte[] passwordHash = CryptographyHelper.HashPassword(newPassword, out byte[] salt);
+                    AccountFlags flags = account.Flags & ~AccountFlags.IsPasswordExpired;
+                    int updated = connection.Execute(@"UPDATE Account SET PasswordHash=@PasswordHash, Salt=@Salt, Flags=@Flags WHERE Id=@Id",
+                        new { PasswordHash = passwordHash, Salt = salt, Flags = flags, account.Id }, transaction);
+                    if (updated != 1)
+                        throw new SQLiteException("Account password update did not affect exactly one row.");
+
+                    InsertPasswordChangeOutcome(connection, transaction, account.Id, operationId,
+                        PortalPasswordChangeOperationOutcome.Succeeded);
+                    transaction.Commit();
+
+                    account.PasswordHash = passwordHash;
+                    account.Salt = salt;
+                    account.Flags = flags;
+                    return PortalPasswordChangeOperationOutcome.Succeeded;
+                }
+                catch (Exception e)
+                {
+                    transaction.Rollback();
+                    Logger.ErrorException(e, nameof(ResolvePortalPasswordChange));
+                    return PortalPasswordChangeOperationOutcome.Unavailable;
+                }
+            }
+        }
+
+        public PortalPasswordChangeOperationOutcome GetPortalPasswordChangeStatus(DBAccount account, Guid operationId)
+        {
+            lock (_writeLock)
+            {
+                using SQLiteConnection connection = GetConnection();
+                using SQLiteTransaction transaction = connection.BeginTransaction();
+
+                try
+                {
+                    PortalPasswordChangeOperationOutcome? existingOutcome = GetPasswordChangeOutcome(connection, transaction,
+                        account.Id, operationId);
+                    if (existingOutcome.HasValue)
+                    {
+                        transaction.Commit();
+                        return existingOutcome.Value;
+                    }
+
+                    InsertPasswordChangeOutcome(connection, transaction, account.Id, operationId,
+                        PortalPasswordChangeOperationOutcome.Cancelled);
+                    transaction.Commit();
+                    return PortalPasswordChangeOperationOutcome.Cancelled;
+                }
+                catch (Exception e)
+                {
+                    transaction.Rollback();
+                    Logger.ErrorException(e, nameof(GetPortalPasswordChangeStatus));
+                    return PortalPasswordChangeOperationOutcome.Unavailable;
                 }
             }
         }
@@ -357,6 +440,37 @@ namespace MHServerEmu.DatabaseAccess.SQLite
             SQLiteConnection connection = new(_connectionString);
             connection.Open();
             return connection;
+        }
+
+        private static PortalPasswordChangeOperationOutcome? GetPasswordChangeOutcome(SQLiteConnection connection,
+            SQLiteTransaction transaction, long accountId, Guid operationId)
+        {
+            string outcome = connection.QueryFirstOrDefault<string>(@"SELECT Outcome FROM PortalPasswordChangeOperation
+                WHERE AccountId = @AccountId AND OperationId = @OperationId", new { AccountId = accountId,
+                    OperationId = operationId.ToString("D") }, transaction);
+            return outcome switch
+            {
+                "succeeded" => PortalPasswordChangeOperationOutcome.Succeeded,
+                "rejected" => PortalPasswordChangeOperationOutcome.Rejected,
+                "cancelled" => PortalPasswordChangeOperationOutcome.Cancelled,
+                null => null,
+                _ => throw new SQLiteException($"Unknown portal password operation outcome: {outcome}"),
+            };
+        }
+
+        private static void InsertPasswordChangeOutcome(SQLiteConnection connection, SQLiteTransaction transaction,
+            long accountId, Guid operationId, PortalPasswordChangeOperationOutcome outcome)
+        {
+            string value = outcome switch
+            {
+                PortalPasswordChangeOperationOutcome.Succeeded => "succeeded",
+                PortalPasswordChangeOperationOutcome.Rejected => "rejected",
+                PortalPasswordChangeOperationOutcome.Cancelled => "cancelled",
+                _ => throw new ArgumentOutOfRangeException(nameof(outcome)),
+            };
+            connection.Execute(@"INSERT INTO PortalPasswordChangeOperation (AccountId, OperationId, Outcome, CreatedAt)
+                VALUES (@AccountId, @OperationId, @Outcome, @CreatedAt)", new { AccountId = accountId,
+                    OperationId = operationId.ToString("D"), Outcome = value, CreatedAt = DateTimeOffset.UtcNow.ToString("O") }, transaction);
         }
 
         /// <summary>

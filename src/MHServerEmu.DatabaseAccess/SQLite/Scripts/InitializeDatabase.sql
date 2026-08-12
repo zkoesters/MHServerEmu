@@ -1,6 +1,6 @@
 -- Initialize a new database file using the current schema version
 
-PRAGMA user_version=6;
+PRAGMA user_version=7;
 PRAGMA journal_mode=WAL;
 
 CREATE TABLE "Account" (
@@ -93,3 +93,12 @@ CREATE INDEX "IX_Avatar_ContainerDbGuid" ON "Avatar" ("ContainerDbGuid");
 CREATE INDEX "IX_TeamUp_ContainerDbGuid" ON "TeamUp" ("ContainerDbGuid");
 CREATE INDEX "IX_Item_ContainerDbGuid" ON "Item" ("ContainerDbGuid");
 CREATE INDEX "IX_ControlledEntity_ContainerDbGuid" ON "ControlledEntity" ("ContainerDbGuid");
+
+CREATE TABLE "PortalPasswordChangeOperation" (
+	"AccountId"	INTEGER NOT NULL,
+	"OperationId"	TEXT NOT NULL,
+	"Outcome"	TEXT NOT NULL CHECK ("Outcome" IN ('succeeded', 'rejected', 'cancelled')),
+	"CreatedAt"	TEXT NOT NULL,
+	PRIMARY KEY("AccountId", "OperationId"),
+	UNIQUE("OperationId")
+);

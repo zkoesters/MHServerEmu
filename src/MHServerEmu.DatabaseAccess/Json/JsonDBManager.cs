@@ -112,6 +112,19 @@ namespace MHServerEmu.DatabaseAccess.Json
             return Logger.WarnReturn(false, "UpdateAccount(): Operation not supported");
         }
 
+        public PortalPasswordChangeOperationOutcome ResolvePortalPasswordChange(DBAccount account, Guid operationId,
+            string currentPassword, string newPassword, bool newPasswordIsValid)
+        {
+            Logger.Warn("ResolvePortalPasswordChange(): Operation not supported when credential verification is disabled");
+            return PortalPasswordChangeOperationOutcome.Unavailable;
+        }
+
+        public PortalPasswordChangeOperationOutcome GetPortalPasswordChangeStatus(DBAccount account, Guid operationId)
+        {
+            Logger.Warn("GetPortalPasswordChangeStatus(): Operation not supported when credential verification is disabled");
+            return PortalPasswordChangeOperationOutcome.Unavailable;
+        }
+
         public bool LoadPlayerData(DBAccount account)
         {
             // All JSON data is loaded at once (FIXME)

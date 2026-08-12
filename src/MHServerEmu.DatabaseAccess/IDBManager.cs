@@ -66,6 +66,17 @@ namespace MHServerEmu.DatabaseAccess
         public bool UpdateAccount(DBAccount account);
 
         /// <summary>
+        /// Resolves a portal password change exactly once and stores its terminal outcome.
+        /// </summary>
+        public PortalPasswordChangeOperationOutcome ResolvePortalPasswordChange(DBAccount account, Guid operationId,
+            string currentPassword, string newPassword, bool newPasswordIsValid);
+
+        /// <summary>
+        /// Returns an existing portal password operation outcome or durably cancels an unseen operation.
+        /// </summary>
+        public PortalPasswordChangeOperationOutcome GetPortalPasswordChangeStatus(DBAccount account, Guid operationId);
+
+        /// <summary>
         /// Loads persistent game data stored in the database for the provided <see cref="DBAccount"/>.
         /// </summary>
         public bool LoadPlayerData(DBAccount account);
