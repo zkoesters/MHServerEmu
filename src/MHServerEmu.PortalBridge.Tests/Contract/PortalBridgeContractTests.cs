@@ -59,10 +59,10 @@ namespace MHServerEmu.PortalBridge.Tests.Contract
             AssertSchemaReference(Map(Map(Map(Map(responses, "Unauthorized"), "content"), "application/problem+json"), "schema"), "Problem");
 
             YamlMappingNode schemas = Map(components, "schemas");
-            Assert.Equal(new[] { "RegisterRequest", "VerifyRequest", "ChangePasswordRequest", "EmulatorAccount", "BridgeCapabilities", "BridgeHealth", "HealthStatus", "Problem" }, Keys(schemas));
+            Assert.Equal(new[] { "RegisterRequest", "VerifyRequest", "PasswordChangeRequest", "EmulatorAccount", "BridgeCapabilities", "BridgeHealth", "HealthStatus", "Problem" }, Keys(schemas));
             AssertRegisterRequestSchema(Map(schemas, "RegisterRequest"));
             AssertVerifyRequestSchema(Map(schemas, "VerifyRequest"));
-            AssertChangePasswordRequestSchema(Map(schemas, "ChangePasswordRequest"));
+            AssertChangePasswordRequestSchema(Map(schemas, "PasswordChangeRequest"));
             AssertEmulatorAccountSchema(Map(schemas, "EmulatorAccount"));
             AssertCapabilitiesSchema(Map(schemas, "BridgeCapabilities"));
             AssertHealthSchema(Map(schemas, "BridgeHealth"));
@@ -114,11 +114,11 @@ namespace MHServerEmu.PortalBridge.Tests.Contract
             Assert.Equal(new[] { "operationId", "requestBody", "responses" }, Keys(operation));
             AssertScalar(operation, "operationId", "changePassword");
             AssertSchemaReference(Map(Map(Map(Map(operation, "requestBody"), "content"), "application/json"), "schema"),
-                "ChangePasswordRequest");
+                "PasswordChangeRequest");
 
             YamlMappingNode responses = Map(operation, "responses");
             Assert.Equal(new[] { "204", "401", "503" }, Keys(responses));
-            AssertScalar(Map(responses, "204"), "description", "Emulator account password changed.");
+            AssertScalar(Map(responses, "204"), "description", "Emulator password changed.");
             AssertScalar(Map(responses, "401"), "$ref", "#/components/responses/InvalidCredentials");
             AssertScalar(Map(responses, "503"), "$ref", "#/components/responses/Unavailable");
         }

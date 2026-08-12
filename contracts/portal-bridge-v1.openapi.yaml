@@ -81,10 +81,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ChangePasswordRequest'
+              $ref: '#/components/schemas/PasswordChangeRequest'
       responses:
         '204':
-          description: Emulator account password changed.
+          description: Emulator password changed.
         '401':
           $ref: '#/components/responses/InvalidCredentials'
         '503':
@@ -171,7 +171,7 @@ components:
           minLength: 1
           maxLength: 256
           writeOnly: true
-    ChangePasswordRequest:
+    PasswordChangeRequest:
       type: object
       additionalProperties: false
       required:
