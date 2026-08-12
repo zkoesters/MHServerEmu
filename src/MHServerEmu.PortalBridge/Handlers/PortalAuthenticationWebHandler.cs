@@ -106,7 +106,17 @@ namespace MHServerEmu.PortalBridge.Handlers
                 return;
             }
 
-            PortalChangePasswordRequest request = await context.ReadJsonAsync<PortalChangePasswordRequest>();
+            PortalChangePasswordRequest request;
+            try
+            {
+                request = await context.ReadJsonAsync<PortalChangePasswordRequest>();
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                await WriteProblemAsync(context, HttpStatusCode.Unauthorized, "invalid_credentials");
+                return;
+            }
+
             if (request == null || string.IsNullOrWhiteSpace(request.Identifier) || string.IsNullOrEmpty(request.CurrentPassword) ||
                 string.IsNullOrEmpty(request.NewPassword))
             {

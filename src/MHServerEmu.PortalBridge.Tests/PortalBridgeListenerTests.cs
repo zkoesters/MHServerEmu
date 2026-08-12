@@ -194,6 +194,23 @@ namespace MHServerEmu.PortalBridge.Tests
         }
 
         [Fact]
+        public async Task ChangePassword_MalformedJson_ReturnsGenericInvalidCredentialsProblem()
+        {
+            using AccountDatabaseScope database = new();
+            using RunningBridge bridge = RunningBridge.Start();
+            using HttpClient client = bridge.CreateSignedClient();
+
+            using HttpResponseMessage response = await client.PostAsync(PortalAuthenticationWebHandler.ChangePasswordPath,
+                JsonContent("{\"identifier\":"));
+            using JsonDocument json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            Assert.Equal("application/problem+json", response.Content.Headers.ContentType.MediaType);
+            Assert.Equal(new[] { "code", "correlationId" }, json.RootElement.EnumerateObject().Select(property => property.Name));
+            Assert.Equal("invalid_credentials", json.RootElement.GetProperty("code").GetString());
+        }
+
+        [Fact]
         public async Task ChangePassword_PersistenceFailure_ReturnsUnavailableWithoutUpdatingCredentials()
         {
             using AccountDatabaseScope database = new(updateAccounts: false);
