@@ -83,10 +83,34 @@ paths:
             schema:
               $ref: '#/components/schemas/PasswordChangeRequest'
       responses:
-        '204':
-          description: Emulator password changed.
+        '200':
+          description: Durable password-change outcome.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PasswordChangeOutcome'
         '401':
-          $ref: '#/components/responses/InvalidCredentials'
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /auth/password/status:
+    post:
+      operationId: getPasswordChangeStatus
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordChangeStatusRequest'
+      responses:
+        '200':
+          description: Durable password-change outcome.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PasswordChangeOutcome'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '503':
           $ref: '#/components/responses/Unavailable'
 components:
@@ -178,6 +202,7 @@ components:
         - identifier
         - currentPassword
         - newPassword
+        - operationId
       properties:
         identifier:
           type: string
@@ -194,6 +219,36 @@ components:
           minLength: 1
           maxLength: 256
           writeOnly: true
+        operationId:
+          type: string
+          format: uuid
+    PasswordChangeStatusRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - identifier
+        - operationId
+      properties:
+        identifier:
+          type: string
+          minLength: 1
+          maxLength: 320
+          description: Normalized email address or player name.
+        operationId:
+          type: string
+          format: uuid
+    PasswordChangeOutcome:
+      type: object
+      additionalProperties: false
+      required:
+        - outcome
+      properties:
+        outcome:
+          type: string
+          enum:
+            - succeeded
+            - rejected
+            - cancelled
     EmulatorAccount:
       type: object
       additionalProperties: false
