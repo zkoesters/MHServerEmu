@@ -1,4 +1,6 @@
 using System.Net;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using MHServerEmu.Core.Network.Web;
 using MHServerEmu.DatabaseAccess.Models;
 using MHServerEmu.PlayerManagement.Players;
@@ -15,6 +17,10 @@ namespace MHServerEmu.PortalBridge.Handlers
         public const string GetPasswordChangeStatusPath = "/portal-bridge/v1/auth/password/status";
 
         private readonly OpaqueAccountIdGenerator _accountIdGenerator;
+        private static readonly JsonSerializerOptions StrictRequestJsonOptions = new()
+        {
+            UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+        };
 
         internal PortalAuthenticationWebHandler(OpaqueAccountIdGenerator accountIdGenerator)
         {
@@ -116,7 +122,8 @@ namespace MHServerEmu.PortalBridge.Handlers
             PortalChangePasswordRequest request;
             try
             {
-                request = await context.ReadJsonAsync<PortalChangePasswordRequest>();
+                request = JsonSerializer.Deserialize<PortalChangePasswordRequest>(await context.ReadUtf8StringAsync(),
+                    StrictRequestJsonOptions);
             }
             catch (System.Text.Json.JsonException)
             {
@@ -146,7 +153,8 @@ namespace MHServerEmu.PortalBridge.Handlers
             PortalPasswordChangeStatusRequest request;
             try
             {
-                request = await context.ReadJsonAsync<PortalPasswordChangeStatusRequest>();
+                request = JsonSerializer.Deserialize<PortalPasswordChangeStatusRequest>(await context.ReadUtf8StringAsync(),
+                    StrictRequestJsonOptions);
             }
             catch (System.Text.Json.JsonException)
             {

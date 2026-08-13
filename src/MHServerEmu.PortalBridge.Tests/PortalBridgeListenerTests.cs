@@ -2,10 +2,14 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using Dapper;
 using MHServerEmu.DatabaseAccess;
 using MHServerEmu.DatabaseAccess.Models;
+using MHServerEmu.DatabaseAccess.SQLite;
+using MHServerEmu.Core.Helpers;
 using MHServerEmu.Core.Network;
 using MHServerEmu.PortalBridge.Handlers;
+using System.Data.SQLite;
 
 namespace MHServerEmu.PortalBridge.Tests
 {
@@ -200,16 +204,57 @@ namespace MHServerEmu.PortalBridge.Tests
         }
 
         [Fact]
-        public async Task ChangePassword_MalformedJson_ReturnsRejectedOutcome()
+        public async Task ChangePassword_MalformedJson_ReturnsUnavailable()
         {
             using AccountDatabaseScope database = new();
             using RunningBridge bridge = RunningBridge.Start();
             using HttpClient client = bridge.CreateSignedClient();
 
             using HttpResponseMessage response = await client.PostAsync(PortalAuthenticationWebHandler.ChangePasswordPath,
-                JsonContent($"{{\"identifier\":\"StarLord\",\"currentPassword\":\"correct horse battery staple\",\"operationId\":\"{Guid.NewGuid():D}\"}}"));
+                JsonContent("{\"identifier\":\"StarLord\""));
 
             Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+            using JsonDocument json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Equal("account_service_unavailable", json.RootElement.GetProperty("code").GetString());
+        }
+
+        [Fact]
+        public async Task ChangePassword_UnknownField_ReturnsUnavailableWithoutMutationOrOperation()
+        {
+            using AccountDatabaseScope database = new();
+            using RunningBridge bridge = RunningBridge.Start();
+            using HttpClient client = bridge.CreateSignedClient();
+            await client.PostAsync(PortalAuthenticationWebHandler.RegisterPath,
+                JsonContent("{\"email\":\"player@example.test\",\"playerName\":\"StarLord\",\"password\":\"correct horse battery staple\"}"));
+
+            Guid operationId = Guid.NewGuid();
+            string requestBody = ChangePasswordJson("StarLord", "correct horse battery staple",
+                "new correct horse battery staple", operationId);
+            using HttpResponseMessage response = await client.PostAsync(PortalAuthenticationWebHandler.ChangePasswordPath,
+                JsonContent($"{requestBody[..^1]},\"extra\":true}}"));
+
+            await AssertUnavailableAsync(response);
+            Assert.Equal(0, database.Database.PasswordChangeOperationCount);
+            Assert.True(MHServerEmu.PlayerManagement.Players.AccountManager.TryVerifyAccount("StarLord",
+                "correct horse battery staple", out _));
+        }
+
+        [Fact]
+        public async Task GetPasswordChangeStatus_CredentialField_ReturnsUnavailableWithoutOperation()
+        {
+            using AccountDatabaseScope database = new();
+            using RunningBridge bridge = RunningBridge.Start();
+            using HttpClient client = bridge.CreateSignedClient();
+            await client.PostAsync(PortalAuthenticationWebHandler.RegisterPath,
+                JsonContent("{\"email\":\"player@example.test\",\"playerName\":\"StarLord\",\"password\":\"correct horse battery staple\"}"));
+
+            Guid operationId = Guid.NewGuid();
+            string requestBody = StatusJson("StarLord", operationId);
+            using HttpResponseMessage response = await client.PostAsync(PortalAuthenticationWebHandler.GetPasswordChangeStatusPath,
+                JsonContent($"{requestBody[..^1]},\"currentPassword\":\"correct horse battery staple\"}}"));
+
+            await AssertUnavailableAsync(response);
+            Assert.Equal(0, database.Database.PasswordChangeOperationCount);
         }
 
         [Fact]
@@ -264,6 +309,47 @@ namespace MHServerEmu.PortalBridge.Tests
             using HttpResponseMessage response = await bridge.Client.SendAsync(request);
 
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        }
+
+        [Fact]
+        public void SQLitePasswordOperations_MigrateFromVersion6AndPersistTerminalOutcomesAcrossManagerInstances()
+        {
+            using SQLiteAccountDatabaseScope database = new();
+            SQLiteDBManager firstManager = database.CreateManager();
+            Assert.True(firstManager.Initialize());
+
+            DBAccount account = new("player@example.test", "StarLord", "correct horse battery staple");
+            Assert.True(firstManager.InsertAccount(account));
+            Guid succeededId = Guid.NewGuid();
+            Guid rejectedId = Guid.NewGuid();
+            Guid cancelledId = Guid.NewGuid();
+            Assert.Equal(PortalPasswordChangeOperationOutcome.Succeeded, firstManager.ResolvePortalPasswordChange(account,
+                succeededId, "correct horse battery staple", "new correct horse battery staple", true));
+            Assert.Equal(PortalPasswordChangeOperationOutcome.Rejected, firstManager.ResolvePortalPasswordChange(account,
+                rejectedId, "wrong password", "another correct horse battery staple", true));
+            Assert.Equal(PortalPasswordChangeOperationOutcome.Cancelled,
+                firstManager.GetPortalPasswordChangeStatus(account, cancelledId));
+
+            SQLiteDBManager reloadedManager = database.CreateManager();
+            Assert.True(reloadedManager.Initialize());
+            IDBManager.Instance = reloadedManager;
+            Assert.True(reloadedManager.TryQueryAccountByPlayerName("StarLord", out DBAccount reloadedAccount));
+            Assert.Equal(PortalPasswordChangeOperationOutcome.Succeeded, reloadedManager.ResolvePortalPasswordChange(reloadedAccount,
+                succeededId, "wrong password", "another correct horse battery staple", true));
+            Assert.Equal(PortalPasswordChangeOperationOutcome.Rejected, reloadedManager.ResolvePortalPasswordChange(reloadedAccount,
+                rejectedId, "new correct horse battery staple", "another correct horse battery staple", true));
+            Assert.Equal(PortalPasswordChangeOperationOutcome.Cancelled, reloadedManager.ResolvePortalPasswordChange(reloadedAccount,
+                cancelledId, "new correct horse battery staple", "another correct horse battery staple", true));
+            Assert.True(MHServerEmu.PlayerManagement.Players.AccountManager.TryVerifyAccount("StarLord",
+                "new correct horse battery staple", out _));
+
+            using SQLiteConnection connection = new($"Data Source={database.DatabasePath}");
+            connection.Open();
+            Assert.Equal(7, connection.QuerySingle<int>("PRAGMA user_version"));
+            Assert.Equal(new[] { "AccountId", "OperationId", "Outcome", "CreatedAt" }, connection.Query<string>(
+                "SELECT name FROM pragma_table_info('PortalPasswordChangeOperation') ORDER BY cid"));
+            Assert.Equal(new[] { "cancelled", "rejected", "succeeded" }, connection.Query<string>(
+                "SELECT Outcome FROM PortalPasswordChangeOperation ORDER BY Outcome"));
         }
 
         [Fact]
@@ -474,6 +560,13 @@ namespace MHServerEmu.PortalBridge.Tests
             Assert.Equal(outcome, json.RootElement.GetProperty("outcome").GetString());
         }
 
+        private static async Task AssertUnavailableAsync(HttpResponseMessage response)
+        {
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+            using JsonDocument json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Equal("account_service_unavailable", json.RootElement.GetProperty("code").GetString());
+        }
+
         private sealed class AccountDatabaseScope : IDisposable
         {
             private readonly IDBManager _previous = IDBManager.Instance;
@@ -491,6 +584,51 @@ namespace MHServerEmu.PortalBridge.Tests
             }
         }
 
+        private sealed class SQLiteAccountDatabaseScope : IDisposable
+        {
+            private readonly IDBManager _previous = IDBManager.Instance;
+            private readonly string _backupPath;
+
+            public string DatabasePath { get; }
+
+            public SQLiteAccountDatabaseScope()
+            {
+                Directory.CreateDirectory(FileHelper.DataDirectory);
+                DatabasePath = Path.Combine(FileHelper.DataDirectory, "Account.db");
+                _backupPath = File.Exists(DatabasePath) ? Path.GetTempFileName() : null;
+                if (_backupPath != null)
+                    File.Move(DatabasePath, _backupPath, true);
+
+                SQLiteConnection.CreateFile(DatabasePath);
+                using SQLiteConnection connection = new($"Data Source={DatabasePath}");
+                connection.Open();
+                connection.Execute(@"PRAGMA user_version = 6;
+                    CREATE TABLE Account (
+                        Id INTEGER NOT NULL UNIQUE,
+                        Email TEXT NOT NULL UNIQUE,
+                        PlayerName TEXT NOT NULL UNIQUE,
+                        PasswordHash BLOB NOT NULL,
+                        Salt BLOB NOT NULL,
+                        UserLevel INTEGER NOT NULL,
+                        Flags INTEGER NOT NULL,
+                        PRIMARY KEY (Id)
+                    );");
+            }
+
+            public SQLiteDBManager CreateManager()
+            {
+                return (SQLiteDBManager)Activator.CreateInstance(typeof(SQLiteDBManager), nonPublic: true);
+            }
+
+            public void Dispose()
+            {
+                IDBManager.Instance = _previous;
+                File.Delete(DatabasePath);
+                if (_backupPath != null)
+                    File.Move(_backupPath, DatabasePath, true);
+            }
+        }
+
         private sealed class InMemoryAccountDatabase : IDBManager
         {
             private readonly Dictionary<string, DBAccount> _accountsByEmail = new(StringComparer.OrdinalIgnoreCase);
@@ -499,6 +637,7 @@ namespace MHServerEmu.PortalBridge.Tests
             private readonly bool _updateAccounts;
 
             public DBAccount Account { get => Assert.Single(_accountsByEmail.Values); }
+            public int PasswordChangeOperationCount { get => _passwordChangeOperations.Count; }
             public bool VerifyAccounts { get => _verifyAccounts; }
 
             public InMemoryAccountDatabase(bool verifyAccounts, bool updateAccounts)
