@@ -264,14 +264,17 @@ namespace MHServerEmu.PlayerManagement.Players
         public static PortalPasswordChangeOperationOutcome ChangePortalPassword(string identifier, Guid operationId,
             string currentPassword, string newPassword)
         {
-            if (SupportsCredentialVerification() == false)
-                return PortalPasswordChangeOperationOutcome.Unavailable;
+            lock (AccountPasswordLock)
+            {
+                if (SupportsCredentialVerification() == false)
+                    return PortalPasswordChangeOperationOutcome.Unavailable;
 
-            if (TryGetAccountByIdentifier(identifier, out DBAccount account) == false)
-                return PortalPasswordChangeOperationOutcome.Rejected;
+                if (TryGetAccountByIdentifier(identifier, out DBAccount account) == false)
+                    return PortalPasswordChangeOperationOutcome.Rejected;
 
-            return IDBManager.Instance.ResolvePortalPasswordChange(account, operationId, currentPassword, newPassword,
-                ValidatePassword(newPassword));
+                return IDBManager.Instance.ResolvePortalPasswordChange(account, operationId, currentPassword, newPassword,
+                    ValidatePassword(newPassword));
+            }
         }
 
         public static PortalPasswordChangeOperationOutcome GetPortalPasswordChangeStatus(string identifier, Guid operationId)

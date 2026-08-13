@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using Dapper;
@@ -8,6 +9,7 @@ using MHServerEmu.DatabaseAccess.Models;
 using MHServerEmu.DatabaseAccess.SQLite;
 using MHServerEmu.Core.Helpers;
 using MHServerEmu.Core.Network;
+using MHServerEmu.PlayerManagement.Players;
 using MHServerEmu.PortalBridge.Handlers;
 using System.Data.SQLite;
 
@@ -395,23 +397,82 @@ namespace MHServerEmu.PortalBridge.Tests
         }
 
         [Fact]
+        public async Task SQLitePasswordOperations_PortalAndLegacyMutationsShareAccountPasswordLock()
+        {
+            using SQLiteAccountDatabaseScope database = new();
+            SQLiteDBManager manager = database.CreateManager();
+            Assert.True(manager.Initialize());
+            IDBManager.Instance = manager;
+            Assert.Equal(AccountOperationResult.Success, AccountManager.CreateAccount("player@example.test", "StarLord",
+                "correct horse battery staple"));
+
+            object passwordLock = typeof(AccountManager).GetField("AccountPasswordLock",
+                BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+            Guid operationId = Guid.NewGuid();
+            Monitor.Enter(passwordLock);
+            bool lockHeld = true;
+            Task<PortalPasswordChangeOperationOutcome> portal;
+            Task<AccountOperationResult> legacy;
+            try
+            {
+                portal = Task.Run(() => AccountManager.ChangePortalPassword("StarLord",
+                    operationId, "correct horse battery staple", "portal new password"));
+                legacy = Task.Run(() => AccountManager.ChangeAccountPassword("StarLord",
+                    "correct horse battery staple", "legacy new password"));
+                Thread.Sleep(100);
+                Assert.False(portal.IsCompleted);
+                Assert.False(legacy.IsCompleted);
+
+                Monitor.Exit(passwordLock);
+                lockHeld = false;
+            }
+            finally
+            {
+                if (lockHeld)
+                    Monitor.Exit(passwordLock);
+            }
+
+            PortalPasswordChangeOperationOutcome portalOutcome = await portal;
+            AccountOperationResult legacyOutcome = await legacy;
+            Assert.True((portalOutcome == PortalPasswordChangeOperationOutcome.Succeeded &&
+                legacyOutcome == AccountOperationResult.EmailNotFound) ||
+                (portalOutcome == PortalPasswordChangeOperationOutcome.Rejected &&
+                legacyOutcome == AccountOperationResult.Success));
+            Assert.True(AccountManager.TryVerifyAccount("StarLord", portalOutcome == PortalPasswordChangeOperationOutcome.Succeeded
+                ? "portal new password"
+                : "legacy new password", out _));
+            Assert.True(manager.TryQueryAccountByPlayerName("StarLord", out DBAccount account));
+            Assert.Equal(portalOutcome, manager.ResolvePortalPasswordChange(account, operationId,
+                "wrong password", "ignored", true));
+        }
+
+        [Fact]
         public void SQLiteMigration_WalDatabasePreservesVersion6Data()
         {
             using SQLiteAccountDatabaseScope database = new(enableWal: true);
-            using (SQLiteConnection connection = new($"Data Source={database.DatabasePath}"))
-            {
-                connection.Open();
-                connection.Execute(@"INSERT INTO Account (Id, Email, PlayerName, PasswordHash, Salt, UserLevel, Flags)
-                    VALUES (42, 'player@example.test', 'StarLord', X'0102', X'0304', 0, 0)");
-            }
+            using SQLiteConnection writer = new($"Data Source={database.DatabasePath}");
+            writer.Open();
+            writer.Execute("PRAGMA wal_autocheckpoint = 0");
+            writer.Execute(@"INSERT INTO Account (Id, Email, PlayerName, PasswordHash, Salt, UserLevel, Flags)
+                VALUES (42, 'player@example.test', 'StarLord', X'0102', X'0304', 0, 0)");
+            using SQLiteConnection reader = new($"Data Source={database.DatabasePath}");
+            reader.Open();
+            reader.Execute("BEGIN");
+            Assert.Equal("StarLord", reader.QuerySingle<string>("SELECT PlayerName FROM Account WHERE Id = 42"));
+            writer.Execute(@"INSERT INTO Account (Id, Email, PlayerName, PasswordHash, Salt, UserLevel, Flags)
+                VALUES (43, 'other@example.test', 'Nova', X'0506', X'0708', 0, 0)");
+            Assert.True(new FileInfo($"{database.DatabasePath}-wal").Length > 0);
 
             SQLiteDBManager manager = database.CreateManager();
 
             Assert.True(manager.Initialize());
+            Assert.Equal("StarLord", reader.QuerySingle<string>("SELECT PlayerName FROM Account WHERE Id = 42"));
+            reader.Execute("ROLLBACK");
             using SQLiteConnection migratedConnection = new($"Data Source={database.DatabasePath}");
             migratedConnection.Open();
             Assert.Equal(7, migratedConnection.QuerySingle<int>("PRAGMA user_version"));
             Assert.Equal("StarLord", migratedConnection.QuerySingle<string>("SELECT PlayerName FROM Account WHERE Id = 42"));
+            Assert.Equal("Nova", migratedConnection.QuerySingle<string>("SELECT PlayerName FROM Account WHERE Id = 43"));
             Assert.True(migratedConnection.QuerySingle<long>("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'PortalPasswordChangeOperation'") == 1);
         }
 

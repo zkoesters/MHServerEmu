@@ -557,16 +557,19 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                     return false;
                 }
 
-                using SQLiteTransaction transaction = connection.BeginTransaction();
+                bool transactionStarted = false;
                 try
                 {
-                    connection.Execute(migrationScript, transaction: transaction);
-                    SetSchemaVersion(connection, ++schemaVersion, transaction);
-                    transaction.Commit();
+                    connection.Execute("BEGIN IMMEDIATE");
+                    transactionStarted = true;
+                    connection.Execute(migrationScript);
+                    SetSchemaVersion(connection, ++schemaVersion);
+                    connection.Execute("COMMIT");
                 }
                 catch (Exception e)
                 {
-                    transaction.Rollback();
+                    if (transactionStarted)
+                        connection.Execute("ROLLBACK");
                     Logger.ErrorException(e, "MigrateDatabaseFileToCurrentSchema(): Migration failed");
                     return false;
                 }
@@ -692,9 +695,9 @@ namespace MHServerEmu.DatabaseAccess.SQLite
         /// <summary>
         /// Sets the user_version value of the current database file.
         /// </summary>
-        private static void SetSchemaVersion(SQLiteConnection connection, int version, SQLiteTransaction transaction = null)
+        private static void SetSchemaVersion(SQLiteConnection connection, int version)
         {
-            connection.Execute($"PRAGMA user_version = {version}", transaction: transaction);
+            connection.Execute($"PRAGMA user_version = {version}");
         }
     }
 }
