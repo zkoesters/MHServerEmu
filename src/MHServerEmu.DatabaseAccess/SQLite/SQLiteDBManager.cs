@@ -179,38 +179,42 @@ namespace MHServerEmu.DatabaseAccess.SQLite
             lock (_writeLock)
             {
                 using SQLiteConnection connection = GetConnection();
-                using SQLiteTransaction transaction = connection.BeginTransaction();
+                bool transactionStarted = false;
 
                 try
                 {
-                    PortalPasswordChangeOperationOutcome? existingOutcome = GetPasswordChangeOutcome(connection, transaction,
-                        account.Id, operationId);
+                    connection.Execute("BEGIN IMMEDIATE");
+                    transactionStarted = true;
+                    PortalPasswordChangeOperationOutcome? existingOutcome = GetPasswordChangeOutcome(connection, account.Id,
+                        operationId);
                     if (existingOutcome.HasValue)
                     {
-                        transaction.Commit();
+                        connection.Execute("COMMIT");
                         return existingOutcome.Value;
                     }
 
+                    DBAccount currentAccount = connection.QueryFirstOrDefault<DBAccount>("SELECT * FROM Account WHERE Id = @Id",
+                        new { account.Id });
                     if (newPasswordIsValid == false ||
-                        CryptographyHelper.VerifyPassword(currentPassword, account.PasswordHash, account.Salt) == false)
+                        currentAccount == null ||
+                        CryptographyHelper.VerifyPassword(currentPassword, currentAccount.PasswordHash, currentAccount.Salt) == false)
                     {
-                        InsertPasswordChangeOutcome(connection, transaction, account.Id, operationId,
+                        InsertPasswordChangeOutcome(connection, account.Id, operationId,
                             PortalPasswordChangeOperationOutcome.Rejected);
-                        transaction.Commit();
+                        connection.Execute("COMMIT");
                         return PortalPasswordChangeOperationOutcome.Rejected;
                     }
 
                     byte[] passwordHash = CryptographyHelper.HashPassword(newPassword, out byte[] salt);
-                    AccountFlags flags = account.Flags & ~AccountFlags.IsPasswordExpired;
+                    AccountFlags flags = currentAccount.Flags & ~AccountFlags.IsPasswordExpired;
                     int updated = connection.Execute(@"UPDATE Account SET PasswordHash=@PasswordHash, Salt=@Salt, Flags=@Flags WHERE Id=@Id",
-                        new { PasswordHash = passwordHash, Salt = salt, Flags = flags, account.Id }, transaction);
+                        new { PasswordHash = passwordHash, Salt = salt, Flags = flags, account.Id });
                     if (updated != 1)
                         throw new SQLiteException("Account password update did not affect exactly one row.");
 
-                    InsertPasswordChangeOutcome(connection, transaction, account.Id, operationId,
+                    InsertPasswordChangeOutcome(connection, account.Id, operationId,
                         PortalPasswordChangeOperationOutcome.Succeeded);
-                    transaction.Commit();
-
+                    connection.Execute("COMMIT");
                     account.PasswordHash = passwordHash;
                     account.Salt = salt;
                     account.Flags = flags;
@@ -218,7 +222,8 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                 }
                 catch (Exception e)
                 {
-                    transaction.Rollback();
+                    if (transactionStarted)
+                        connection.Execute("ROLLBACK");
                     Logger.ErrorException(e, nameof(ResolvePortalPasswordChange));
                     return PortalPasswordChangeOperationOutcome.Unavailable;
                 }
@@ -230,26 +235,29 @@ namespace MHServerEmu.DatabaseAccess.SQLite
             lock (_writeLock)
             {
                 using SQLiteConnection connection = GetConnection();
-                using SQLiteTransaction transaction = connection.BeginTransaction();
+                bool transactionStarted = false;
 
                 try
                 {
-                    PortalPasswordChangeOperationOutcome? existingOutcome = GetPasswordChangeOutcome(connection, transaction,
-                        account.Id, operationId);
+                    connection.Execute("BEGIN IMMEDIATE");
+                    transactionStarted = true;
+                    PortalPasswordChangeOperationOutcome? existingOutcome = GetPasswordChangeOutcome(connection, account.Id,
+                        operationId);
                     if (existingOutcome.HasValue)
                     {
-                        transaction.Commit();
+                        connection.Execute("COMMIT");
                         return existingOutcome.Value;
                     }
 
-                    InsertPasswordChangeOutcome(connection, transaction, account.Id, operationId,
+                    InsertPasswordChangeOutcome(connection, account.Id, operationId,
                         PortalPasswordChangeOperationOutcome.Cancelled);
-                    transaction.Commit();
+                    connection.Execute("COMMIT");
                     return PortalPasswordChangeOperationOutcome.Cancelled;
                 }
                 catch (Exception e)
                 {
-                    transaction.Rollback();
+                    if (transactionStarted)
+                        connection.Execute("ROLLBACK");
                     Logger.ErrorException(e, nameof(GetPortalPasswordChangeStatus));
                     return PortalPasswordChangeOperationOutcome.Unavailable;
                 }
@@ -442,12 +450,12 @@ namespace MHServerEmu.DatabaseAccess.SQLite
             return connection;
         }
 
-        private static PortalPasswordChangeOperationOutcome? GetPasswordChangeOutcome(SQLiteConnection connection,
-            SQLiteTransaction transaction, long accountId, Guid operationId)
+        private static PortalPasswordChangeOperationOutcome? GetPasswordChangeOutcome(SQLiteConnection connection, long accountId,
+            Guid operationId)
         {
             string outcome = connection.QueryFirstOrDefault<string>(@"SELECT Outcome FROM PortalPasswordChangeOperation
                 WHERE AccountId = @AccountId AND OperationId = @OperationId", new { AccountId = accountId,
-                    OperationId = operationId.ToString("D") }, transaction);
+                    OperationId = operationId.ToString("D") });
             return outcome switch
             {
                 "succeeded" => PortalPasswordChangeOperationOutcome.Succeeded,
@@ -458,8 +466,8 @@ namespace MHServerEmu.DatabaseAccess.SQLite
             };
         }
 
-        private static void InsertPasswordChangeOutcome(SQLiteConnection connection, SQLiteTransaction transaction,
-            long accountId, Guid operationId, PortalPasswordChangeOperationOutcome outcome)
+        private static void InsertPasswordChangeOutcome(SQLiteConnection connection, long accountId, Guid operationId,
+            PortalPasswordChangeOperationOutcome outcome)
         {
             string value = outcome switch
             {
@@ -470,7 +478,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
             };
             connection.Execute(@"INSERT INTO PortalPasswordChangeOperation (AccountId, OperationId, Outcome, CreatedAt)
                 VALUES (@AccountId, @OperationId, @Outcome, @CreatedAt)", new { AccountId = accountId,
-                    OperationId = operationId.ToString("D"), Outcome = value, CreatedAt = DateTimeOffset.UtcNow.ToString("O") }, transaction);
+                    OperationId = operationId.ToString("D"), Outcome = value, CreatedAt = DateTimeOffset.UtcNow.ToString("O") });
         }
 
         /// <summary>
@@ -538,12 +546,6 @@ namespace MHServerEmu.DatabaseAccess.SQLite
             if (schemaVersion == CurrentSchemaVersion)
                 return true;
 
-            // Create a backup to fall back to if something goes wrong
-            string backupDbPath = $"{_dbFilePath}.v{schemaVersion}";
-            File.Copy(_dbFilePath, backupDbPath);
-
-            bool success = true;
-
             while (schemaVersion < CurrentSchemaVersion)
             {
                 Logger.Info($"Migrating version {schemaVersion} => {schemaVersion + 1}...");
@@ -552,28 +554,26 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                 if (migrationScript == string.Empty)
                 {
                     Logger.Error($"MigrateDatabaseFileToCurrentSchema(): Failed to get database migration script for version {schemaVersion}");
-                    success = false;
-                    break;
+                    return false;
                 }
 
-                connection.Execute(migrationScript);
-                SetSchemaVersion(connection, ++schemaVersion);
+                using SQLiteTransaction transaction = connection.BeginTransaction();
+                try
+                {
+                    connection.Execute(migrationScript, transaction: transaction);
+                    SetSchemaVersion(connection, ++schemaVersion, transaction);
+                    transaction.Commit();
+                }
+                catch (Exception e)
+                {
+                    transaction.Rollback();
+                    Logger.ErrorException(e, "MigrateDatabaseFileToCurrentSchema(): Migration failed");
+                    return false;
+                }
             }
 
-            success &= GetSchemaVersion(connection) == CurrentSchemaVersion;
-
-            if (success == false)
-            {
-                // Restore backup
-                File.Delete(_dbFilePath);
-                File.Move(backupDbPath, _dbFilePath);
-                return Logger.ErrorReturn(false, "MigrateDatabaseFileToCurrentSchema(): Migration failed, backup restored");
-            }
-            else
-            {
-                // Clean up backup
-                File.Delete(backupDbPath);
-            }
+            if (GetSchemaVersion(connection) != CurrentSchemaVersion)
+                return Logger.ErrorReturn(false, "MigrateDatabaseFileToCurrentSchema(): Schema version was not updated");
 
             Logger.Info($"Successfully migrated to schema version {CurrentSchemaVersion}");
             return true;
@@ -692,9 +692,9 @@ namespace MHServerEmu.DatabaseAccess.SQLite
         /// <summary>
         /// Sets the user_version value of the current database file.
         /// </summary>
-        private static void SetSchemaVersion(SQLiteConnection connection, int version)
+        private static void SetSchemaVersion(SQLiteConnection connection, int version, SQLiteTransaction transaction = null)
         {
-            connection.Execute($"PRAGMA user_version = {version}");
+            connection.Execute($"PRAGMA user_version = {version}", transaction: transaction);
         }
     }
 }

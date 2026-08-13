@@ -353,6 +353,89 @@ namespace MHServerEmu.PortalBridge.Tests
         }
 
         [Fact]
+        public async Task SQLitePasswordOperations_ConcurrentStaleSnapshots_OnlyOneChangesPassword()
+        {
+            using SQLiteAccountDatabaseScope database = new();
+            SQLiteDBManager firstManager = database.CreateManager();
+            SQLiteDBManager secondManager = database.CreateManager();
+            Assert.True(firstManager.Initialize());
+            Assert.True(secondManager.Initialize());
+            DBAccount createdAccount = new("player@example.test", "StarLord", "correct horse battery staple");
+            Assert.True(firstManager.InsertAccount(createdAccount));
+            Assert.True(firstManager.TryQueryAccountByPlayerName("StarLord", out DBAccount firstSnapshot));
+            Assert.True(secondManager.TryQueryAccountByPlayerName("StarLord", out DBAccount secondSnapshot));
+
+            Guid firstOperationId = Guid.NewGuid();
+            Guid secondOperationId = Guid.NewGuid();
+            Task<PortalPasswordChangeOperationOutcome> first = Task.Run(() => firstManager.ResolvePortalPasswordChange(
+                firstSnapshot, firstOperationId, "correct horse battery staple", "first new password", true));
+            Task<PortalPasswordChangeOperationOutcome> second = Task.Run(() => secondManager.ResolvePortalPasswordChange(
+                secondSnapshot, secondOperationId, "correct horse battery staple", "second new password", true));
+            PortalPasswordChangeOperationOutcome[] outcomes = await Task.WhenAll(first, second);
+
+            Assert.Equal(1, outcomes.Count(outcome => outcome == PortalPasswordChangeOperationOutcome.Succeeded));
+            Assert.Equal(1, outcomes.Count(outcome => outcome == PortalPasswordChangeOperationOutcome.Rejected));
+            SQLiteDBManager reloadedManager = database.CreateManager();
+            Assert.True(reloadedManager.Initialize());
+            Assert.True(reloadedManager.TryQueryAccountByPlayerName("StarLord", out DBAccount reloadedAccount));
+            Assert.Equal(outcomes[0], reloadedManager.ResolvePortalPasswordChange(reloadedAccount, firstOperationId,
+                "wrong password", "ignored", true));
+            Assert.Equal(outcomes[1], reloadedManager.ResolvePortalPasswordChange(reloadedAccount, secondOperationId,
+                "wrong password", "ignored", true));
+            Assert.True(MHServerEmu.Core.Helpers.CryptographyHelper.VerifyPassword("first new password", reloadedAccount.PasswordHash,
+                reloadedAccount.Salt) || MHServerEmu.Core.Helpers.CryptographyHelper.VerifyPassword("second new password",
+                    reloadedAccount.PasswordHash, reloadedAccount.Salt));
+            Assert.False(MHServerEmu.Core.Helpers.CryptographyHelper.VerifyPassword("first new password", reloadedAccount.PasswordHash,
+                reloadedAccount.Salt) && MHServerEmu.Core.Helpers.CryptographyHelper.VerifyPassword("second new password",
+                    reloadedAccount.PasswordHash, reloadedAccount.Salt));
+            using SQLiteConnection connection = new($"Data Source={database.DatabasePath}");
+            connection.Open();
+            Assert.Equal(new[] { "rejected", "succeeded" }, connection.Query<string>(
+                "SELECT Outcome FROM PortalPasswordChangeOperation ORDER BY Outcome"));
+        }
+
+        [Fact]
+        public void SQLiteMigration_WalDatabasePreservesVersion6Data()
+        {
+            using SQLiteAccountDatabaseScope database = new(enableWal: true);
+            using (SQLiteConnection connection = new($"Data Source={database.DatabasePath}"))
+            {
+                connection.Open();
+                connection.Execute(@"INSERT INTO Account (Id, Email, PlayerName, PasswordHash, Salt, UserLevel, Flags)
+                    VALUES (42, 'player@example.test', 'StarLord', X'0102', X'0304', 0, 0)");
+            }
+
+            SQLiteDBManager manager = database.CreateManager();
+
+            Assert.True(manager.Initialize());
+            using SQLiteConnection migratedConnection = new($"Data Source={database.DatabasePath}");
+            migratedConnection.Open();
+            Assert.Equal(7, migratedConnection.QuerySingle<int>("PRAGMA user_version"));
+            Assert.Equal("StarLord", migratedConnection.QuerySingle<string>("SELECT PlayerName FROM Account WHERE Id = 42"));
+            Assert.True(migratedConnection.QuerySingle<long>("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'PortalPasswordChangeOperation'") == 1);
+        }
+
+        [Fact]
+        public void SQLiteMigration_ConflictingOperationTable_FailsWithoutSchemaOrVersionChange()
+        {
+            using SQLiteAccountDatabaseScope database = new();
+            using (SQLiteConnection connection = new($"Data Source={database.DatabasePath}"))
+            {
+                connection.Open();
+                connection.Execute("CREATE TABLE PortalPasswordChangeOperation (ExistingColumn TEXT NOT NULL)");
+            }
+
+            SQLiteDBManager manager = database.CreateManager();
+
+            Assert.False(manager.Initialize());
+            using SQLiteConnection failedConnection = new($"Data Source={database.DatabasePath}");
+            failedConnection.Open();
+            Assert.Equal(6, failedConnection.QuerySingle<int>("PRAGMA user_version"));
+            Assert.Equal(new[] { "ExistingColumn" }, failedConnection.Query<string>(
+                "SELECT name FROM pragma_table_info('PortalPasswordChangeOperation') ORDER BY cid"));
+        }
+
+        [Fact]
         public async Task GetCapabilities_ValidSignature_ReturnsExactPayload()
         {
             using RunningBridge bridge = RunningBridge.Start();
@@ -591,7 +674,7 @@ namespace MHServerEmu.PortalBridge.Tests
 
             public string DatabasePath { get; }
 
-            public SQLiteAccountDatabaseScope()
+            public SQLiteAccountDatabaseScope(bool enableWal = false)
             {
                 Directory.CreateDirectory(FileHelper.DataDirectory);
                 DatabasePath = Path.Combine(FileHelper.DataDirectory, "Account.db");
@@ -599,9 +682,15 @@ namespace MHServerEmu.PortalBridge.Tests
                 if (_backupPath != null)
                     File.Move(DatabasePath, _backupPath, true);
 
+                File.Delete($"{DatabasePath}-wal");
+                File.Delete($"{DatabasePath}-shm");
+                File.Delete($"{DatabasePath}.v6");
+
                 SQLiteConnection.CreateFile(DatabasePath);
                 using SQLiteConnection connection = new($"Data Source={DatabasePath}");
                 connection.Open();
+                if (enableWal)
+                    connection.Execute("PRAGMA journal_mode=WAL");
                 connection.Execute(@"PRAGMA user_version = 6;
                     CREATE TABLE Account (
                         Id INTEGER NOT NULL UNIQUE,
@@ -623,9 +712,17 @@ namespace MHServerEmu.PortalBridge.Tests
             public void Dispose()
             {
                 IDBManager.Instance = _previous;
-                File.Delete(DatabasePath);
+                DeleteDatabaseFiles();
                 if (_backupPath != null)
                     File.Move(_backupPath, DatabasePath, true);
+            }
+
+            private void DeleteDatabaseFiles()
+            {
+                File.Delete(DatabasePath);
+                File.Delete($"{DatabasePath}-wal");
+                File.Delete($"{DatabasePath}-shm");
+                File.Delete($"{DatabasePath}.v6");
             }
         }
 
