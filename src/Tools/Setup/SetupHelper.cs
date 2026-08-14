@@ -16,9 +16,6 @@ namespace Setup
     {
         private const string ExecutableHash = "6DC9BCDB145F98E5C2D7A1F7E25AEB75507A9D1A";  // Win64 1.52.0.1700
 
-        private const string DefaultAccountEmail = "test1@test.com";
-        private const string DefaultAccountPassword = "123";
-
         private static readonly string CalligraphyPath = Path.Combine("Data", "Game", "Calligraphy.sip");
         private static readonly string ResourcePath = Path.Combine("Data", "Game", "mu_cdata.sip");
 
@@ -146,10 +143,6 @@ namespace Setup
             // Launching the client normally
             using (StreamWriter writer = new(Path.Combine(rootDirectory, "StartClient.bat")))
                 writer.WriteLine($"@start \"\" \"{clientExecutablePath}\" -robocopy -nosteam -siteconfigurl=localhost/SiteConfig.xml");
-
-            // Launching the client with auto-login
-            using (StreamWriter writer = new(Path.Combine(rootDirectory, "StartClientAutoLogin.bat")))
-                writer.WriteLine($"@start \"\" \"{clientExecutablePath}\" -robocopy -nosteam -siteconfigurl=localhost/SiteConfig.xml -emailaddress={DefaultAccountEmail} -password={DefaultAccountPassword}");
 
             // Starting servers
             using (StreamWriter writer = new(Path.Combine(rootDirectory, "StartServer.bat")))

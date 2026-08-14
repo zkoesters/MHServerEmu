@@ -18,7 +18,9 @@ The following instructions are intended for stable builds of the server. If you 
 
 2. (Optional) Open [http://localhost:8080/Dashboard/](http://localhost:8080/Dashboard/) and create an account. Please note that this link is going to work only when the server is running.
 
-3. Run `StartClient.bat` and log in with your created account OR run `StartClientAutoLogin.bat` to play with a default account.
+The SQLite database starts without accounts. In the server console, run `!account create <email> <player-name> <password>` before logging in. New passwords must contain 12-64 characters. Existing databases and JSON development mode are not modified.
+
+3. Run `StartClient.bat` and log in with your created account.
 
 4. When you are done, run the `StopServer.bat` file to stop the server.
 

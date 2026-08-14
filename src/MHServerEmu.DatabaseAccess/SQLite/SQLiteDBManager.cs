@@ -15,7 +15,6 @@ namespace MHServerEmu.DatabaseAccess.SQLite
     {
         private const int CurrentSchemaVersion = 6;         // Increment this when making changes to the database schema
         private const int MinimumSchemaVersion = 6;         // Used to ignore legacy 0.x database files.
-        private const int NumTestAccounts = 5;              // Number of test accounts to create for new database files
         private const int NumPlayerDataWriteAttempts = 3;   // Number of write attempts to do when saving player data
 
         private static readonly Logger Logger = LogManager.CreateLogger();
@@ -31,13 +30,19 @@ namespace MHServerEmu.DatabaseAccess.SQLite
 
         public static SQLiteDBManager Instance { get; } = new();
 
-        private SQLiteDBManager() { }
+        internal SQLiteDBManager() { }
 
         public bool Initialize()
         {
             var config = ConfigManager.Instance.GetConfig<SQLiteDBManagerConfig>();
 
-            _dbFilePath = Path.Combine(FileHelper.DataDirectory, config.FileName);
+            string dbFilePath = Path.Combine(FileHelper.DataDirectory, config.FileName);
+            return Initialize(dbFilePath, config.MaxBackupNumber, TimeSpan.FromMinutes(config.BackupIntervalMinutes));
+        }
+
+        internal bool Initialize(string dbFilePath, int maxBackupNumber, TimeSpan backupInterval)
+        {
+            _dbFilePath = dbFilePath;
             _connectionString = $"Data Source={_dbFilePath};Synchronous=NORMAL;foreign_keys=OFF;";
 
             // TODO: Foreign key constraints are explicitly disabled for now because our Item table references
@@ -56,8 +61,8 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                     return false;
             }
 
-            _maxBackupNumber = config.MaxBackupNumber;
-            _backupTimer = new(TimeSpan.FromMinutes(config.BackupIntervalMinutes));
+            _maxBackupNumber = maxBackupNumber;
+            _backupTimer = new(backupInterval);
             
             Logger.Info($"Using database file {FileHelper.GetRelativePath(_dbFilePath)}");
             return true;
@@ -365,26 +370,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
 
             Logger.Info($"Initialized a new database file at {Path.GetRelativePath(FileHelper.ServerRoot, _dbFilePath)} using schema version {CurrentSchemaVersion}");
 
-            CreateTestAccounts(NumTestAccounts);
-
             return true;
-        }
-
-        /// <summary>
-        /// Creates the specified number of test accounts.
-        /// </summary>
-        private void CreateTestAccounts(int numAccounts)
-        {
-            for (int i = 0; i < numAccounts; i++)
-            {
-                string email = $"test{i + 1}@test.com";
-                string playerName = $"Player{i + 1}";
-                string password = "123";
-
-                DBAccount account = new(email, playerName, password);
-                InsertAccount(account);
-                Logger.Info($"Created test account {account}");
-            }
         }
 
         /// <summary>

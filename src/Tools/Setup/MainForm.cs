@@ -93,13 +93,7 @@ namespace Setup
 
                 case SetupState.Complete:
                     headerLabel.Text = "Setup Complete";
-                    bodyLabel.Text = "Setup successful.\r\n" +
-                                     "\r\n" +
-                                     "Run StartServer.bat first to start the server.\r\n" +
-                                     "\r\n" +
-                                     "Run StartClient.bat to launch the game normally OR StartClientAutoLogin.bat to launch the game and automatically log in with a default account.\r\n" +
-                                     "\r\n" +
-                                     "Make sure to start the server before the client.";
+                    bodyLabel.Text = "Setup complete. Start the server, create an account with !account create, then start the client.";
 
                     nextButton.Text = "Exit";
 
