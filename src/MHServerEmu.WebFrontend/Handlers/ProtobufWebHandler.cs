@@ -35,12 +35,6 @@ namespace MHServerEmu.WebFrontend.Handlers
                 return;
             }
 
-            if (_loginRateLimiter != null && _loginRateLimiter.TryAddSource(context.GetIPAddress()) == false)
-            {
-                context.StatusCode = (int)HttpStatusCode.TooManyRequests;
-                return;
-            }
-
             IMessage message = await context.ReadProtobufAsync<FrontendProtocolMessage>();
 
             switch (message)
@@ -66,6 +60,12 @@ namespace MHServerEmu.WebFrontend.Handlers
             {
                 Logger.Warn($"OnLoginDataPB(): Failed to retrieve message");
                 context.StatusCode = (int)HttpStatusCode.BadRequest;
+                return;
+            }
+
+            if (_loginRateLimiter != null && _loginRateLimiter.TryAddSource(context.GetIPAddress()) == false)
+            {
+                context.StatusCode = (int)HttpStatusCode.TooManyRequests;
                 return;
             }
 
