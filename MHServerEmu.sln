@@ -27,6 +27,12 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "MHServerEmu.Core.Tests", "s
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MHServerEmu.Games.Tests", "src\MHServerEmu.Games.Tests\MHServerEmu.Games.Tests.csproj", "{3921B039-7911-49D4-9AE2-727168015157}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MHServerEmu.DatabaseAccess.Tests", "src\MHServerEmu.DatabaseAccess.Tests\MHServerEmu.DatabaseAccess.Tests.csproj", "{7CDC7C55-CFA2-47B1-A826-39AAF12A6515}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MHServerEmu.PlayerManagement.Tests", "src\MHServerEmu.PlayerManagement.Tests\MHServerEmu.PlayerManagement.Tests.csproj", "{B4C746F4-8BB2-4502-BC77-3960BC08EF54}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MHServerEmu.WebFrontend.Tests", "src\MHServerEmu.WebFrontend.Tests\MHServerEmu.WebFrontend.Tests.csproj", "{F537F02A-1E79-4821-BDF1-0615C50FD601}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -81,6 +87,18 @@ Global
 		{3921B039-7911-49D4-9AE2-727168015157}.Debug|x64.Build.0 = Debug|x64
 		{3921B039-7911-49D4-9AE2-727168015157}.Release|x64.ActiveCfg = Release|x64
 		{3921B039-7911-49D4-9AE2-727168015157}.Release|x64.Build.0 = Release|x64
+		{7CDC7C55-CFA2-47B1-A826-39AAF12A6515}.Debug|x64.ActiveCfg = Debug|x64
+		{7CDC7C55-CFA2-47B1-A826-39AAF12A6515}.Debug|x64.Build.0 = Debug|x64
+		{7CDC7C55-CFA2-47B1-A826-39AAF12A6515}.Release|x64.ActiveCfg = Release|x64
+		{7CDC7C55-CFA2-47B1-A826-39AAF12A6515}.Release|x64.Build.0 = Release|x64
+		{B4C746F4-8BB2-4502-BC77-3960BC08EF54}.Debug|x64.ActiveCfg = Debug|x64
+		{B4C746F4-8BB2-4502-BC77-3960BC08EF54}.Debug|x64.Build.0 = Debug|x64
+		{B4C746F4-8BB2-4502-BC77-3960BC08EF54}.Release|x64.ActiveCfg = Release|x64
+		{B4C746F4-8BB2-4502-BC77-3960BC08EF54}.Release|x64.Build.0 = Release|x64
+		{F537F02A-1E79-4821-BDF1-0615C50FD601}.Debug|x64.ActiveCfg = Debug|x64
+		{F537F02A-1E79-4821-BDF1-0615C50FD601}.Debug|x64.Build.0 = Debug|x64
+		{F537F02A-1E79-4821-BDF1-0615C50FD601}.Release|x64.ActiveCfg = Release|x64
+		{F537F02A-1E79-4821-BDF1-0615C50FD601}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
