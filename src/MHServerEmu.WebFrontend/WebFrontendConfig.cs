@@ -5,6 +5,7 @@ namespace MHServerEmu.WebFrontend
 {
     public class WebFrontendConfig : ConfigContainer
     {
+        public string DeploymentProfile { get; private set; } = "Legacy";
         public string Address { get; private set; } = "localhost";
         public string Port { get; private set; } = "8080";
         public bool EnableLoginRateLimit { get; private set; } = true;
@@ -29,6 +30,17 @@ namespace MHServerEmu.WebFrontend
                 return [];
 
             return TrustedProxyNetworks.Split(',', StringSplitOptions.TrimEntries).Select(IpNetwork.Parse).ToList();
+        }
+
+        public WebDeploymentProfile GetDeploymentProfile()
+        {
+            if (Enum.TryParse(DeploymentProfile, ignoreCase: true, out WebDeploymentProfile profile) == false
+                || Enum.IsDefined(profile) == false)
+            {
+                throw new InvalidOperationException($"Invalid web deployment profile: {DeploymentProfile}");
+            }
+
+            return profile;
         }
     }
 }
