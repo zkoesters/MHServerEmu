@@ -10,24 +10,10 @@ namespace MHServerEmu.WebFrontend.Tests
         [Fact]
         public async Task Post_WithoutUserAgent_ReturnsForbidden()
         {
-            int port;
-            using (TcpListener listener = new(IPAddress.Loopback, 0))
-            {
-                listener.Start();
-                port = ((IPEndPoint)listener.LocalEndpoint).Port;
-            }
-
-            WebService service = new(new WebServiceSettings
-            {
-                Name = "Test",
-                ListenUrl = $"http://127.0.0.1:{port}/",
-                FallbackHandler = null,
-            });
-            service.RegisterHandler("/Login/IndexPB", new ProtobufWebHandler(false, TimeSpan.FromSeconds(1), 1));
+            WebService service = StartWithRetry();
 
             try
             {
-                service.Start();
                 using HttpClient client = new();
 
                 HttpResponseMessage response = await client.PostAsync($"{service.Settings.ListenUrl}Login/IndexPB", new ByteArrayContent(Array.Empty<byte>()));
@@ -38,6 +24,49 @@ namespace MHServerEmu.WebFrontend.Tests
             {
                 service.Stop();
             }
+        }
+
+        private static WebService StartWithRetry()
+        {
+            HttpListenerException lastException = null;
+
+            for (int attempt = 0; attempt < 5; attempt++)
+            {
+                int port;
+                using (TcpListener listener = new(IPAddress.Loopback, 0))
+                {
+                    listener.Start();
+                    port = ((IPEndPoint)listener.LocalEndpoint).Port;
+                }
+
+                WebService service = CreateService(port);
+                service.RegisterHandler("/Login/IndexPB", new ProtobufWebHandler(false, TimeSpan.FromSeconds(1), 1));
+
+                try
+                {
+                    service.Start();
+                    return service;
+                }
+                catch (HttpListenerException e)
+                {
+                    if (service.IsRunning)
+                        service.Stop();
+
+                    lastException = e;
+                }
+            }
+
+            throw lastException;
+        }
+
+        private static WebService CreateService(int port)
+        {
+            return new(new WebServiceSettings
+            {
+                Name = "Test",
+                ListenUrl = $"http://127.0.0.1:{port}/",
+                FallbackHandler = null,
+            });
         }
     }
 }

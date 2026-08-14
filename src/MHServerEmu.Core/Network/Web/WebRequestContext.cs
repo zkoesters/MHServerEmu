@@ -112,6 +112,15 @@ namespace MHServerEmu.Core.Network.Web
         /// <summary>
         /// Reads the request input stream as an <see cref="IMessage"/> of protocol <typeparamref name="T"/>.
         /// </summary>
+        [Obsolete("Use ReadProtobufAsync<T>() for bounded asynchronous request reads.")]
+        public IMessage ReadProtobuf<T>() where T: Enum
+        {
+            return ReadProtobufAsync<T>().GetAwaiter().GetResult();
+        }
+
+        /// <summary>
+        /// Asynchronously reads the request input stream as an <see cref="IMessage"/> of protocol <typeparamref name="T"/>.
+        /// </summary>
         public async Task<IMessage> ReadProtobufAsync<T>() where T: Enum
         {
             byte[] body = await BoundedRequestBodyReader.ReadAsync(_httpRequest.InputStream, _httpRequest.ContentLength64,

@@ -1,6 +1,9 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using Gazillion;
+using Google.ProtocolBuffers;
+using MHServerEmu.Core.Network;
 using MHServerEmu.Core.Network.Web;
 
 namespace MHServerEmu.Core.Tests.Network.Web
@@ -10,11 +13,10 @@ namespace MHServerEmu.Core.Tests.Network.Web
         [Fact]
         public async Task Post_MalformedJson_ReturnsBadRequest()
         {
-            WebService service = CreateService();
+            WebService service = StartWithRetry(("/", new JsonHandler()));
 
             try
             {
-                service.Start();
                 using HttpClient client = new();
 
                 HttpResponseMessage response = await client.PostAsync(service.Settings.ListenUrl, new StringContent("{", Encoding.UTF8, "application/json"));
@@ -30,11 +32,10 @@ namespace MHServerEmu.Core.Tests.Network.Web
         [Fact]
         public async Task Post_OversizedBody_ReturnsPayloadTooLarge()
         {
-            WebService service = CreateService();
+            WebService service = StartWithRetry(("/", new JsonHandler()));
 
             try
             {
-                service.Start();
                 using HttpClient client = new();
 
                 HttpResponseMessage response = await client.PostAsync(service.Settings.ListenUrl, new ByteArrayContent(new byte[17]));
@@ -47,16 +48,69 @@ namespace MHServerEmu.Core.Tests.Network.Web
             }
         }
 
-        private static WebService CreateService()
+        [Fact]
+        public async Task Post_ProtobufReaders_DeserializeSameMessageType()
         {
-            int port;
-            using (TcpListener listener = new(IPAddress.Loopback, 0))
+            ProtocolDispatchTable.Instance.Initialize();
+            SyncProtobufHandler syncHandler = new();
+            AsyncProtobufHandler asyncHandler = new();
+            WebService service = StartWithRetry(("/sync", syncHandler), ("/async", asyncHandler));
+
+            try
             {
-                listener.Start();
-                port = ((IPEndPoint)listener.LocalEndpoint).Port;
+                using HttpClient client = new();
+
+                HttpResponseMessage syncResponse = await client.PostAsync($"{service.Settings.ListenUrl}sync", new ByteArrayContent(CreateLoginDataRequest()));
+                HttpResponseMessage asyncResponse = await client.PostAsync($"{service.Settings.ListenUrl}async", new ByteArrayContent(CreateLoginDataRequest()));
+
+                Assert.Equal(HttpStatusCode.OK, syncResponse.StatusCode);
+                Assert.Equal(HttpStatusCode.OK, asyncResponse.StatusCode);
+                Assert.IsType<LoginDataPB>(syncHandler.Message);
+                Assert.IsType<LoginDataPB>(asyncHandler.Message);
+            }
+            finally
+            {
+                service.Stop();
+            }
+        }
+
+        private static WebService StartWithRetry(params (string LocalPath, WebHandler Handler)[] handlers)
+        {
+            HttpListenerException lastException = null;
+
+            for (int attempt = 0; attempt < 5; attempt++)
+            {
+                int port;
+                using (TcpListener listener = new(IPAddress.Loopback, 0))
+                {
+                    listener.Start();
+                    port = ((IPEndPoint)listener.LocalEndpoint).Port;
+                }
+
+                WebService service = CreateService(port);
+                foreach ((string localPath, WebHandler handler) in handlers)
+                    service.RegisterHandler(localPath, handler);
+
+                try
+                {
+                    service.Start();
+                    return service;
+                }
+                catch (HttpListenerException e)
+                {
+                    if (service.IsRunning)
+                        service.Stop();
+
+                    lastException = e;
+                }
             }
 
-            WebService service = new(new WebServiceSettings
+            throw lastException;
+        }
+
+        private static WebService CreateService(int port)
+        {
+            return new(new WebServiceSettings
             {
                 Name = "Test",
                 ListenUrl = $"http://127.0.0.1:{port}/",
@@ -64,8 +118,6 @@ namespace MHServerEmu.Core.Tests.Network.Web
                 MaxRequestBodyBytes = 16,
                 RequestBodyReadTimeout = TimeSpan.FromSeconds(1),
             });
-            service.RegisterHandler("/", new JsonHandler());
-            return service;
         }
 
         private sealed class JsonHandler : WebHandler
@@ -74,6 +126,41 @@ namespace MHServerEmu.Core.Tests.Network.Web
             {
                 await context.ReadJsonAsync<Payload>();
             }
+        }
+
+        private sealed class SyncProtobufHandler : WebHandler
+        {
+            public IMessage Message { get; private set; }
+
+            protected override Task Post(WebRequestContext context)
+            {
+#pragma warning disable CS0618
+                Message = context.ReadProtobuf<FrontendProtocolMessage>();
+#pragma warning restore CS0618
+                return Task.CompletedTask;
+            }
+        }
+
+        private sealed class AsyncProtobufHandler : WebHandler
+        {
+            public IMessage Message { get; private set; }
+
+            protected override async Task Post(WebRequestContext context)
+            {
+                Message = await context.ReadProtobufAsync<FrontendProtocolMessage>();
+            }
+        }
+
+        private static byte[] CreateLoginDataRequest()
+        {
+            LoginDataPB message = LoginDataPB.CreateBuilder().SetEmailAddress("e").SetPassword("p").Build();
+            byte[] body = new byte[1 + CodedOutputStream.ComputeRawVarint32Size((uint)message.SerializedSize) + message.SerializedSize];
+            CodedOutputStream output = CodedOutputStream.CreateInstance(body);
+            output.WriteRawVarint32((uint)FrontendProtocolMessage.LoginDataPB);
+            output.WriteRawVarint32((uint)message.SerializedSize);
+            message.WriteTo(output);
+            output.Flush();
+            return body;
         }
 
         private sealed class Payload
