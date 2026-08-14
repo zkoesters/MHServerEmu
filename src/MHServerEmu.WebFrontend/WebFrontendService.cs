@@ -34,6 +34,10 @@ namespace MHServerEmu.WebFrontend
             if (config.MaxRequestBodyBytes <= 0 || config.RequestBodyReadTimeoutMS <= 0 || config.JsonMaxDepth <= 0)
                 throw new InvalidOperationException("Web frontend request body settings must be greater than zero.");
 
+            ValidateRateLimitSettings(config.EnableLoginRateLimit, config.LoginRateLimitCostMS, config.LoginRateLimitBurst,
+                config.EnableAccountCreationRateLimit, config.AccountCreationRateLimitCostMS, config.AccountCreationRateLimitBurst,
+                config.RateLimitMaxKeys);
+
             WebServiceSettings webServiceSettings = new()
             {
                 Name = "WebFrontend",
@@ -49,7 +53,8 @@ namespace MHServerEmu.WebFrontend
 
             // Register the protobuf handler to the /Login/IndexPB path for compatibility with legacy reverse proxy setups.
             // We should probably prefer to use /AuthServer/Login/IndexPB because it's more accurate to what Gazillion had.
-            ProtobufWebHandler protobufHandler = new(config.EnableLoginRateLimit, TimeSpan.FromMilliseconds(config.LoginRateLimitCostMS), config.LoginRateLimitBurst);
+            ProtobufWebHandler protobufHandler = new(config.EnableLoginRateLimit, TimeSpan.FromMilliseconds(config.LoginRateLimitCostMS),
+                config.LoginRateLimitBurst, config.RateLimitMaxKeys);
             _webService.RegisterHandler("/Login/IndexPB",            protobufHandler);
             _webService.RegisterHandler("/AuthServer/Login/IndexPB", protobufHandler);
 
@@ -59,7 +64,7 @@ namespace MHServerEmu.WebFrontend
 
             if (config.EnableWebApi)
             {
-                InitializeWebBackend();
+                InitializeWebBackend(config);
                 WebApiKeyManager.Instance.LoadKeys();
 
                 if (config.EnableDashboard)
@@ -125,9 +130,21 @@ namespace MHServerEmu.WebFrontend
             addGHandler?.Load();
         }
 
-        private void InitializeWebBackend()
+        internal static void ValidateRateLimitSettings(bool enableLoginRateLimit, int loginRateLimitCostMS, int loginRateLimitBurst,
+            bool enableAccountCreationRateLimit, int accountCreationRateLimitCostMS, int accountCreationRateLimitBurst, int rateLimitMaxKeys)
         {
-            _webService.RegisterHandler("/AccountManagement/Create",        new AccountCreateWebHandler());
+            if ((enableLoginRateLimit && (loginRateLimitCostMS <= 0 || loginRateLimitBurst <= 0))
+                || (enableAccountCreationRateLimit && (accountCreationRateLimitCostMS <= 0 || accountCreationRateLimitBurst <= 0))
+                || ((enableLoginRateLimit || enableAccountCreationRateLimit) && rateLimitMaxKeys <= 0))
+            {
+                throw new InvalidOperationException("Enabled web frontend rate limiter settings must be greater than zero.");
+            }
+        }
+
+        private void InitializeWebBackend(WebFrontendConfig config)
+        {
+            _webService.RegisterHandler("/AccountManagement/Create",        new AccountCreateWebHandler(config.EnableAccountCreationRateLimit,
+                TimeSpan.FromMilliseconds(config.AccountCreationRateLimitCostMS), config.AccountCreationRateLimitBurst, config.RateLimitMaxKeys));
             _webService.RegisterHandler("/AccountManagement/SetPlayerName", new AccountSetPlayerNameWebHandler());
             _webService.RegisterHandler("/AccountManagement/SetPassword",   new AccountSetPasswordWebHandler());
             _webService.RegisterHandler("/AccountManagement/SetUserLevel",  new AccountSetUserLevelWebHandler());
