@@ -2,6 +2,7 @@
 using MHServerEmu.Core.Logging;
 using MHServerEmu.Core.Network;
 using MHServerEmu.Core.Network.Web;
+using MHServerEmu.WebFrontend.RateLimiting;
 using MHServerEmu.WebFrontend.Models;
 using MHServerEmu.WebFrontend.Network;
 
@@ -10,9 +11,27 @@ namespace MHServerEmu.WebFrontend.Handlers.WebApi
     public class AccountCreateWebHandler : WebHandler
     {
         private static readonly Logger Logger = LogManager.CreateLogger();
+        private readonly DualKeyRateLimiter _accountCreationRateLimiter;
+
+        public AccountCreateWebHandler()
+        {
+        }
+
+        public AccountCreateWebHandler(bool enableAccountCreationRateLimit, TimeSpan accountCreationRateLimitCost,
+            int accountCreationRateLimitBurst, int rateLimitMaxKeys)
+        {
+            if (enableAccountCreationRateLimit)
+                _accountCreationRateLimiter = new(accountCreationRateLimitCost, accountCreationRateLimitBurst, rateLimitMaxKeys);
+        }
 
         protected override async Task Post(WebRequestContext context)
         {
+            if (_accountCreationRateLimiter != null && _accountCreationRateLimiter.TryAddSource(context.GetIPAddress()) == false)
+            {
+                context.StatusCode = (int)System.Net.HttpStatusCode.TooManyRequests;
+                return;
+            }
+
             AccountOperationRequest query = await context.ReadJsonAsync<AccountOperationRequest>();
 
             string email = query.Email;
@@ -22,6 +41,13 @@ namespace MHServerEmu.WebFrontend.Handlers.WebApi
             if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(playerName) || string.IsNullOrWhiteSpace(password))
             {
                 await context.SendJsonAsync(new AccountOperationResponse(AccountOperationResponse.GenericFailure));
+                return;
+            }
+
+            string accountKey = $"{email.Trim().ToLowerInvariant()}|{playerName.Trim().ToUpperInvariant()}";
+            if (_accountCreationRateLimiter != null && _accountCreationRateLimiter.TryAddAccount(accountKey) == false)
+            {
+                context.StatusCode = (int)System.Net.HttpStatusCode.TooManyRequests;
                 return;
             }
 

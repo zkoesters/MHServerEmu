@@ -40,7 +40,7 @@ namespace MHServerEmu.WebFrontend.Tests
                 }
 
                 WebService service = CreateService(port);
-                service.RegisterHandler("/Login/IndexPB", new ProtobufWebHandler(false, TimeSpan.FromSeconds(1), 1));
+                service.RegisterHandler("/Login/IndexPB", new ProtobufWebHandler(true, TimeSpan.FromSeconds(1), 1, 10));
 
                 try
                 {

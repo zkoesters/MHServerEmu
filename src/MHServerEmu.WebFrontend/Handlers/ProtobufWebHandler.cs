@@ -5,8 +5,8 @@ using MHServerEmu.Core.Extensions;
 using MHServerEmu.Core.Logging;
 using MHServerEmu.Core.Network;
 using MHServerEmu.Core.Network.Web;
-using MHServerEmu.Core.RateLimiting;
 using MHServerEmu.WebFrontend.Network;
+using MHServerEmu.WebFrontend.RateLimiting;
 
 namespace MHServerEmu.WebFrontend.Handlers
 {
@@ -14,12 +14,17 @@ namespace MHServerEmu.WebFrontend.Handlers
     {
         private static readonly Logger Logger = LogManager.CreateLogger();
 
-        private readonly TimeLeakyBucketCollection<string> _loginRateLimiter;
+        private readonly DualKeyRateLimiter _loginRateLimiter;
 
         public ProtobufWebHandler(bool enableLoginRateLimit, TimeSpan loginRateLimitCost, int loginRateLimitBurst)
+            : this(enableLoginRateLimit, loginRateLimitCost, loginRateLimitBurst, int.MaxValue)
+        {
+        }
+
+        public ProtobufWebHandler(bool enableLoginRateLimit, TimeSpan loginRateLimitCost, int loginRateLimitBurst, int rateLimitMaxKeys)
         {
             if (enableLoginRateLimit)
-                _loginRateLimiter = new(loginRateLimitCost, Math.Max(loginRateLimitBurst, 2));
+                _loginRateLimiter = new(loginRateLimitCost, loginRateLimitBurst, rateLimitMaxKeys);
         }
 
         protected override async Task Post(WebRequestContext context)
@@ -27,6 +32,12 @@ namespace MHServerEmu.WebFrontend.Handlers
             if (context.IsGameClientRequest == false)
             {
                 context.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            if (_loginRateLimiter != null && _loginRateLimiter.TryAddSource(context.GetIPAddress()) == false)
+            {
+                context.StatusCode = (int)HttpStatusCode.TooManyRequests;
                 return;
             }
 
@@ -58,14 +69,20 @@ namespace MHServerEmu.WebFrontend.Handlers
                 return;
             }
 
-            string ipAddressHandle = context.GetIPAddressHandle(out string ipAddress);
-
-            if (_loginRateLimiter != null && _loginRateLimiter.AddTime(ipAddress) == false)
+            string email = loginDataPB.EmailAddress?.Trim().ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(email))
             {
-                Logger.Warn($"OnLoginDataPB(): Rate limit exceeded for {ipAddressHandle}");
+                context.StatusCode = (int)HttpStatusCode.BadRequest;
+                return;
+            }
+
+            if (_loginRateLimiter != null && _loginRateLimiter.TryAddAccount(email) == false)
+            {
                 context.StatusCode = (int)HttpStatusCode.TooManyRequests;
                 return;
             }
+
+            string ipAddressHandle = context.GetIPAddressHandle();
 
             ServiceMessage.AuthResponse authResponse = await GameServiceTaskManager.Instance.AuthenticateAsync(loginDataPB);
 
