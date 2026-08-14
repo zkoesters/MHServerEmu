@@ -16,12 +16,13 @@ namespace MHServerEmu.Core.Network.Web
         private readonly HttpListenerRequest _httpRequest;
         private readonly HttpListenerResponse _httpResponse;
         private readonly WebServiceSettings _settings;
+        private readonly ClientIpResult _clientIp;
 
         public string UserAgent { get => _httpRequest.UserAgent; }
         public string LocalPath { get => _httpRequest.Url.LocalPath; }
         public string HttpMethod { get => _httpRequest.HttpMethod; }
-        public string XForwardedFor { get => _httpRequest.Headers["X-Forwarded-For"]; }
         public string Authorization { get => _httpRequest.Headers["Authorization"]; }
+        public bool IsForwardedRequest { get => _clientIp.IsForwarded; }
 
         public bool IsGameClientRequest { get => string.Equals(UserAgent, "Secret Identity Studios Http Client", StringComparison.InvariantCulture); }
 
@@ -34,6 +35,8 @@ namespace MHServerEmu.Core.Network.Web
             _httpRequest = httpContext.Request;
             _httpResponse = httpContext.Response;
             _settings = settings;
+            _clientIp = ClientIpResolver.Resolve(_httpRequest.RemoteEndPoint.Address, _httpRequest.Headers["X-Forwarded-For"],
+                settings.TrustedProxyNetworks, settings.MaxForwardedForHeaderLength, settings.MaxForwardedForHops);
 
             _httpResponse.StatusCode = 200;
             _httpResponse.KeepAlive = false;
@@ -46,11 +49,7 @@ namespace MHServerEmu.Core.Network.Web
 
         public string GetIPAddress()
         {
-            string forwardedFor = XForwardedFor;
-            if (string.IsNullOrWhiteSpace(forwardedFor) == false)
-                return forwardedFor;
-
-            return _httpRequest.RemoteEndPoint.Address.ToString();
+            return _clientIp.Address.ToString();
         }
 
         public string GetBearerToken()

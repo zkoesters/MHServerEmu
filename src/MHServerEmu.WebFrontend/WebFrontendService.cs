@@ -42,6 +42,7 @@ namespace MHServerEmu.WebFrontend
                 MaxRequestBodyBytes = config.MaxRequestBodyBytes,
                 RequestBodyReadTimeout = TimeSpan.FromMilliseconds(config.RequestBodyReadTimeoutMS),
                 JsonMaxDepth = config.JsonMaxDepth,
+                TrustedProxyNetworks = config.GetTrustedProxyNetworks(),
             };
 
             _webService = new(webServiceSettings);
