@@ -20,6 +20,7 @@ namespace MHServerEmu.WebFrontend
         private readonly WebFrontendServiceMailbox _serviceMailbox = new();
 
         private readonly WebService _webService;
+        private readonly HashSet<string> _enabledRoutes;
         private List<string> _dashboardEndpoints;
 
         public GameServiceState State { get; private set; } = GameServiceState.Created;
@@ -30,6 +31,7 @@ namespace MHServerEmu.WebFrontend
         public WebFrontendService()
         {
             var config = ConfigManager.Instance.GetConfig<WebFrontendConfig>();
+            _enabledRoutes = WebFrontendRoutePolicy.GetRoutes(config.GetDeploymentProfile(), config.EnableWebApi, config.EnableDashboard);
 
             if (config.MaxRequestBodyBytes <= 0 || config.RequestBodyReadTimeoutMS <= 0 || config.JsonMaxDepth <= 0)
                 throw new InvalidOperationException("Web frontend request body settings must be greater than zero.");
@@ -55,19 +57,19 @@ namespace MHServerEmu.WebFrontend
             // We should probably prefer to use /AuthServer/Login/IndexPB because it's more accurate to what Gazillion had.
             ProtobufWebHandler protobufHandler = new(config.EnableLoginRateLimit, TimeSpan.FromMilliseconds(config.LoginRateLimitCostMS),
                 config.LoginRateLimitBurst, config.RateLimitMaxKeys);
-            _webService.RegisterHandler("/Login/IndexPB",            protobufHandler);
-            _webService.RegisterHandler("/AuthServer/Login/IndexPB", protobufHandler);
+            RegisterEnabled("/Login/IndexPB",            protobufHandler);
+            RegisterEnabled("/AuthServer/Login/IndexPB", protobufHandler);
 
             // MTXStore handlers are used for the Add G panel in the client UI.
-            _webService.RegisterHandler("/MTXStore/AddG", new AddGWebHandler());
-            _webService.RegisterHandler("/MTXStore/AddG/Submit", new AddGSubmitWebHandler());
+            RegisterEnabled("/MTXStore/AddG", new AddGWebHandler());
+            RegisterEnabled("/MTXStore/AddG/Submit", new AddGSubmitWebHandler());
 
-            if (config.EnableWebApi)
+            if (_enabledRoutes.Contains("/AccountManagement/Create"))
             {
                 InitializeWebBackend(config);
                 WebApiKeyManager.Instance.LoadKeys();
 
-                if (config.EnableDashboard)
+                if (_enabledRoutes.Contains("/"))
                     InitializeWebDashboard(config.DashboardFileDirectory, config.DashboardUrlPath);
             }
         }
@@ -143,17 +145,23 @@ namespace MHServerEmu.WebFrontend
 
         private void InitializeWebBackend(WebFrontendConfig config)
         {
-            _webService.RegisterHandler("/AccountManagement/Create",        new AccountCreateWebHandler(config.EnableAccountCreationRateLimit,
+            RegisterEnabled("/AccountManagement/Create",        new AccountCreateWebHandler(config.EnableAccountCreationRateLimit,
                 TimeSpan.FromMilliseconds(config.AccountCreationRateLimitCostMS), config.AccountCreationRateLimitBurst, config.RateLimitMaxKeys));
-            _webService.RegisterHandler("/AccountManagement/SetPlayerName", new AccountSetPlayerNameWebHandler());
-            _webService.RegisterHandler("/AccountManagement/SetPassword",   new AccountSetPasswordWebHandler());
-            _webService.RegisterHandler("/AccountManagement/SetUserLevel",  new AccountSetUserLevelWebHandler());
-            _webService.RegisterHandler("/AccountManagement/SetFlag",       new AccountSetFlagWebHandler());
-            _webService.RegisterHandler("/AccountManagement/ClearFlag",     new AccountClearFlagWebHandler());
+            RegisterEnabled("/AccountManagement/SetPlayerName", new AccountSetPlayerNameWebHandler());
+            RegisterEnabled("/AccountManagement/SetPassword",   new AccountSetPasswordWebHandler());
+            RegisterEnabled("/AccountManagement/SetUserLevel",  new AccountSetUserLevelWebHandler());
+            RegisterEnabled("/AccountManagement/SetFlag",       new AccountSetFlagWebHandler());
+            RegisterEnabled("/AccountManagement/ClearFlag",     new AccountClearFlagWebHandler());
 
-            _webService.RegisterHandler("/ServerStatus", new ServerStatusWebHandler());
-            _webService.RegisterHandler("/RegionReport", new RegionReportWebHandler());
-            _webService.RegisterHandler("/Metrics/Performance", new MetricsPerformanceWebHandler());
+            RegisterEnabled("/ServerStatus", new ServerStatusWebHandler());
+            RegisterEnabled("/RegionReport", new RegionReportWebHandler());
+            RegisterEnabled("/Metrics/Performance", new MetricsPerformanceWebHandler());
+        }
+
+        private void RegisterEnabled(string localPath, WebHandler handler)
+        {
+            if (_enabledRoutes.Contains(localPath))
+                _webService.RegisterHandler(localPath, handler);
         }
 
         private void InitializeWebDashboard(string dashboardDirectoryName, string localPath)
