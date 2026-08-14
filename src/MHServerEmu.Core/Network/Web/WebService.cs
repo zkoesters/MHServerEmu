@@ -42,15 +42,27 @@ namespace MHServerEmu.Core.Network.Web
 
             string url = Settings.ListenUrl;
 
-            _listener = new();
-            _listener.Prefixes.Add(url);
-            _listener.Start();
+            try
+            {
+                _listener = new();
+                _listener.Prefixes.Add(url);
+                _listener.Start();
 
-            _cts = new();
-            Task.Run(HandleRequestsAsync);
+                _cts = new();
+                Task.Run(HandleRequestsAsync);
 
-            IsRunning = true;
-            return true;
+                IsRunning = true;
+                return true;
+            }
+            catch
+            {
+                _cts?.Dispose();
+                _cts = null;
+                _listener?.Close();
+                _listener = null;
+                IsRunning = false;
+                throw;
+            }
         }
 
         /// <summary>

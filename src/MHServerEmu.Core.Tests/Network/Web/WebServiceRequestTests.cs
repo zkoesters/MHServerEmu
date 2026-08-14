@@ -74,6 +74,53 @@ namespace MHServerEmu.Core.Tests.Network.Web
             }
         }
 
+        [Fact]
+        public async Task WebRequestContext_OriginalConstructor_UsesDefaultSettings()
+        {
+            int port = GetFreePort();
+            string prefix = $"http://127.0.0.1:{port}/";
+            using HttpListener listener = new();
+            listener.Prefixes.Add(prefix);
+            listener.Start();
+            using HttpClient client = new();
+
+            Task<HttpResponseMessage> responseTask = client.GetAsync(prefix);
+            HttpListenerContext httpContext = await listener.GetContextAsync();
+            WebRequestContext requestContext = new(httpContext);
+            httpContext.Response.Close();
+
+            HttpResponseMessage response = await responseTask;
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(200, requestContext.StatusCode);
+        }
+
+        [Fact]
+        public void Start_FailedListenerStart_CanRetryAfterPortReleased()
+        {
+            int port = GetFreePort();
+            string prefix = $"http://127.0.0.1:{port}/";
+            using HttpListener reservedListener = new();
+            reservedListener.Prefixes.Add(prefix);
+            reservedListener.Start();
+
+            WebService service = CreateService(port);
+
+            try
+            {
+                Assert.Throws<HttpListenerException>(() => service.Start());
+                Assert.False(service.IsRunning);
+
+                reservedListener.Close();
+
+                Assert.True(service.Start());
+                Assert.True(service.Stop());
+            }
+            finally
+            {
+                service.Stop();
+            }
+        }
+
         private static WebService StartWithRetry(params (string LocalPath, WebHandler Handler)[] handlers)
         {
             HttpListenerException lastException = null;
@@ -106,6 +153,13 @@ namespace MHServerEmu.Core.Tests.Network.Web
             }
 
             throw lastException;
+        }
+
+        private static int GetFreePort()
+        {
+            using TcpListener listener = new(IPAddress.Loopback, 0);
+            listener.Start();
+            return ((IPEndPoint)listener.LocalEndpoint).Port;
         }
 
         private static WebService CreateService(int port)
