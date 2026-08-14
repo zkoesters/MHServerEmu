@@ -138,6 +138,10 @@ namespace Setup
         /// </summary>
         private static void CreateBatFiles(string rootDirectory, string clientExecutablePath, string serverExecutablePath)
         {
+            string autoLoginPath = Path.Combine(rootDirectory, "StartClientAutoLogin.bat");
+            if (File.Exists(autoLoginPath))
+                File.Delete(autoLoginPath);
+
             string relativeServerExecutablePath = Path.GetRelativePath(rootDirectory, serverExecutablePath);
 
             // Launching the client normally
