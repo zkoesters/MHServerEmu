@@ -21,6 +21,8 @@ namespace MHServerEmu.Core.Network.Web
         public string UserAgent { get => _httpRequest.UserAgent; }
         public string LocalPath { get => _httpRequest.Url.LocalPath; }
         public string HttpMethod { get => _httpRequest.HttpMethod; }
+        [Obsolete("Raw forwarding headers are untrusted. Use GetIPAddress() or IsForwardedRequest.")]
+        public string XForwardedFor { get => _httpRequest.Headers["X-Forwarded-For"]; }
         public string Authorization { get => _httpRequest.Headers["Authorization"]; }
         public bool IsForwardedRequest { get => _clientIp.IsForwarded; }
 
