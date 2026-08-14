@@ -83,8 +83,10 @@ namespace MHServerEmu.Core.Tests.Network.Web
             listener.Prefixes.Add(prefix);
             listener.Start();
             using HttpClient client = new();
+            using HttpRequestMessage request = new(HttpMethod.Get, prefix);
+            request.Headers.Add("X-Forwarded-For", "198.51.100.20");
 
-            Task<HttpResponseMessage> responseTask = client.GetAsync(prefix);
+            Task<HttpResponseMessage> responseTask = client.SendAsync(request);
             HttpListenerContext httpContext = await listener.GetContextAsync();
             WebRequestContext requestContext = new(httpContext);
             httpContext.Response.Close();
@@ -92,6 +94,11 @@ namespace MHServerEmu.Core.Tests.Network.Web
             HttpResponseMessage response = await responseTask;
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(200, requestContext.StatusCode);
+#pragma warning disable CS0618
+            Assert.Equal("198.51.100.20", requestContext.XForwardedFor);
+#pragma warning restore CS0618
+            Assert.Equal(IPAddress.Loopback.ToString(), requestContext.GetIPAddress());
+            Assert.False(requestContext.IsForwardedRequest);
         }
 
         [Fact]
