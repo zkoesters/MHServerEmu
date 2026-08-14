@@ -27,6 +27,8 @@ namespace MHServerEmu.Core.Network.Web
 
         public int StatusCode { get => _httpResponse.StatusCode; set => _httpResponse.StatusCode = value; }
 
+        public WebRequestContext(HttpListenerContext httpContext) : this(httpContext, new WebServiceSettings()) { }
+
         public WebRequestContext(HttpListenerContext httpContext, WebServiceSettings settings)
         {
             _httpRequest = httpContext.Request;
