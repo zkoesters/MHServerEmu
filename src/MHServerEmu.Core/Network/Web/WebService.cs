@@ -131,7 +131,7 @@ namespace MHServerEmu.Core.Network.Web
                 try
                 {
                     HttpListenerContext httpContext = await _listener.GetContextAsync().WaitAsync(_cts.Token);
-                    WebRequestContext requestContext = new(httpContext);
+                    WebRequestContext requestContext = new(httpContext, Settings);
 
                     // This may be either a registered handler or a fallback handler.
                     WebHandler handler = GetHandler(requestContext.LocalPath);

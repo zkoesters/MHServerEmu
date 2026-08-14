@@ -13,5 +13,8 @@ namespace MHServerEmu.WebFrontend
         public bool EnableDashboard { get; private set; } = true;
         public string DashboardFileDirectory { get; private set; } = "Dashboard";
         public string DashboardUrlPath { get; private set; } = "/";
+        public int MaxRequestBodyBytes { get; private set; } = 16 * 1024;
+        public int RequestBodyReadTimeoutMS { get; private set; } = 10000;
+        public int JsonMaxDepth { get; private set; } = 32;
     }
 }
