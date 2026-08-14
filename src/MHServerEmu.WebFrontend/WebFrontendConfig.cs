@@ -1,4 +1,5 @@
 ﻿using MHServerEmu.Core.Config;
+using MHServerEmu.Core.Network.Web;
 
 namespace MHServerEmu.WebFrontend
 {
@@ -16,5 +17,14 @@ namespace MHServerEmu.WebFrontend
         public int MaxRequestBodyBytes { get; private set; } = 16 * 1024;
         public int RequestBodyReadTimeoutMS { get; private set; } = 10000;
         public int JsonMaxDepth { get; private set; } = 32;
+        public string TrustedProxyNetworks { get; private set; } = string.Empty;
+
+        public IReadOnlyList<IpNetwork> GetTrustedProxyNetworks()
+        {
+            if (TrustedProxyNetworks.Length == 0)
+                return [];
+
+            return TrustedProxyNetworks.Split(',', StringSplitOptions.TrimEntries).Select(IpNetwork.Parse).ToList();
+        }
     }
 }

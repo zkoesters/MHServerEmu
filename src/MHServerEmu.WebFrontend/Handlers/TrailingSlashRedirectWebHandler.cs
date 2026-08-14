@@ -30,7 +30,7 @@ namespace MHServerEmu.WebFrontend.Handlers
             {
                 // This is likely to be accessed from behind reverse proxy, in which case the client-side URL may be different from what we see server-side.
                 // To make sure we add the trailing slash to the actual client URL, do the redirect client-side using JS for forwarded requests.
-                if (string.IsNullOrWhiteSpace(context.XForwardedFor))
+                if (context.IsForwardedRequest == false)
                     context.Redirect($"{context.LocalPath}/");
                 else
                     await context.SendAsync(HtmlRedirect, "text/html"); 
