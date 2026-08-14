@@ -30,7 +30,7 @@ namespace MHServerEmu.WebFrontend.Handlers
                 return;
             }
 
-            IMessage message = context.ReadProtobuf<FrontendProtocolMessage>();
+            IMessage message = await context.ReadProtobufAsync<FrontendProtocolMessage>();
 
             switch (message)
             {

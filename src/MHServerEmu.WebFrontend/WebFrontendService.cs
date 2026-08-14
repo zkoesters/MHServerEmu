@@ -31,11 +31,17 @@ namespace MHServerEmu.WebFrontend
         {
             var config = ConfigManager.Instance.GetConfig<WebFrontendConfig>();
 
+            if (config.MaxRequestBodyBytes <= 0 || config.RequestBodyReadTimeoutMS <= 0 || config.JsonMaxDepth <= 0)
+                throw new InvalidOperationException("Web frontend request body settings must be greater than zero.");
+
             WebServiceSettings webServiceSettings = new()
             {
                 Name = "WebFrontend",
                 ListenUrl = $"http://{config.Address}:{config.Port}/",
                 FallbackHandler = new NotFoundWebHandler(),
+                MaxRequestBodyBytes = config.MaxRequestBodyBytes,
+                RequestBodyReadTimeout = TimeSpan.FromMilliseconds(config.RequestBodyReadTimeoutMS),
+                JsonMaxDepth = config.JsonMaxDepth,
             };
 
             _webService = new(webServiceSettings);

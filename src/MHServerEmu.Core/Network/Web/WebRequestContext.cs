@@ -15,6 +15,7 @@ namespace MHServerEmu.Core.Network.Web
     {
         private readonly HttpListenerRequest _httpRequest;
         private readonly HttpListenerResponse _httpResponse;
+        private readonly WebServiceSettings _settings;
 
         public string UserAgent { get => _httpRequest.UserAgent; }
         public string LocalPath { get => _httpRequest.Url.LocalPath; }
@@ -22,14 +23,15 @@ namespace MHServerEmu.Core.Network.Web
         public string XForwardedFor { get => _httpRequest.Headers["X-Forwarded-For"]; }
         public string Authorization { get => _httpRequest.Headers["Authorization"]; }
 
-        public bool IsGameClientRequest { get => UserAgent.Equals("Secret Identity Studios Http Client", StringComparison.InvariantCulture); }
+        public bool IsGameClientRequest { get => string.Equals(UserAgent, "Secret Identity Studios Http Client", StringComparison.InvariantCulture); }
 
         public int StatusCode { get => _httpResponse.StatusCode; set => _httpResponse.StatusCode = value; }
 
-        public WebRequestContext(HttpListenerContext httpContext)
+        public WebRequestContext(HttpListenerContext httpContext, WebServiceSettings settings)
         {
             _httpRequest = httpContext.Request;
             _httpResponse = httpContext.Response;
+            _settings = settings;
 
             _httpResponse.StatusCode = 200;
             _httpResponse.KeepAlive = false;
@@ -75,23 +77,9 @@ namespace MHServerEmu.Core.Network.Web
         /// </summary>
         public async Task<string> ReadUtf8StringAsync()
         {
-            const long MaxLength = 1024 * 16;
-
-            int length = (int)_httpRequest.ContentLength64;
-            if (length < 0 || length > MaxLength)
-                throw new InternalBufferOverflowException();
-
-            byte[] buffer = ArrayPool<byte>.Shared.Rent(length);
-
-            try
-            {
-                await _httpRequest.InputStream.ReadAsync(buffer.AsMemory(0, length));
-                return Encoding.UTF8.GetString(buffer, 0, length);
-            }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(buffer);
-            }
+            byte[] body = await BoundedRequestBodyReader.ReadAsync(_httpRequest.InputStream, _httpRequest.ContentLength64,
+                _settings.MaxRequestBodyBytes, _settings.RequestBodyReadTimeout);
+            return Encoding.UTF8.GetString(body);
         }
 
         /// <summary>
@@ -99,7 +87,17 @@ namespace MHServerEmu.Core.Network.Web
         /// </summary>
         public async Task<T> ReadJsonAsync<T>()
         {
-            return await JsonSerializer.DeserializeAsync<T>(_httpRequest.InputStream);
+            byte[] body = await BoundedRequestBodyReader.ReadAsync(_httpRequest.InputStream, _httpRequest.ContentLength64,
+                _settings.MaxRequestBodyBytes, _settings.RequestBodyReadTimeout);
+
+            try
+            {
+                return JsonSerializer.Deserialize<T>(body, new JsonSerializerOptions { MaxDepth = _settings.JsonMaxDepth });
+            }
+            catch (JsonException e)
+            {
+                throw new WebRequestException(HttpStatusCode.BadRequest, $"Malformed JSON request body: {e.Message}");
+            }
         }
 
         /// <summary>
@@ -114,10 +112,18 @@ namespace MHServerEmu.Core.Network.Web
         /// <summary>
         /// Reads the request input stream as an <see cref="IMessage"/> of protocol <typeparamref name="T"/>.
         /// </summary>
-        public IMessage ReadProtobuf<T>() where T: Enum
+        public async Task<IMessage> ReadProtobufAsync<T>() where T: Enum
         {
-            MessageBuffer messageBuffer = new(_httpRequest.InputStream);
-            return messageBuffer.Deserialize<T>();
+            byte[] body = await BoundedRequestBodyReader.ReadAsync(_httpRequest.InputStream, _httpRequest.ContentLength64,
+                _settings.MaxRequestBodyBytes, _settings.RequestBodyReadTimeout);
+            using MemoryStream stream = new(body, writable: false);
+            MessageBuffer messageBuffer = new(stream);
+            IMessage message = messageBuffer.Deserialize<T>();
+
+            if (message == null)
+                throw new WebRequestException(HttpStatusCode.BadRequest, "Malformed protobuf request body.");
+
+            return message;
         }
 
         /// <summary>
