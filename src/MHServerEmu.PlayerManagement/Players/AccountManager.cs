@@ -1,5 +1,4 @@
 ﻿using Gazillion;
-using MHServerEmu.Core.Extensions;
 using MHServerEmu.Core.Helpers;
 using MHServerEmu.Core.Logging;
 using MHServerEmu.Core.Network;
@@ -30,7 +29,7 @@ namespace MHServerEmu.PlayerManagement.Players
     public static class AccountManager
     {
         private const int EmailMaxLength = 320;
-        private const int PasswordMinLength = 3;
+        private const int PasswordMinLength = 12;
         private const int PasswordMaxLength = 64;
 
         private static readonly Logger Logger = LogManager.CreateLogger();
@@ -144,7 +143,11 @@ namespace MHServerEmu.PlayerManagement.Players
             // Write the new name to the database
             string oldPlayerName = account.PlayerName;
             account.PlayerName = newPlayerName;
-            dbManager.UpdateAccount(account);
+            if (TryUpdateAccount(dbManager, account) == false)
+            {
+                account.PlayerName = oldPlayerName;
+                return AccountOperationResult.DatabaseError;
+            }
 
             ServiceMessage.PlayerNameChanged playerNameChanged = new((ulong)account.Id, oldPlayerName, newPlayerName);
             ServerManager.Instance.SendMessageToService(GameServiceType.PlayerManager, playerNameChanged);
@@ -168,10 +171,20 @@ namespace MHServerEmu.PlayerManagement.Players
             if (dbManager.TryQueryAccountByEmail(email, out DBAccount account) == false)
                 return AccountOperationResult.EmailNotFound;
 
+            byte[] oldPasswordHash = account.PasswordHash;
+            byte[] oldSalt = account.Salt;
+            AccountFlags oldFlags = account.Flags;
+
             account.PasswordHash = CryptographyHelper.HashPassword(newPassword, out byte[] salt);
             account.Salt = salt;
             account.Flags &= ~AccountFlags.IsPasswordExpired;
-            dbManager.UpdateAccount(account);
+            if (TryUpdateAccount(dbManager, account) == false)
+            {
+                account.PasswordHash = oldPasswordHash;
+                account.Salt = oldSalt;
+                account.Flags = oldFlags;
+                return AccountOperationResult.DatabaseError;
+            }
 
             Logger.Info($"ChangeAccountPassword(): account=[{account}]");
             return AccountOperationResult.Success;
@@ -188,8 +201,13 @@ namespace MHServerEmu.PlayerManagement.Players
             if (dbManager.TryQueryAccountByEmail(email, out DBAccount account) == false)
                 return AccountOperationResult.EmailNotFound;
 
+            AccountUserLevel oldUserLevel = account.UserLevel;
             account.UserLevel = userLevel;
-            dbManager.UpdateAccount(account);
+            if (TryUpdateAccount(dbManager, account) == false)
+            {
+                account.UserLevel = oldUserLevel;
+                return AccountOperationResult.DatabaseError;
+            }
 
             Logger.Info($"SetAccountUserLevel(): account=[{account}], userLevel=[{userLevel}]");
             return AccountOperationResult.Success;
@@ -214,8 +232,13 @@ namespace MHServerEmu.PlayerManagement.Players
             if (account.Flags.HasFlag(flag))
                 return AccountOperationResult.FlagAlreadySet;
 
+            AccountFlags oldFlags = account.Flags;
             account.Flags |= flag;
-            IDBManager.Instance.UpdateAccount(account);
+            if (TryUpdateAccount(IDBManager.Instance, account) == false)
+            {
+                account.Flags = oldFlags;
+                return AccountOperationResult.DatabaseError;
+            }
 
             Logger.Info($"SetFlag(): account=[{account}], flag=[{flag}]");
             return AccountOperationResult.Success;
@@ -240,8 +263,13 @@ namespace MHServerEmu.PlayerManagement.Players
             if (account.Flags.HasFlag(flag) == false)
                 return AccountOperationResult.FlagNotSet;
 
+            AccountFlags oldFlags = account.Flags;
             account.Flags &= ~flag;
-            IDBManager.Instance.UpdateAccount(account);
+            if (TryUpdateAccount(IDBManager.Instance, account) == false)
+            {
+                account.Flags = oldFlags;
+                return AccountOperationResult.DatabaseError;
+            }
 
             Logger.Info($"ClearFlag(): account=[{account}], flag=[{flag}]");
             return AccountOperationResult.Success;
@@ -270,7 +298,7 @@ namespace MHServerEmu.PlayerManagement.Players
                     return $"Name {playerName} is already used by another account.";
 
                 case AccountOperationResult.PasswordInvalid:
-                    return "Password must between 3 and 64 characters long.";
+                    return "Password must be between 12 and 64 characters long.";
 
                 default:
                     return result.ToString();
@@ -314,7 +342,20 @@ namespace MHServerEmu.PlayerManagement.Players
         /// </summary>
         private static bool ValidatePassword(string password)
         {
-            return password.Length.IsWithin(PasswordMinLength, PasswordMaxLength);
+            return password != null && password.Length >= PasswordMinLength && password.Length <= PasswordMaxLength;
+        }
+
+        private static bool TryUpdateAccount(IDBManager dbManager, DBAccount account)
+        {
+            try
+            {
+                return dbManager.UpdateAccount(account);
+            }
+            catch (Exception e)
+            {
+                Logger.ErrorException(e, nameof(TryUpdateAccount));
+                return false;
+            }
         }
     }
 }

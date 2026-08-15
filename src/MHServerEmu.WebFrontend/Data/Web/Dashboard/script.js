@@ -457,7 +457,7 @@ const createAccountTab = {
 			case AccountOperationResult.PLAYER_NAME_ALREADY_USED:
 				return `Name ${playerName} is already used by another account.`;
 			case AccountOperationResult.PASSWORD_INVALID:
-				return `Password must between 3 and 64 characters long.`;
+				return `Password must be between 12 and 64 characters long.`;
 			case AccountOperationResult.FLAG_ALREADY_SET:
 				return `Flag already set.`;
 			case AccountOperationResult.FLAG_NOT_SET:
