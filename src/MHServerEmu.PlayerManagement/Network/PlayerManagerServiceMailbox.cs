@@ -327,7 +327,7 @@ namespace MHServerEmu.PlayerManagement.Network
             // Rate limit this because it's based on client input, and we may be querying the database. It's okay for this query to fail.
             if (_playerLookupByNameRateLimiter.AddTime(playerDbId))
             {
-                PlayerNameCache.Instance.TryGetPlayerDbId(requestPlayerName, out resultPlayerDbId, out resultPlayerName);
+                _playerManager.PlayerNameCache.TryGetPlayerDbId(requestPlayerName, out resultPlayerDbId, out resultPlayerName);
             }
             else
             {
@@ -349,7 +349,7 @@ namespace MHServerEmu.PlayerManagement.Network
             string newPlayerName = playerNameChanged.NewPlayerName;
 
             _playerManager.ClientManager.OnPlayerNameChanged(playerDbId, oldPlayerName, newPlayerName);
-            PlayerNameCache.Instance.OnPlayerNameChanged(playerDbId);
+            _playerManager.PlayerNameCache.OnPlayerNameChanged(playerDbId);
             _playerManager.CommunityRegistry.OnPlayerNameChanged(playerDbId, newPlayerName);
 
             return true;

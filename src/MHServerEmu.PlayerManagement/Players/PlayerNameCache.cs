@@ -7,12 +7,14 @@ namespace MHServerEmu.PlayerManagement.Players
     {
         private static readonly Logger Logger = LogManager.CreateLogger();
 
+        private readonly IPlayerStore _players;
         private readonly Dictionary<ulong, string> _playerNames = new();
         private readonly Dictionary<string, ulong> _playerDbIds = new(StringComparer.OrdinalIgnoreCase);
 
-        public static PlayerNameCache Instance { get; } = new();
-
-        private PlayerNameCache() { }
+        public PlayerNameCache(IPlayerStore players)
+        {
+            _players = players ?? throw new ArgumentNullException(nameof(players));
+        }
 
         // The database queries here are synchronous. Should be fine with the lower player counts we have.
 
@@ -26,7 +28,7 @@ namespace MHServerEmu.PlayerManagement.Players
             }
 
             // Query the database.
-            if (IDBManager.Instance.TryGetPlayerName(playerDbId, out string dbPlayerName))
+            if (_players.TryGetPlayerName(playerDbId, out string dbPlayerName))
             {
                 AddLookup(playerDbId, dbPlayerName);
                 resultPlayerName = dbPlayerName;
@@ -49,7 +51,7 @@ namespace MHServerEmu.PlayerManagement.Players
             }
 
             // Query the database.
-            if (IDBManager.Instance.TryGetPlayerDbIdByName(playerName, out ulong dbPlayerDbId, out string dbPlayerName))
+            if (_players.TryGetPlayerDbIdByName(playerName, out ulong dbPlayerDbId, out string dbPlayerName))
             {
                 AddLookup(dbPlayerDbId, dbPlayerName);
                 resultPlayerDbId = dbPlayerDbId;

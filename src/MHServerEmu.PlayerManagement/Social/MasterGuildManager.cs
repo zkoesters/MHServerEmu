@@ -126,7 +126,7 @@ namespace MHServerEmu.PlayerManagement.Social
             if (_guildNameRegistry.AddGuildNameInUse(guildName) == false)
                 return Logger.WarnReturn<MasterGuild>(null, $"CreateGuild(): Guild name {guildName} is already in use");
 
-            MasterGuild guild = new(data, saveToDatabase);
+            MasterGuild guild = new(data, saveToDatabase, _playerManager.PlayerNameCache);
             _guilds.Add(guild.Id, guild);
             return guild;
         }

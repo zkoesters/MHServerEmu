@@ -2,6 +2,7 @@
 using Google.ProtocolBuffers;
 using MHServerEmu.Core.Logging;
 using MHServerEmu.Core.Network;
+using MHServerEmu.DatabaseAccess;
 using MHServerEmu.PlayerManagement.Auth;
 using MHServerEmu.PlayerManagement.Social;
 
@@ -17,14 +18,16 @@ namespace MHServerEmu.PlayerManagement.Players
         private readonly Dictionary<string, PlayerHandle> _playersByName = new(StringComparer.OrdinalIgnoreCase);
 
         private readonly PlayerManagerService _playerManager;
+        private readonly IPlayerStore _players;
 
         public int PlayerCount { get => _playerDict.Count; }
 
         public bool AllowNewClients { get; set; } = true;
 
-        public ClientManager(PlayerManagerService playerManager) 
+        public ClientManager(PlayerManagerService playerManager, IPlayerStore players)
         {
-            _playerManager = playerManager;
+            _playerManager = playerManager ?? throw new ArgumentNullException(nameof(playerManager));
+            _players = players ?? throw new ArgumentNullException(nameof(players));
         }
 
         public void Update()
@@ -178,7 +181,7 @@ namespace MHServerEmu.PlayerManagement.Players
 
             if (_playerDict.TryGetValue(playerDbId, out player) == false)
             {
-                player = new(client);
+                player = new(client, _players);
                 _playerDict.Add(playerDbId, player);
                 _playersByName.Add(player.PlayerName, player);
                 Logger.Info($"Created new PlayerHandle: [{player}]");

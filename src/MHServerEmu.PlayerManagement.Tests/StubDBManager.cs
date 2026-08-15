@@ -15,6 +15,10 @@ namespace MHServerEmu.PlayerManagement.Tests
         public bool SavePlayerDataResult { get; set; } = true;
         public bool ThrowOnUpdateAccount { get; set; }
         public int UpdateAccountCallCount { get; private set; }
+        public int TryGetPlayerNameCallCount { get; private set; }
+        public int TryGetPlayerDbIdByNameCallCount { get; private set; }
+        public int LoadPlayerDataCallCount { get; private set; }
+        public int SavePlayerDataCallCount { get; private set; }
 
         public bool Initialize()
         {
@@ -28,6 +32,8 @@ namespace MHServerEmu.PlayerManagement.Tests
 
         public bool TryGetPlayerDbIdByName(string playerName, out ulong playerDbId, out string playerNameOut)
         {
+            TryGetPlayerDbIdByNameCallCount++;
+
             foreach (DBAccount account in Accounts.Values)
             {
                 if (string.Equals(account.PlayerName, playerName, StringComparison.OrdinalIgnoreCase))
@@ -45,6 +51,8 @@ namespace MHServerEmu.PlayerManagement.Tests
 
         public bool TryGetPlayerName(ulong playerDbId, out string playerName)
         {
+            TryGetPlayerNameCallCount++;
+
             foreach (DBAccount account in Accounts.Values)
             {
                 if ((ulong)account.Id == playerDbId)
@@ -94,11 +102,13 @@ namespace MHServerEmu.PlayerManagement.Tests
 
         public bool LoadPlayerData(DBAccount account)
         {
+            LoadPlayerDataCallCount++;
             return LoadPlayerDataResult;
         }
 
         public bool SavePlayerData(DBAccount account)
         {
+            SavePlayerDataCallCount++;
             return SavePlayerDataResult;
         }
 
