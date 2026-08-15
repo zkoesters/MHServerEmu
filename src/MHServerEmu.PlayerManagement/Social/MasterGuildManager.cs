@@ -18,12 +18,21 @@ namespace MHServerEmu.PlayerManagement.Social
         private readonly GuildNameRegistry _guildNameRegistry = new();
 
         private readonly PlayerManagerService _playerManager;
+        private readonly IGuildStore _guildStore;
+        private readonly PlayerNameCache _playerNameCache;
 
         private ulong _currentGuildId = 0;
 
-        public MasterGuildManager(PlayerManagerService playerManager)
+        public MasterGuildManager(PlayerManagerService playerManager, IGuildStore guildStore, PlayerNameCache playerNameCache)
         {
-            _playerManager = playerManager;
+            _playerManager = playerManager ?? throw new ArgumentNullException(nameof(playerManager));
+            _guildStore = guildStore ?? throw new ArgumentNullException(nameof(guildStore));
+            _playerNameCache = playerNameCache ?? throw new ArgumentNullException(nameof(playerNameCache));
+        }
+
+        internal MasterGuildManager(IGuildStore guildStore)
+        {
+            _guildStore = guildStore ?? throw new ArgumentNullException(nameof(guildStore));
         }
 
         public void Initialize()
@@ -32,7 +41,7 @@ namespace MHServerEmu.PlayerManagement.Social
 
             // We store all guilds in memory, so preload everything.
             List<DBGuild> dbGuilds = new();
-            IDBManager.Instance.LoadGuilds(dbGuilds);
+            _guildStore.LoadGuilds(dbGuilds);
 
             int numMembers = 0;
             foreach (DBGuild dbGuild in dbGuilds)
@@ -53,7 +62,7 @@ namespace MHServerEmu.PlayerManagement.Social
                 {
                     // Automatically clean up empty guilds.
                     Logger.Warn($"Initialize(): Loaded guild [{dbGuild}] has no members, requesting deletion");
-                    IDBManager.Instance.DeleteGuild(dbGuild);
+                    _guildStore.DeleteGuild(dbGuild);
                     continue;
                 }
 
@@ -126,7 +135,7 @@ namespace MHServerEmu.PlayerManagement.Social
             if (_guildNameRegistry.AddGuildNameInUse(guildName) == false)
                 return Logger.WarnReturn<MasterGuild>(null, $"CreateGuild(): Guild name {guildName} is already in use");
 
-            MasterGuild guild = new(data, saveToDatabase, _playerManager.PlayerNameCache);
+            MasterGuild guild = new(data, saveToDatabase, _guildStore, _playerNameCache, this, _playerManager.ClientManager, _playerManager.Config.EnablePersistence);
             _guilds.Add(guild.Id, guild);
             return guild;
         }

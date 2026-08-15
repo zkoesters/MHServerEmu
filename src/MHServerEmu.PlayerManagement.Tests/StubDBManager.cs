@@ -6,6 +6,7 @@ namespace MHServerEmu.PlayerManagement.Tests
     public sealed class StubDBManager : IDBManager, IAccountStore, IPlayerStore, IGuildStore
     {
         public Dictionary<string, DBAccount> Accounts { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public List<DBGuild> GuildsToLoad { get; } = new();
 
         public bool VerifyAccounts { get; set; } = true;
         public bool InitializeResult { get; set; } = true;
@@ -19,6 +20,11 @@ namespace MHServerEmu.PlayerManagement.Tests
         public int TryGetPlayerDbIdByNameCallCount { get; private set; }
         public int LoadPlayerDataCallCount { get; private set; }
         public int SavePlayerDataCallCount { get; private set; }
+        public int LoadGuildsCallCount { get; private set; }
+        public int SaveGuildCallCount { get; private set; }
+        public int DeleteGuildCallCount { get; private set; }
+        public int SaveGuildMemberCallCount { get; private set; }
+        public int DeleteGuildMemberCallCount { get; private set; }
 
         public bool Initialize()
         {
@@ -114,27 +120,33 @@ namespace MHServerEmu.PlayerManagement.Tests
 
         public bool LoadGuilds(List<DBGuild> guilds)
         {
-            return false;
+            LoadGuildsCallCount++;
+            guilds.AddRange(GuildsToLoad);
+            return true;
         }
 
         public bool SaveGuild(DBGuild guild)
         {
-            return false;
+            SaveGuildCallCount++;
+            return true;
         }
 
         public bool DeleteGuild(DBGuild guild)
         {
-            return false;
+            DeleteGuildCallCount++;
+            return true;
         }
 
         public bool SaveGuildMember(DBGuildMember guildMember)
         {
-            return false;
+            SaveGuildMemberCallCount++;
+            return true;
         }
 
         public bool DeleteGuildMember(DBGuildMember guildMember)
         {
-            return false;
+            DeleteGuildMemberCallCount++;
+            return true;
         }
     }
 }

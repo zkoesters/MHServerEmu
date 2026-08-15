@@ -14,11 +14,12 @@ namespace MHServerEmu.PlayerManagement.Social
     {
         private static readonly Logger Logger = LogManager.CreateLogger();
 
-        private static bool PersistenceEnabled { get => PlayerManagerService.Instance.Config.EnablePersistence; }
-        private static MasterGuildManager GuildManager { get => PlayerManagerService.Instance.GuildManager; }
-
         private readonly DBGuild _data;
+        private readonly IGuildStore _guildStore;
         private readonly PlayerNameCache _playerNameCache;
+        private readonly MasterGuildManager _guildManager;
+        private readonly ClientManager _clientManager;
+        private readonly bool _persistenceEnabled;
 
         private readonly Dictionary<ulong, MemberEntry> _members = new();
 
@@ -38,22 +39,29 @@ namespace MHServerEmu.PlayerManagement.Social
         public int MemberCount { get => _members.Count; }
         public bool IsFull { get => MemberCount >= GameDatabase.GlobalsPrototype.PlayerGuildMaxSize; }
 
-        public MasterGuild(DBGuild data, bool saveToDatabase, PlayerNameCache playerNameCache)
+        public MasterGuild(DBGuild data, bool saveToDatabase, IGuildStore guildStore, PlayerNameCache playerNameCache,
+            MasterGuildManager guildManager, ClientManager clientManager, bool persistenceEnabled)
         {
-            _data = data;
+            _data = data ?? throw new ArgumentNullException(nameof(data));
+            _guildStore = guildStore ?? throw new ArgumentNullException(nameof(guildStore));
             _playerNameCache = playerNameCache ?? throw new ArgumentNullException(nameof(playerNameCache));
+            _guildManager = guildManager ?? throw new ArgumentNullException(nameof(guildManager));
+            _clientManager = clientManager;
+            _persistenceEnabled = persistenceEnabled;
 
             foreach (DBGuildMember member in _data.Members)
                 AddMember(member);
 
             _data.Members.Clear();  // we don't use this for anything but initialization, so just clear it
 
-            ClientManager clientManager = PlayerManagerService.Instance.ClientManager;
-            foreach (MemberEntry member in _members.Values)
+            if (_clientManager != null)
             {
-                PlayerHandle player = clientManager.GetPlayer(member.PlayerDbId);
-                if (player != null)
-                    AddOnlineMember(player);
+                foreach (MemberEntry member in _members.Values)
+                {
+                    PlayerHandle player = _clientManager.GetPlayer(member.PlayerDbId);
+                    if (player != null)
+                        AddOnlineMember(player);
+                }
             }
 
             if (saveToDatabase)
@@ -63,6 +71,12 @@ namespace MHServerEmu.PlayerManagement.Social
                 foreach (MemberEntry member in _members.Values)
                     member.SaveToDatabase();
             }
+        }
+
+        internal MasterGuild(DBGuild data, bool saveToDatabase, IGuildStore guildStore, PlayerNameCache playerNameCache,
+            MasterGuildManager guildManager, bool persistenceEnabled)
+            : this(data, saveToDatabase, guildStore, playerNameCache, guildManager, null, persistenceEnabled)
+        {
         }
 
         public override string ToString()
@@ -352,7 +366,7 @@ namespace MHServerEmu.PlayerManagement.Social
             // Finalize dissolve if needed
             if (MemberCount == 0)
             {
-                GuildManager.RemoveGuild(this);
+                _guildManager.RemoveGuild(this);
                 DeleteFromDatabase();
                 return GuildChangeMemberResultCode.eGCMRCSuccessGuildDissolved;
             }
@@ -407,18 +421,18 @@ namespace MHServerEmu.PlayerManagement.Social
 
         private bool SaveToDatabase()
         {
-            if (PersistenceEnabled == false)
+            if (_persistenceEnabled == false)
                 return true;
 
-            return IDBManager.Instance.SaveGuild(_data);
+            return _guildStore.SaveGuild(_data);
         }
 
         private bool DeleteFromDatabase()
         {
-            if (PersistenceEnabled == false)
+            if (_persistenceEnabled == false)
                 return true;
 
-            return IDBManager.Instance.DeleteGuild(_data);
+            return _guildStore.DeleteGuild(_data);
         }
 
         private MemberEntry? AddMember(DBGuildMember data)
@@ -433,13 +447,13 @@ namespace MHServerEmu.PlayerManagement.Social
             if (isLeader && _leader != null)
                 return Logger.WarnReturn<MemberEntry?>(null, $"AddMember(): Attempted to add a second leader [{data}] when there is an existing leader [{_leader}] in guild [{this}]");
 
-            MemberEntry member = new(data, _playerNameCache);
+            MemberEntry member = new(data, _guildStore, _playerNameCache, _persistenceEnabled);
             _members.Add(playerDbId, member);
 
             if (isLeader)
                 _leader = member;
 
-            GuildManager.SetGuildForPlayer(playerDbId, this);
+            _guildManager.SetGuildForPlayer(playerDbId, this);
 
             InvalidateGuildCompleteInfoCache();
 
@@ -484,7 +498,7 @@ namespace MHServerEmu.PlayerManagement.Social
             if (_onlineMembers.TryGetValue(playerDbId, out PlayerHandle onlinePlayer))
                 RemoveOnlineMember(onlinePlayer);
 
-            GuildManager.SetGuildForPlayer(playerDbId, null);
+            _guildManager.SetGuildForPlayer(playerDbId, null);
 
             InvalidateGuildCompleteInfoCache();
         }
@@ -637,10 +651,13 @@ namespace MHServerEmu.PlayerManagement.Social
         /// <summary>
         /// A wrapper for <see cref="DBGuildMember"/> for easier data access.
         /// </summary>
-        private readonly struct MemberEntry(DBGuildMember data, PlayerNameCache playerNameCache) : IEquatable<MemberEntry>
+        private readonly struct MemberEntry(DBGuildMember data, IGuildStore guildStore, PlayerNameCache playerNameCache,
+            bool persistenceEnabled) : IEquatable<MemberEntry>
         {
             private readonly DBGuildMember _data = data;
+            private readonly IGuildStore _guildStore = guildStore;
             private readonly PlayerNameCache _playerNameCache = playerNameCache;
+            private readonly bool _persistenceEnabled = persistenceEnabled;
 
             public ulong PlayerDbId { get => (ulong)_data.PlayerDbGuid; }
             public string PlayerName { get => GetPlayerName(); }
@@ -689,13 +706,13 @@ namespace MHServerEmu.PlayerManagement.Social
 
             public bool SaveToDatabase()
             {
-                if (PersistenceEnabled == false)
+                if (_persistenceEnabled == false)
                     return true;
 
                 if (Membership == GuildMembership.eGMNone)
-                    return IDBManager.Instance.DeleteGuildMember(_data);
+                    return _guildStore.DeleteGuildMember(_data);
 
-                return IDBManager.Instance.SaveGuildMember(_data);
+                return _guildStore.SaveGuildMember(_data);
             }
 
             private string GetPlayerName()
