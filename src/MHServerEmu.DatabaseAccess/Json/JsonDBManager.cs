@@ -10,7 +10,7 @@ namespace MHServerEmu.DatabaseAccess.Json
     /// <summary>
     /// Provides functionality for storing a single <see cref="DBAccount"/> instance in a JSON file using the <see cref="IDBManager"/> interface.
     /// </summary>
-    public class JsonDBManager : IDBManager
+    public class JsonDBManager : IDBManager, IAccountStore, IPlayerStore, IGuildStore
     {
         private static readonly Logger Logger = LogManager.CreateLogger();
 
