@@ -1,7 +1,6 @@
 ﻿using Gazillion;
 using MHServerEmu.Core.Logging;
 using MHServerEmu.Core.Network;
-using MHServerEmu.DatabaseAccess;
 using MHServerEmu.PlayerManagement.Players;
 
 namespace MHServerEmu.PlayerManagement.Social
@@ -174,7 +173,7 @@ namespace MHServerEmu.PlayerManagement.Social
             CommunityMemberEntry queryMember = GetMemberEntry(playerDbId);
             if (queryMember == null)
             {
-                if (PlayerNameCache.Instance.TryGetPlayerName(playerDbId, out string playerName) == false)
+                if (_playerManager.PlayerNameCache.TryGetPlayerName(playerDbId, out string playerName) == false)
                     playerName = "Unknown";
 
                 queryMember = AddMemberEntry(playerDbId, playerName);
@@ -182,7 +181,7 @@ namespace MHServerEmu.PlayerManagement.Social
 
                 if (_playerManager.GuildManager.GetGuildForPlayer(playerDbId) != null)
                 {
-                    if (IDBManager.Instance.TryGetLastLogoutTime(playerDbId, out long lastLogoutTime))
+                    if (_playerManager.PlayerStore.TryGetLastLogoutTime(playerDbId, out long lastLogoutTime))
                         queryMember.SetLastLogoutTime(TimeSpan.FromMilliseconds(lastLogoutTime));
                 }
             }

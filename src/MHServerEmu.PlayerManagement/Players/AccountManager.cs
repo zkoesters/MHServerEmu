@@ -92,11 +92,6 @@ namespace MHServerEmu.PlayerManagement.Players
             return _accounts.TryQueryAccountByEmail(email, out account);
         }
 
-        public bool LoadPlayerDataForAccount(DBAccount account)
-        {
-            return _players.LoadPlayerData(account);
-        }
-
         /// <summary>
         /// Creates a new <see cref="DBAccount"/> and inserts it into the database. Returns <see langword="true"/> if successful.
         /// </summary>

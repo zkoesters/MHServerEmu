@@ -18,6 +18,7 @@ namespace MHServerEmu.PlayerManagement.Social
         private static MasterGuildManager GuildManager { get => PlayerManagerService.Instance.GuildManager; }
 
         private readonly DBGuild _data;
+        private readonly PlayerNameCache _playerNameCache;
 
         private readonly Dictionary<ulong, MemberEntry> _members = new();
 
@@ -37,9 +38,10 @@ namespace MHServerEmu.PlayerManagement.Social
         public int MemberCount { get => _members.Count; }
         public bool IsFull { get => MemberCount >= GameDatabase.GlobalsPrototype.PlayerGuildMaxSize; }
 
-        public MasterGuild(DBGuild data, bool saveToDatabase)
+        public MasterGuild(DBGuild data, bool saveToDatabase, PlayerNameCache playerNameCache)
         {
             _data = data;
+            _playerNameCache = playerNameCache ?? throw new ArgumentNullException(nameof(playerNameCache));
 
             foreach (DBGuildMember member in _data.Members)
                 AddMember(member);
@@ -431,7 +433,7 @@ namespace MHServerEmu.PlayerManagement.Social
             if (isLeader && _leader != null)
                 return Logger.WarnReturn<MemberEntry?>(null, $"AddMember(): Attempted to add a second leader [{data}] when there is an existing leader [{_leader}] in guild [{this}]");
 
-            MemberEntry member = new(data);
+            MemberEntry member = new(data, _playerNameCache);
             _members.Add(playerDbId, member);
 
             if (isLeader)
@@ -635,9 +637,10 @@ namespace MHServerEmu.PlayerManagement.Social
         /// <summary>
         /// A wrapper for <see cref="DBGuildMember"/> for easier data access.
         /// </summary>
-        private readonly struct MemberEntry(DBGuildMember data) : IEquatable<MemberEntry>
+        private readonly struct MemberEntry(DBGuildMember data, PlayerNameCache playerNameCache) : IEquatable<MemberEntry>
         {
             private readonly DBGuildMember _data = data;
+            private readonly PlayerNameCache _playerNameCache = playerNameCache;
 
             public ulong PlayerDbId { get => (ulong)_data.PlayerDbGuid; }
             public string PlayerName { get => GetPlayerName(); }
@@ -701,7 +704,7 @@ namespace MHServerEmu.PlayerManagement.Social
 
                 // Doing lookups every time is somewhat suboptimal, but it's more straightforward than
                 // keeping guild members in sync if a member's name changes. Reevaluate this if needed.
-                if (PlayerNameCache.Instance.TryGetPlayerName(playerDbId, out string playerName) == false)
+                if (_playerNameCache.TryGetPlayerName(playerDbId, out string playerName) == false)
                     return $"0x{playerDbId:X}";
 
                 return playerName;

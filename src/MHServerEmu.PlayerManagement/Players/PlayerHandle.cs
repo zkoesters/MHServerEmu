@@ -38,6 +38,8 @@ namespace MHServerEmu.PlayerManagement.Players
         private static ulong _nextTransferId = 1;
 
         private readonly HashSet<PrototypeGuid> _partyBoosts = new();
+        private readonly IPlayerStore _players;
+        private readonly Func<bool> _persistenceEnabled;
         private readonly RegionRequestQueueCommandHandler _regionRequestQueueCommandHandler;
         private readonly Action<ulong> _gracePeriodRegionExpiredCallback;
 
@@ -78,9 +80,16 @@ namespace MHServerEmu.PlayerManagement.Players
 
         public bool HasTransferParams { get => _transferParams != null; }
 
-        public PlayerHandle(IFrontendClient client)
+        public PlayerHandle(IFrontendClient client, IPlayerStore players)
+            : this(client, players, () => PlayerManagerService.Instance.Config.EnablePersistence, GameDatabase.GlobalsPrototype.DifficultyTierDefault)
+        {
+        }
+
+        internal PlayerHandle(IFrontendClient client, IPlayerStore players, Func<bool> persistenceEnabled, PrototypeId difficultyTierPreference)
         {
             ArgumentNullException.ThrowIfNull(client);
+            _players = players ?? throw new ArgumentNullException(nameof(players));
+            _persistenceEnabled = persistenceEnabled ?? throw new ArgumentNullException(nameof(persistenceEnabled));
 
             // Ideally this check should be done at compile time, but making PlayerHandle generic would probably overcomplicate things too much.
             if (client is not IDBAccountOwner)
@@ -91,7 +100,7 @@ namespace MHServerEmu.PlayerManagement.Players
             Client = client;
             State = PlayerHandleState.Created;
 
-            DifficultyTierPreference = GameDatabase.GlobalsPrototype.DifficultyTierDefault;
+            DifficultyTierPreference = difficultyTierPreference;
 
             _regionRequestQueueCommandHandler = new(this);
             _gracePeriodRegionExpiredCallback = OnGracePeriodRegionExpired;
@@ -173,7 +182,7 @@ namespace MHServerEmu.PlayerManagement.Players
             if (lockScope.LockTaken == false)
                 return Logger.ErrorReturn(false, $"LoadPlayerData(): Timed out acquiring lock for [{account}]");
 
-            if (PlayerManagerService.Instance.AccountManager.LoadPlayerDataForAccount(account) == false)
+            if (_players.LoadPlayerData(account) == false)
                 return Logger.WarnReturn(false, $"LoadPlayerData(): Failed to load player data for account [{account}] from the database");
 
             Logger.Info($"Loaded player data for account [{account}] from the database");
@@ -191,7 +200,7 @@ namespace MHServerEmu.PlayerManagement.Players
                 return Logger.WarnReturn(false, $"SavePlayerData(): Invalid state {State} for player [{this}]");
 
             // Skip saving if persistence is disabled.
-            if (PlayerManagerService.Instance.Config.EnablePersistence == false)
+            if (_persistenceEnabled() == false)
                 return true;
 
             DBAccount account = Account;
@@ -207,7 +216,7 @@ namespace MHServerEmu.PlayerManagement.Players
             if (IsConnected == false)
                 account.Player.LastLogoutTime = (long)Clock.UnixTime.TotalMilliseconds;
 
-            if (IDBManager.Instance.SavePlayerData(account) == false)
+            if (_players.SavePlayerData(account) == false)
                 return Logger.WarnReturn(false, $"SavePlayerData(): Failed to save player data for account [{account}] to the database");
 
             Logger.Info($"Saved player data for account [{account}] to the database");

@@ -122,7 +122,7 @@ namespace MHServerEmu
 
             serverManager.RegisterGameService(new GameInstanceService(), GameServiceType.GameInstance);
             serverManager.RegisterGameService(new LeaderboardService(), GameServiceType.Leaderboard);
-            serverManager.RegisterGameService(new PlayerManagerService(_accountManager, _persistence.Capabilities), GameServiceType.PlayerManager);
+            serverManager.RegisterGameService(new PlayerManagerService(_accountManager, _persistence.Players, _persistence.Capabilities), GameServiceType.PlayerManager);
             serverManager.RegisterGameService(new GroupingManagerService(), GameServiceType.GroupingManager);
             serverManager.RegisterGameService(new FrontendServer(), GameServiceType.Frontend);
             serverManager.RegisterGameService(new WebFrontendService(), GameServiceType.WebFrontend);

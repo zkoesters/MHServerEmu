@@ -3,6 +3,7 @@ using Gazillion;
 using MHServerEmu.Core.Config;
 using MHServerEmu.Core.Logging;
 using MHServerEmu.Core.Network;
+using MHServerEmu.DatabaseAccess;
 using MHServerEmu.DatabaseAccess.Persistence;
 using MHServerEmu.Games;
 using MHServerEmu.PlayerManagement.Auth;
@@ -31,6 +32,8 @@ namespace MHServerEmu.PlayerManagement
 
         internal SessionManager SessionManager { get; }
         internal AccountManager AccountManager { get; }
+        internal IPlayerStore PlayerStore { get; }
+        internal PlayerNameCache PlayerNameCache { get; }
         internal PersistenceCapabilities PersistenceCapabilities { get; }
         internal LoginQueueManager LoginQueueManager { get; }
         internal GameHandleManager GameHandleManager { get; }
@@ -50,11 +53,13 @@ namespace MHServerEmu.PlayerManagement
         /// <summary>
         /// Constructs a new <see cref="PlayerManagerService"/> instance.
         /// </summary>
-        public PlayerManagerService(AccountManager accountManager, PersistenceCapabilities persistenceCapabilities)
+        public PlayerManagerService(AccountManager accountManager, IPlayerStore playerStore, PersistenceCapabilities persistenceCapabilities)
         {
             AccountManager = accountManager ?? throw new ArgumentNullException(nameof(accountManager));
+            PlayerStore = playerStore ?? throw new ArgumentNullException(nameof(playerStore));
             PersistenceCapabilities = persistenceCapabilities ?? throw new ArgumentNullException(nameof(persistenceCapabilities));
             Config = ConfigManager.Instance.GetConfig<PlayerManagerConfig>();
+            PlayerNameCache = new(PlayerStore);
 
             _serviceMailbox = new(this);
 
@@ -62,7 +67,7 @@ namespace MHServerEmu.PlayerManagement
             LoginQueueManager = new(this);
             GameHandleManager = new(this);
             WorldManager = new(this);
-            ClientManager = new(this);
+            ClientManager = new(this, PlayerStore);
             CommunityRegistry = new(this);
             PartyManager = new(this);
             GuildManager = new(this);
