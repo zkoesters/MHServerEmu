@@ -1,15 +1,14 @@
 ﻿using System.Globalization;
 using System.Runtime.InteropServices;
 using MHServerEmu.Commands;
+using MHServerEmu.Commands.Implementations;
 using MHServerEmu.Core.Config;
 using MHServerEmu.Core.Helpers;
 using MHServerEmu.Core.Logging;
 using MHServerEmu.Core.Logging.Targets;
 using MHServerEmu.Core.Metrics;
 using MHServerEmu.Core.Network;
-using MHServerEmu.DatabaseAccess;
-using MHServerEmu.DatabaseAccess.Json;
-using MHServerEmu.DatabaseAccess.SQLite;
+using MHServerEmu.DatabaseAccess.Persistence;
 using MHServerEmu.Frontend;
 using MHServerEmu.Games.Common;
 using MHServerEmu.Games.GameData;
@@ -19,6 +18,8 @@ using MHServerEmu.Games.Network.InstanceManagement;
 using MHServerEmu.Grouping;
 using MHServerEmu.Leaderboards;
 using MHServerEmu.PlayerManagement;
+using MHServerEmu.PlayerManagement.Players;
+using MHServerEmu.Persistence;
 using MHServerEmu.WebFrontend;
 
 namespace MHServerEmu
@@ -59,6 +60,8 @@ namespace MHServerEmu
 
         private static readonly Logger Logger = LogManager.CreateLogger();
         private State _state = State.Created;
+        private PersistenceServices _persistence;
+        private AccountManager _accountManager;
 
         public static ServerApp Instance { get; } = new();
         public DateTime StartupTime { get; private set; }
@@ -109,6 +112,7 @@ namespace MHServerEmu
             }
 
             // Initialize the command system
+            CommandManager.Instance.Initialize(new AccountCommands(_accountManager));
             CommandManager.Instance.SetClientOutput(new FrontendClientChatOutput());
             ICommandParser.Instance = new CommandParser();
 
@@ -118,7 +122,7 @@ namespace MHServerEmu
 
             serverManager.RegisterGameService(new GameInstanceService(), GameServiceType.GameInstance);
             serverManager.RegisterGameService(new LeaderboardService(), GameServiceType.Leaderboard);
-            serverManager.RegisterGameService(new PlayerManagerService(), GameServiceType.PlayerManager);
+            serverManager.RegisterGameService(new PlayerManagerService(_accountManager, _persistence.Capabilities), GameServiceType.PlayerManager);
             serverManager.RegisterGameService(new GroupingManagerService(), GameServiceType.GroupingManager);
             serverManager.RegisterGameService(new FrontendServer(), GameServiceType.Frontend);
             serverManager.RegisterGameService(new WebFrontendService(), GameServiceType.WebFrontend);
@@ -246,19 +250,21 @@ namespace MHServerEmu
         /// </summary>
         private bool InitSystems()
         {
-            // JsonDBManager saves a single account in a JSON file
-            var config = ConfigManager.Instance.GetConfig<PlayerManagerConfig>();
-            IDBManager.Instance = config.UseJsonDBManager ? JsonDBManager.Instance : SQLiteDBManager.Instance;
-
             // LiveTuningManager uses data from LiveTuningEventScheduler initialization,
             // and LiveTuningEventScheduler needs GameDatabase to be initialized to get TimeZone from GlobalsPrototype.
-            return PakFileSystem.Instance.Initialize()
+            bool initialized = PakFileSystem.Instance.Initialize()
                 && ProtocolDispatchTable.Instance.Initialize()
                 && GameDatabase.IsInitialized
                 && LiveTuningEventScheduler.Instance.Initialize()
                 && LiveTuningManager.Instance.Initialize()
                 && CatalogManager.Instance.Initialize()
-                && IDBManager.Instance.Initialize();
+                && PersistenceComposition.TryCreate(out _persistence);
+
+            if (initialized == false)
+                return false;
+
+            _accountManager = new(_persistence.Accounts, _persistence.Players, _persistence.Capabilities, new ServerAccountSecurityNotifier());
+            return true;
         }
     }
 }

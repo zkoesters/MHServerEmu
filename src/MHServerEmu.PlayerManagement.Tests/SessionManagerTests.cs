@@ -1,7 +1,9 @@
 using Google.ProtocolBuffers;
 using MHServerEmu.Core.Network;
+using MHServerEmu.DatabaseAccess.Persistence;
 using MHServerEmu.DatabaseAccess.Models;
 using MHServerEmu.PlayerManagement.Auth;
+using MHServerEmu.PlayerManagement.Players;
 
 namespace MHServerEmu.PlayerManagement.Tests
 {
@@ -10,7 +12,7 @@ namespace MHServerEmu.PlayerManagement.Tests
         [Fact]
         public void RevokeAccountSessions_RemovesTargetPendingAndActiveSessionsAndDisconnectsTargetClients()
         {
-            SessionManager sessionManager = new(false);
+            SessionManager sessionManager = CreateSessionManager();
             DBAccount targetAccount = new("target@example.com", "Target", "password") { Id = 1 };
             DBAccount otherAccount = new("other@example.com", "Other", "password") { Id = 2 };
             ClientSession targetPendingSession = CreateSession(1, targetAccount);
@@ -40,7 +42,7 @@ namespace MHServerEmu.PlayerManagement.Tests
         [Fact]
         public void RemoveActiveSession_IsIdempotent()
         {
-            SessionManager sessionManager = new(false);
+            SessionManager sessionManager = CreateSessionManager();
             DBAccount account = new("account@example.com", "Player", "password") { Id = 1 };
             ClientSession session = CreateSession(1, account);
 
@@ -55,7 +57,7 @@ namespace MHServerEmu.PlayerManagement.Tests
         [Fact]
         public void RemovePendingSession_ReleasesPlatformTicket()
         {
-            SessionManager sessionManager = new(false);
+            SessionManager sessionManager = CreateSessionManager();
             DBAccount account = new("account@example.com", "Player", "password") { Id = 1 };
             ClientSession session = CreateSession(1, account);
             sessionManager.RegisterPendingSessionForTesting(session);
@@ -71,6 +73,18 @@ namespace MHServerEmu.PlayerManagement.Tests
         private static ClientSession CreateSession(ulong sessionId, DBAccount account)
         {
             return new ClientSession(sessionId, account, $"ticket-{sessionId}", ClientDownloader.None, "en_us");
+        }
+
+        private static SessionManager CreateSessionManager()
+        {
+            StubDBManager store = new();
+            AccountManager accountManager = new(store, store, PersistenceCapabilities.SQLite, new TestAccountSecurityNotifier());
+            return new(false, accountManager, false);
+        }
+
+        private sealed class TestAccountSecurityNotifier : IAccountSecurityNotifier
+        {
+            public void Notify(ulong accountId, AccountSecurityChangeType changeType) { }
         }
 
         private sealed class FakeFrontendClient : IFrontendClient

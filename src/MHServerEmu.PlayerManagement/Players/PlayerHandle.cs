@@ -173,7 +173,7 @@ namespace MHServerEmu.PlayerManagement.Players
             if (lockScope.LockTaken == false)
                 return Logger.ErrorReturn(false, $"LoadPlayerData(): Timed out acquiring lock for [{account}]");
 
-            if (AccountManager.LoadPlayerDataForAccount(account) == false)
+            if (PlayerManagerService.Instance.AccountManager.LoadPlayerDataForAccount(account) == false)
                 return Logger.WarnReturn(false, $"LoadPlayerData(): Failed to load player data for account [{account}] from the database");
 
             Logger.Info($"Loaded player data for account [{account}] from the database");

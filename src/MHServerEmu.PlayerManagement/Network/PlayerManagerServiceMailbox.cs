@@ -578,7 +578,7 @@ namespace MHServerEmu.PlayerManagement.Network
                         break;
                     }
 
-                    resultCode = (int)AccountManager.CreateAccount(email, playerName, password);
+                    resultCode = (int)_playerManager.AccountManager.CreateAccount(email, playerName, password);
                     break;
 
                 case AccountOperation.SetPlayerName:
@@ -588,7 +588,7 @@ namespace MHServerEmu.PlayerManagement.Network
                         break;
                     }
 
-                    resultCode = (int)AccountManager.ChangeAccountPlayerName(email, playerName);
+                    resultCode = (int)_playerManager.AccountManager.ChangeAccountPlayerName(email, playerName);
                     break;
 
                 case AccountOperation.SetPassword:
@@ -598,7 +598,7 @@ namespace MHServerEmu.PlayerManagement.Network
                         break;
                     }
 
-                    resultCode = (int)AccountManager.ChangeAccountPassword(email, password);
+                    resultCode = (int)_playerManager.AccountManager.ChangeAccountPassword(email, password);
                     break;
 
                 case AccountOperation.SetUserLevel:
@@ -608,7 +608,7 @@ namespace MHServerEmu.PlayerManagement.Network
                         break;
                     }
 
-                    resultCode = (int)AccountManager.SetAccountUserLevel(email, userLevel);
+                    resultCode = (int)_playerManager.AccountManager.SetAccountUserLevel(email, userLevel);
                     break;
 
                 case AccountOperation.SetFlag:
@@ -618,7 +618,7 @@ namespace MHServerEmu.PlayerManagement.Network
                         break;
                     }
 
-                    resultCode = (int)AccountManager.SetFlag(email, flags);
+                    resultCode = (int)_playerManager.AccountManager.SetFlag(email, flags);
                     break;
 
                 case AccountOperation.ClearFlag:
@@ -628,7 +628,7 @@ namespace MHServerEmu.PlayerManagement.Network
                         break;
                     }
 
-                    resultCode = (int)AccountManager.ClearFlag(email, flags);
+                    resultCode = (int)_playerManager.AccountManager.ClearFlag(email, flags);
                     break;
 
                 default:

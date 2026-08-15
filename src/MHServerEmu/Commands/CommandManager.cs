@@ -17,15 +17,37 @@ namespace MHServerEmu.Commands
 
         private readonly Dictionary<string, CommandGroup> _commandGroupDict = new(StringComparer.OrdinalIgnoreCase);
         private IClientOutput _clientOutput;
+        private bool _initialized;
 
         public static CommandManager Instance { get; } = new();
 
         /// <summary>
         /// Constructs the <see cref="CommandManager"/> instance.
         /// </summary>
-        private CommandManager()
+        internal CommandManager() { }
+
+        internal int RegisteredGroupCount => _commandGroupDict.Count;
+
+        internal bool TryGetCommandGroup(string name, out CommandGroup commandGroup)
         {
+            return _commandGroupDict.TryGetValue(name, out commandGroup);
+        }
+
+        public bool Initialize(params CommandGroup[] suppliedGroups)
+        {
+            if (_initialized)
+                return false;
+
+            _initialized = true;
+
+            if (suppliedGroups != null)
+            {
+                foreach (CommandGroup commandGroup in suppliedGroups)
+                    RegisterCommandGroup(commandGroup);
+            }
+
             RegisterCommandGroupsFromAssembly(Assembly.GetExecutingAssembly());
+            return true;
         }
 
         /// <summary>
@@ -44,12 +66,29 @@ namespace MHServerEmu.Commands
 
                 CommandGroupDefinition groupDefinition = new(type);
                 if (_commandGroupDict.ContainsKey(groupDefinition.Name))
+                {
                     Logger.Warn($"RegisterCommandGroupsFromAssembly(): Command group {groupDefinition} is already registered");
+                    continue;
+                }
 
                 CommandGroup commandGroup = (CommandGroup)Activator.CreateInstance(type);
-                commandGroup.Register(groupDefinition);
-                _commandGroupDict.Add(groupDefinition.Name, commandGroup);
+                RegisterCommandGroup(commandGroup);
             }
+        }
+
+        public void RegisterCommandGroup(CommandGroup commandGroup)
+        {
+            ArgumentNullException.ThrowIfNull(commandGroup);
+
+            CommandGroupDefinition groupDefinition = new(commandGroup.GetType());
+            if (_commandGroupDict.ContainsKey(groupDefinition.Name))
+            {
+                Logger.Warn($"RegisterCommandGroupsFromAssembly(): Command group {groupDefinition} is already registered");
+                return;
+            }
+
+            commandGroup.Register(groupDefinition);
+            _commandGroupDict.Add(groupDefinition.Name, commandGroup);
         }
 
         /// <summary>

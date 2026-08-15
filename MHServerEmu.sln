@@ -33,6 +33,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MHServerEmu.PlayerManagemen
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MHServerEmu.WebFrontend.Tests", "src\MHServerEmu.WebFrontend.Tests\MHServerEmu.WebFrontend.Tests.csproj", "{F537F02A-1E79-4821-BDF1-0615C50FD601}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MHServerEmu.Tests", "src\MHServerEmu.Tests\MHServerEmu.Tests.csproj", "{C430BA7B-1EC7-4ADE-AACD-17A921A1A3D0}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -99,6 +101,10 @@ Global
 		{F537F02A-1E79-4821-BDF1-0615C50FD601}.Debug|x64.Build.0 = Debug|x64
 		{F537F02A-1E79-4821-BDF1-0615C50FD601}.Release|x64.ActiveCfg = Release|x64
 		{F537F02A-1E79-4821-BDF1-0615C50FD601}.Release|x64.Build.0 = Release|x64
+		{C430BA7B-1EC7-4ADE-AACD-17A921A1A3D0}.Debug|x64.ActiveCfg = Debug|x64
+		{C430BA7B-1EC7-4ADE-AACD-17A921A1A3D0}.Debug|x64.Build.0 = Debug|x64
+		{C430BA7B-1EC7-4ADE-AACD-17A921A1A3D0}.Release|x64.ActiveCfg = Release|x64
+		{C430BA7B-1EC7-4ADE-AACD-17A921A1A3D0}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
