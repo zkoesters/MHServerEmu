@@ -33,7 +33,7 @@ namespace MHServerEmu.DatabaseAccess.Json
 
             try
             {
-                json = JsonSerializer.Serialize(account, _options);
+                json = JsonSerializer.Serialize(DBAccountExport.FromAccount(account), _options);
             }
             catch (Exception e)
             {
