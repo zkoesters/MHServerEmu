@@ -16,8 +16,9 @@ namespace MHServerEmu.Commands
         private static readonly Logger Logger = LogManager.CreateLogger();
 
         private readonly Dictionary<string, CommandGroup> _commandGroupDict = new(StringComparer.OrdinalIgnoreCase);
+        private readonly object _commandGroupLock = new();
         private IClientOutput _clientOutput;
-        private bool _initialized;
+        private volatile bool _initialized;
 
         public static CommandManager Instance { get; } = new();
 
@@ -26,34 +27,64 @@ namespace MHServerEmu.Commands
         /// </summary>
         internal CommandManager() { }
 
-        internal int RegisteredGroupCount => _commandGroupDict.Count;
+        internal int RegisteredGroupCount
+        {
+            get
+            {
+                lock (_commandGroupLock)
+                    return _commandGroupDict.Count;
+            }
+        }
 
         internal bool TryGetCommandGroup(string name, out CommandGroup commandGroup)
         {
-            return _commandGroupDict.TryGetValue(name, out commandGroup);
+            lock (_commandGroupLock)
+                return _commandGroupDict.TryGetValue(name, out commandGroup);
         }
 
         public bool Initialize(params CommandGroup[] suppliedGroups)
         {
-            if (_initialized)
-                return false;
-
-            _initialized = true;
-
-            if (suppliedGroups != null)
+            lock (_commandGroupLock)
             {
-                foreach (CommandGroup commandGroup in suppliedGroups)
-                    RegisterCommandGroup(commandGroup);
-            }
+                if (_initialized)
+                    return false;
 
-            RegisterCommandGroupsFromAssembly(Assembly.GetExecutingAssembly());
-            return true;
+                HashSet<string> existingGroupNames = new(_commandGroupDict.Keys, StringComparer.OrdinalIgnoreCase);
+                try
+                {
+                    if (suppliedGroups != null)
+                    {
+                        foreach (CommandGroup commandGroup in suppliedGroups)
+                            RegisterCommandGroupLocked(commandGroup);
+                    }
+
+                    RegisterCommandGroupsFromAssemblyLocked(Assembly.GetExecutingAssembly());
+                    _initialized = true;
+                    return true;
+                }
+                catch
+                {
+                    foreach (string groupName in _commandGroupDict.Keys.Where(groupName => existingGroupNames.Contains(groupName) == false).ToList())
+                        _commandGroupDict.Remove(groupName);
+
+                    _initialized = false;
+                    throw;
+                }
+            }
         }
 
         /// <summary>
         /// Registers all <see cref="CommandGroup"/> classes in the provided <see cref="Assembly"/>.
         /// </summary>
         public void RegisterCommandGroupsFromAssembly(Assembly assembly)
+        {
+            ArgumentNullException.ThrowIfNull(assembly);
+
+            lock (_commandGroupLock)
+                RegisterCommandGroupsFromAssemblyLocked(assembly);
+        }
+
+        private void RegisterCommandGroupsFromAssemblyLocked(Assembly assembly)
         {
             // Find and register command group classes using reflection
             foreach (Type type in assembly.GetTypes())
@@ -71,12 +102,21 @@ namespace MHServerEmu.Commands
                     continue;
                 }
 
+                if (type.GetConstructor(Type.EmptyTypes) == null)
+                    continue;
+
                 CommandGroup commandGroup = (CommandGroup)Activator.CreateInstance(type);
-                RegisterCommandGroup(commandGroup);
+                RegisterCommandGroupLocked(commandGroup);
             }
         }
 
         public void RegisterCommandGroup(CommandGroup commandGroup)
+        {
+            lock (_commandGroupLock)
+                RegisterCommandGroupLocked(commandGroup);
+        }
+
+        private void RegisterCommandGroupLocked(CommandGroup commandGroup)
         {
             ArgumentNullException.ThrowIfNull(commandGroup);
 
@@ -84,7 +124,7 @@ namespace MHServerEmu.Commands
             if (_commandGroupDict.ContainsKey(groupDefinition.Name))
             {
                 Logger.Warn($"RegisterCommandGroupsFromAssembly(): Command group {groupDefinition} is already registered");
-                return;
+                throw new InvalidOperationException($"Command group {groupDefinition} is already registered.");
             }
 
             commandGroup.Register(groupDefinition);
@@ -104,6 +144,9 @@ namespace MHServerEmu.Commands
         /// </summary>
         public bool TryParse(string input, NetClient client = null)
         {
+            if (_initialized == false)
+                return false;
+
             // Extract the command and its parameters from our input string
             if (ExtractCommandAndParameters(input, out string command, out string parameters) == false)
             {
