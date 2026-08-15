@@ -39,6 +39,31 @@ When you connect to the server from another machine, use the IP address you ente
 
 Setting the server up for connections outside of your local network requires the same steps as above, but instead of a local IP address you need to use a publicly accessible address or a domain name pointing to that address. You may also need to expose ports `443` for the auth server and `4306` for the frontend server. The latter port is configurable in `Config.ini`.
 
+## Configuring The Web Frontend
+
+For an internet-facing authentication endpoint, use the Phase0 Portal profile. It exposes the game login and MTX routes only; legacy account management, status, metrics, API, and dashboard routes return `404 Not Found` and there is no private Portal administration application.
+
+```ini
+[WebFrontend]
+DeploymentProfile=Portal
+Address=localhost
+Port=8080
+TrustedProxyNetworks=127.0.0.1/32,::1/128
+EnableLoginRateLimit=true
+LoginRateLimitCostMS=30000
+LoginRateLimitBurst=10
+EnableAccountCreationRateLimit=true
+AccountCreationRateLimitCostMS=300000
+AccountCreationRateLimitBurst=3
+MaxRequestBodyBytes=16384
+RequestBodyReadTimeoutMS=10000
+JsonMaxDepth=32
+```
+
+`TrustedProxyNetworks` is a comma-separated allowlist of reverse-proxy networks. The default trusts only loopback. Add only the proxy that connects directly to MHServerEmu, and ensure that proxy controls `X-Forwarded-For`. Do not put client networks in this setting. The listed limits give login attempts a 30-second cost with burst 10, account creation a 5-minute cost with burst 3, and cap bodies at 16 KiB with a 10-second read timeout and JSON depth 32.
+
+The JSON development database does not verify credentials and must not be publicly exposed. Use the SQLite account database for public deployments. See [Security](./../ServerEmu/Security.md) for the complete deployment boundary and legacy profile caveats.
+
 ## Managing Accounts
 
 You can create and manage accounts by using `!` commands in the server console or the in-game chat window. Here are some commands to get you started:

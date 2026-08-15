@@ -18,6 +18,7 @@ MHServerEmu-specific topics.
 
 - [Server Commands](./ServerEmu/ServerCommands.md) - a list of available server commands.
 - [Web API](./ServerEmu/WebApi.md) - web API documentation.
+- [Security](./ServerEmu/Security.md) - deployment profiles, web limits, and account security behavior.
 
 ## Game
 

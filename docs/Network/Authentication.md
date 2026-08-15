@@ -145,6 +145,10 @@ It is unclear what the purpose of `SessionEncryptionChanged` is, but setting `ra
 
 After receiving the `SessionEncryptionChanged` message, the clients proceeds to establish connections with the Player Manager and the Grouping Manager using `InitialCliendHandshake` messages.
 
+## Session Revocation
+
+When a password change, account status change, or user-level change is successfully committed, the server revokes all pending and active sessions for that account and disconnects its active clients. New accounts and password changes require passwords from 12 through 64 characters, but existing legacy accounts with shorter passwords remain able to log in.
+
 ```protobuf
 message InitialClientHandshake {
     required FrontendProtocolVersion    protocolVersion    = 1 [default = CURRENT_VERSION];
