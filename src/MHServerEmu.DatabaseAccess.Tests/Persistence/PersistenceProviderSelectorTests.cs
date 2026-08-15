@@ -42,6 +42,9 @@ namespace MHServerEmu.DatabaseAccess.Tests.Persistence
 
         [Theory]
         [InlineData("Unknown")]
+        [InlineData("0")]
+        [InlineData("1")]
+        [InlineData("2")]
         [InlineData("3")]
         [InlineData("-1")]
         public void TrySelect_UnknownOrNumericProvider_ReturnsError(string configuredProvider)
