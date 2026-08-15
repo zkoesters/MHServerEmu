@@ -313,6 +313,17 @@ namespace MHServerEmu.PlayerManagement.Auth
             }
         }
 
+        internal void RemovePendingSessionForTesting(ulong sessionId)
+        {
+            RemovePendingSession(sessionId);
+        }
+
+        internal bool TryGetPlatformTicketForTesting(string platformTicket, out ulong sessionId)
+        {
+            lock (_sessionLock)
+                return _platformTicketManager.TryGetValue(platformTicket, out sessionId);
+        }
+
         private void PurgeExpiredSessions()
         {
             lock (_sessionLock)
@@ -364,7 +375,10 @@ namespace MHServerEmu.PlayerManagement.Auth
         private void RemovePendingSession(ulong sessionId)
         {
             lock (_sessionLock)
-                _pendingSessionDict.Remove(sessionId);
+            {
+                if (_pendingSessionDict.Remove(sessionId, out ClientSession session))
+                    _platformTicketManager.RemoveToken(session.PlatformTicket);
+            }
         }
     }
 }
