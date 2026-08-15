@@ -53,10 +53,11 @@ namespace MHServerEmu.PlayerManagement
         /// <summary>
         /// Constructs a new <see cref="PlayerManagerService"/> instance.
         /// </summary>
-        public PlayerManagerService(AccountManager accountManager, IPlayerStore playerStore, PersistenceCapabilities persistenceCapabilities)
+        public PlayerManagerService(AccountManager accountManager, IPlayerStore playerStore, IGuildStore guildStore, PersistenceCapabilities persistenceCapabilities)
         {
             AccountManager = accountManager ?? throw new ArgumentNullException(nameof(accountManager));
             PlayerStore = playerStore ?? throw new ArgumentNullException(nameof(playerStore));
+            ArgumentNullException.ThrowIfNull(guildStore);
             PersistenceCapabilities = persistenceCapabilities ?? throw new ArgumentNullException(nameof(persistenceCapabilities));
             Config = ConfigManager.Instance.GetConfig<PlayerManagerConfig>();
             PlayerNameCache = new(PlayerStore);
@@ -70,7 +71,7 @@ namespace MHServerEmu.PlayerManagement
             ClientManager = new(this, PlayerStore);
             CommunityRegistry = new(this);
             PartyManager = new(this);
-            GuildManager = new(this);
+            GuildManager = new(this, guildStore, PlayerNameCache);
             RegionRequestQueueManager = new(this);
 
             EventScheduler = new();
