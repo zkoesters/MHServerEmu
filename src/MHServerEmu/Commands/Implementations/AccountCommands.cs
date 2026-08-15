@@ -15,6 +15,13 @@ namespace MHServerEmu.Commands.Implementations
     [CommandGroupDescription("Account management commands.")]
     public class AccountCommands : CommandGroup
     {
+        private readonly AccountManager _accountManager;
+
+        public AccountCommands(AccountManager accountManager)
+        {
+            _accountManager = accountManager ?? throw new ArgumentNullException(nameof(accountManager));
+        }
+
         [Command("create")]
         [CommandDescription("Creates a new account.")]
         [CommandUsage("account create [email] [playerName] [password]")]
@@ -25,7 +32,7 @@ namespace MHServerEmu.Commands.Implementations
             string playerName = @params[1];
             string password = @params[2];
 
-            AccountOperationResult result = AccountManager.CreateAccount(email, playerName, password);
+            AccountOperationResult result = _accountManager.CreateAccount(email, playerName, password);
             if (result != AccountOperationResult.Success)
             {
                 string errorText = AccountManager.GetOperationResultString(result, email, playerName);
@@ -49,7 +56,7 @@ namespace MHServerEmu.Commands.Implementations
             if (client != null && account.UserLevel < AccountUserLevel.Moderator && email != account.Email)
                 return "You are allowed to change player name only for your own account.";
 
-            AccountOperationResult result = AccountManager.ChangeAccountPlayerName(email, playerName);
+            AccountOperationResult result = _accountManager.ChangeAccountPlayerName(email, playerName);
             if (result != AccountOperationResult.Success)
             {
                 string errorText = AccountManager.GetOperationResultString(result, email, playerName);
@@ -73,7 +80,7 @@ namespace MHServerEmu.Commands.Implementations
             if (client != null && account.UserLevel < AccountUserLevel.Moderator && email != account.Email)
                 return "You are allowed to change password only for your own account.";
 
-            AccountOperationResult result = AccountManager.ChangeAccountPassword(email, password);
+            AccountOperationResult result = _accountManager.ChangeAccountPassword(email, password);
             if (result != AccountOperationResult.Success)
             {
                 string errorText = AccountManager.GetOperationResultString(result, email);
@@ -109,7 +116,7 @@ namespace MHServerEmu.Commands.Implementations
             if (userLevel > AccountUserLevel.Admin)
                 return "Invalid arguments. Type 'help account userlevel' to get help.";
 
-            AccountOperationResult result = AccountManager.SetAccountUserLevel(email, userLevel);
+            AccountOperationResult result = _accountManager.SetAccountUserLevel(email, userLevel);
             if (result != AccountOperationResult.Success)
             {
                 string errorText = AccountManager.GetOperationResultString(result, email);
@@ -127,7 +134,7 @@ namespace MHServerEmu.Commands.Implementations
         public string Verify(string[] @params, NetClient client)
         {
             var loginDataPB = LoginDataPB.CreateBuilder().SetEmailAddress(@params[0]).SetPassword(@params[1]).Build();
-            AuthStatusCode statusCode = AccountManager.TryGetAccountByLoginDataPB(loginDataPB, false, out _);
+            AuthStatusCode statusCode = _accountManager.TryGetAccountByLoginDataPB(loginDataPB, false, out _);
 
             if (statusCode == AuthStatusCode.Success)
                 return "Account credentials are valid.";
@@ -223,9 +230,9 @@ namespace MHServerEmu.Commands.Implementations
             return string.Empty;
         }
 
-        private static string SetAccountFlag(string email, AccountFlags flag)
+        private string SetAccountFlag(string email, AccountFlags flag)
         {
-            AccountOperationResult result = AccountManager.SetFlag(email, flag);
+            AccountOperationResult result = _accountManager.SetFlag(email, flag);
             if (result != AccountOperationResult.Success)
             {
                 string errorText = AccountManager.GetOperationResultString(result, email);
@@ -235,9 +242,9 @@ namespace MHServerEmu.Commands.Implementations
             return $"Successfully set flag {flag} for account {email}.";
         }
 
-        private static string ClearAccountFlag(string email, AccountFlags flag)
+        private string ClearAccountFlag(string email, AccountFlags flag)
         {
-            AccountOperationResult result = AccountManager.ClearFlag(email, flag);
+            AccountOperationResult result = _accountManager.ClearFlag(email, flag);
             if (result != AccountOperationResult.Success)
             {
                 string errorText = AccountManager.GetOperationResultString(result, email);

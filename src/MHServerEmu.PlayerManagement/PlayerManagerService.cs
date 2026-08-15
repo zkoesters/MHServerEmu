@@ -3,6 +3,7 @@ using Gazillion;
 using MHServerEmu.Core.Config;
 using MHServerEmu.Core.Logging;
 using MHServerEmu.Core.Network;
+using MHServerEmu.DatabaseAccess.Persistence;
 using MHServerEmu.Games;
 using MHServerEmu.PlayerManagement.Auth;
 using MHServerEmu.PlayerManagement.Games;
@@ -29,6 +30,8 @@ namespace MHServerEmu.PlayerManagement
         internal static PlayerManagerService Instance { get; private set; }     // Naughty singleton-like access without being an actual singleton
 
         internal SessionManager SessionManager { get; }
+        internal AccountManager AccountManager { get; }
+        internal PersistenceCapabilities PersistenceCapabilities { get; }
         internal LoginQueueManager LoginQueueManager { get; }
         internal GameHandleManager GameHandleManager { get; }
         internal WorldManager WorldManager { get; }
@@ -47,8 +50,10 @@ namespace MHServerEmu.PlayerManagement
         /// <summary>
         /// Constructs a new <see cref="PlayerManagerService"/> instance.
         /// </summary>
-        public PlayerManagerService()
+        public PlayerManagerService(AccountManager accountManager, PersistenceCapabilities persistenceCapabilities)
         {
+            AccountManager = accountManager ?? throw new ArgumentNullException(nameof(accountManager));
+            PersistenceCapabilities = persistenceCapabilities ?? throw new ArgumentNullException(nameof(persistenceCapabilities));
             Config = ConfigManager.Instance.GetConfig<PlayerManagerConfig>();
 
             _serviceMailbox = new(this);

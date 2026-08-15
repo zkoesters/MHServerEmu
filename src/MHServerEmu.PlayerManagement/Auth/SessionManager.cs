@@ -20,6 +20,8 @@ namespace MHServerEmu.PlayerManagement.Auth
         private static readonly TimeSpan PendingSessionLifespan = TimeSpan.FromSeconds(60);
 
         private readonly PlayerManagerService _playerManager;
+        private readonly AccountManager _accountManager;
+        private readonly bool _verifyClientTokens;
         private readonly object _sessionLock = new();
 
         private readonly IdGenerator _idGenerator = new(IdType.Session, 0);
@@ -44,13 +46,15 @@ namespace MHServerEmu.PlayerManagement.Auth
         /// </summary>
         public SessionManager(PlayerManagerService playerManager)
         {
-            _playerManager = playerManager;
+            _playerManager = playerManager ?? throw new ArgumentNullException(nameof(playerManager));
             WhitelistEnabled = playerManager.Config.UseWhitelist;
         }
 
-        internal SessionManager(bool whitelistEnabled)
+        internal SessionManager(bool whitelistEnabled, AccountManager accountManager, bool verifyClientTokens)
         {
             WhitelistEnabled = whitelistEnabled;
+            _accountManager = accountManager ?? throw new ArgumentNullException(nameof(accountManager));
+            _verifyClientTokens = verifyClientTokens;
         }
 
         public void SetWhitelistEnabled(bool enable)
@@ -110,7 +114,7 @@ namespace MHServerEmu.PlayerManagement.Auth
             }
 
             // Verify credentials
-            AuthStatusCode statusCode = AccountManager.TryGetAccountByLoginDataPB(loginDataPB, WhitelistEnabled, out DBAccount account);
+            AuthStatusCode statusCode = (_playerManager?.AccountManager ?? _accountManager).TryGetAccountByLoginDataPB(loginDataPB, WhitelistEnabled, out DBAccount account);
 
             if (statusCode != AuthStatusCode.Success)
                 return statusCode;
@@ -174,7 +178,7 @@ namespace MHServerEmu.PlayerManagement.Auth
             }
 
             // Verify the token if enabled
-            if (_playerManager.Config.UseJsonDBManager == false)
+            if (_playerManager?.PersistenceCapabilities.VerifyClientTokens ?? _verifyClientTokens)
             {
                 // Try to decrypt the token (we avoid extra allocations and copying by accessing buffers directly with Unsafe.GetBuffer())
                 byte[] encryptedToken = ByteString.Unsafe.GetBuffer(credentials.EncryptedToken);

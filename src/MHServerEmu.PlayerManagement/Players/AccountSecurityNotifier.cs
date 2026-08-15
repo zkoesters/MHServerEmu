@@ -2,12 +2,12 @@ using MHServerEmu.Core.Network;
 
 namespace MHServerEmu.PlayerManagement.Players
 {
-    internal interface IAccountSecurityNotifier
+    public interface IAccountSecurityNotifier
     {
         void Notify(ulong accountId, AccountSecurityChangeType changeType);
     }
 
-    internal sealed class ServerAccountSecurityNotifier : IAccountSecurityNotifier
+    public sealed class ServerAccountSecurityNotifier : IAccountSecurityNotifier
     {
         public void Notify(ulong accountId, AccountSecurityChangeType changeType)
         {

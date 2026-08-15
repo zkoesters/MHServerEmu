@@ -4,6 +4,7 @@ using MHServerEmu.Core.Logging;
 using MHServerEmu.Core.Network;
 using MHServerEmu.DatabaseAccess;
 using MHServerEmu.DatabaseAccess.Models;
+using MHServerEmu.DatabaseAccess.Persistence;
 using MHServerEmu.PlayerManagement.Auth;
 
 namespace MHServerEmu.PlayerManagement.Players
@@ -26,7 +27,7 @@ namespace MHServerEmu.PlayerManagement.Players
     /// <summary>
     /// Provides <see cref="DBAccount"/> management functions.
     /// </summary>
-    public static class AccountManager
+    public sealed class AccountManager
     {
         private const int EmailMaxLength = 320;
         private const int PasswordMinLength = 12;
@@ -34,24 +35,33 @@ namespace MHServerEmu.PlayerManagement.Players
 
         private static readonly Logger Logger = LogManager.CreateLogger();
 
-        internal static IAccountSecurityNotifier SecurityNotifier { get; set; } = new ServerAccountSecurityNotifier();
+        private readonly IAccountStore _accounts;
+        private readonly IPlayerStore _players;
+        private readonly PersistenceCapabilities _capabilities;
+        private readonly IAccountSecurityNotifier _securityNotifier;
+
+        public AccountManager(IAccountStore accounts, IPlayerStore players, PersistenceCapabilities capabilities, IAccountSecurityNotifier securityNotifier)
+        {
+            _accounts = accounts ?? throw new ArgumentNullException(nameof(accounts));
+            _players = players ?? throw new ArgumentNullException(nameof(players));
+            _capabilities = capabilities ?? throw new ArgumentNullException(nameof(capabilities));
+            _securityNotifier = securityNotifier ?? throw new ArgumentNullException(nameof(securityNotifier));
+        }
 
         /// <summary>
         /// Queries a <see cref="DBAccount"/> using the provided <see cref="LoginDataPB"/> instance.
         /// <see cref="AuthStatusCode"/> indicates the outcome of the query.
         /// </summary>
-        public static AuthStatusCode TryGetAccountByLoginDataPB(LoginDataPB loginDataPB, bool useWhitelist, out DBAccount account)
+        public AuthStatusCode TryGetAccountByLoginDataPB(LoginDataPB loginDataPB, bool useWhitelist, out DBAccount account)
         {
             account = null;
 
-            IDBManager dbManager = IDBManager.Instance;
-
             // Try to query an account to check
-            if (dbManager.TryQueryAccountByEmail(loginDataPB.EmailAddress, out DBAccount accountToCheck) == false)
+            if (_accounts.TryQueryAccountByEmail(loginDataPB.EmailAddress, out DBAccount accountToCheck) == false)
                 return AuthStatusCode.IncorrectUsernameOrPassword403;
 
             // Check the account we queried if our DB manager requires it
-            if (dbManager.VerifyAccounts)
+            if (_capabilities.VerifyAccountCredentials)
             {
                 if (CryptographyHelper.VerifyPassword(loginDataPB.Password, accountToCheck.PasswordHash, accountToCheck.Salt) == false)
                     return AuthStatusCode.IncorrectUsernameOrPassword403;
@@ -77,23 +87,21 @@ namespace MHServerEmu.PlayerManagement.Players
         /// <summary>
         /// Queries a <see cref="DBAccount"/> using the provided email. Returns <see langword="true"/> if successful.
         /// </summary>
-        public static bool TryGetAccountByEmail(string email, out DBAccount account)
+        public bool TryGetAccountByEmail(string email, out DBAccount account)
         {
-            return IDBManager.Instance.TryQueryAccountByEmail(email, out account);
+            return _accounts.TryQueryAccountByEmail(email, out account);
         }
 
-        public static bool LoadPlayerDataForAccount(DBAccount account)
+        public bool LoadPlayerDataForAccount(DBAccount account)
         {
-            return IDBManager.Instance.LoadPlayerData(account);
+            return _players.LoadPlayerData(account);
         }
 
         /// <summary>
         /// Creates a new <see cref="DBAccount"/> and inserts it into the database. Returns <see langword="true"/> if successful.
         /// </summary>
-        public static AccountOperationResult CreateAccount(string email, string playerName, string password)
+        public AccountOperationResult CreateAccount(string email, string playerName, string password)
         {
-            IDBManager dbManager = IDBManager.Instance;
-
             email = email.ToLowerInvariant();
 
             // Validate input before doing database queries
@@ -107,16 +115,16 @@ namespace MHServerEmu.PlayerManagement.Players
             if (ValidatePassword(password) == false)
                 return AccountOperationResult.PasswordInvalid;
 
-            if (dbManager.TryQueryAccountByEmail(email, out _))
+            if (_accounts.TryQueryAccountByEmail(email, out _))
                 return AccountOperationResult.EmailAlreadyUsed;
 
-            if (dbManager.TryGetPlayerDbIdByName(playerName, out _, out _))
+            if (_players.TryGetPlayerDbIdByName(playerName, out _, out _))
                 return AccountOperationResult.PlayerNameAlreadyUsed;
 
             // Create a new account and insert it into the database
             DBAccount account = new(email, playerName, password);
 
-            if (dbManager.InsertAccount(account) == false)
+            if (_accounts.InsertAccount(account) == false)
                 return AccountOperationResult.DatabaseError;
 
             Logger.Info($"CreateAccount(): account=[{account}]");
@@ -128,24 +136,22 @@ namespace MHServerEmu.PlayerManagement.Players
         /// <summary>
         /// Changes the player name of the <see cref="DBAccount"/> with the specified email. Returns <see langword="true"/> if successful.
         /// </summary>
-        public static AccountOperationResult ChangeAccountPlayerName(string email, string newPlayerName)
+        public AccountOperationResult ChangeAccountPlayerName(string email, string newPlayerName)
         {
-            IDBManager dbManager = IDBManager.Instance;
-
             AccountOperationResult playerNameResult = ValidatePlayerName(newPlayerName);
             if (playerNameResult != AccountOperationResult.Success)
                 return playerNameResult;
 
-            if (dbManager.TryQueryAccountByEmail(email, out DBAccount account) == false)
+            if (_accounts.TryQueryAccountByEmail(email, out DBAccount account) == false)
                 return AccountOperationResult.EmailNotFound;
 
-            if (dbManager.TryGetPlayerDbIdByName(newPlayerName, out _, out _))
+            if (_players.TryGetPlayerDbIdByName(newPlayerName, out _, out _))
                 return AccountOperationResult.PlayerNameAlreadyUsed;
 
             // Write the new name to the database
             string oldPlayerName = account.PlayerName;
             account.PlayerName = newPlayerName;
-            if (TryUpdateAccount(dbManager, account) == false)
+            if (TryUpdateAccount(account) == false)
             {
                 account.PlayerName = oldPlayerName;
                 return AccountOperationResult.DatabaseError;
@@ -162,15 +168,13 @@ namespace MHServerEmu.PlayerManagement.Players
         /// <summary>
         /// Changes the password of the <see cref="DBAccount"/> with the specified email. Returns <see langword="true"/> if successful.
         /// </summary>
-        public static AccountOperationResult ChangeAccountPassword(string email, string newPassword)
+        public AccountOperationResult ChangeAccountPassword(string email, string newPassword)
         {
-            IDBManager dbManager = IDBManager.Instance;
-
             // Validate input before doing database queries
             if (ValidatePassword(newPassword) == false)
                 return AccountOperationResult.PasswordInvalid;
 
-            if (dbManager.TryQueryAccountByEmail(email, out DBAccount account) == false)
+            if (_accounts.TryQueryAccountByEmail(email, out DBAccount account) == false)
                 return AccountOperationResult.EmailNotFound;
 
             byte[] oldPasswordHash = account.PasswordHash;
@@ -180,7 +184,7 @@ namespace MHServerEmu.PlayerManagement.Players
             account.PasswordHash = CryptographyHelper.HashPassword(newPassword, out byte[] salt);
             account.Salt = salt;
             account.Flags &= ~AccountFlags.IsPasswordExpired;
-            if (TryUpdateAccount(dbManager, account) == false)
+            if (TryUpdateAccount(account) == false)
             {
                 account.PasswordHash = oldPasswordHash;
                 account.Salt = oldSalt;
@@ -188,7 +192,7 @@ namespace MHServerEmu.PlayerManagement.Players
                 return AccountOperationResult.DatabaseError;
             }
 
-            SecurityNotifier.Notify((ulong)account.Id, AccountSecurityChangeType.CredentialChanged);
+            _securityNotifier.Notify((ulong)account.Id, AccountSecurityChangeType.CredentialChanged);
             Logger.Info($"ChangeAccountPassword(): account=[{account}]");
             return AccountOperationResult.Success;
         }
@@ -196,23 +200,21 @@ namespace MHServerEmu.PlayerManagement.Players
         /// <summary>
         /// Changes the <see cref="AccountUserLevel"/> of the <see cref="DBAccount"/> with the specified email. Returns <see langword="true"/> if successful.
         /// </summary>
-        public static AccountOperationResult SetAccountUserLevel(string email, AccountUserLevel userLevel)
+        public AccountOperationResult SetAccountUserLevel(string email, AccountUserLevel userLevel)
         {
-            IDBManager dbManager = IDBManager.Instance;
-
             // Make sure the specified account exists
-            if (dbManager.TryQueryAccountByEmail(email, out DBAccount account) == false)
+            if (_accounts.TryQueryAccountByEmail(email, out DBAccount account) == false)
                 return AccountOperationResult.EmailNotFound;
 
             AccountUserLevel oldUserLevel = account.UserLevel;
             account.UserLevel = userLevel;
-            if (TryUpdateAccount(dbManager, account) == false)
+            if (TryUpdateAccount(account) == false)
             {
                 account.UserLevel = oldUserLevel;
                 return AccountOperationResult.DatabaseError;
             }
 
-            SecurityNotifier.Notify((ulong)account.Id, AccountSecurityChangeType.AuthorizationChanged);
+            _securityNotifier.Notify((ulong)account.Id, AccountSecurityChangeType.AuthorizationChanged);
             Logger.Info($"SetAccountUserLevel(): account=[{account}], userLevel=[{userLevel}]");
             return AccountOperationResult.Success;
         }
@@ -220,9 +222,9 @@ namespace MHServerEmu.PlayerManagement.Players
         /// <summary>
         /// Sets the specified <see cref="AccountFlags"/> for the <see cref="DBAccount"/> with the provided email.
         /// </summary>
-        public static AccountOperationResult SetFlag(string email, AccountFlags flag)
+        public AccountOperationResult SetFlag(string email, AccountFlags flag)
         {
-            if (IDBManager.Instance.TryQueryAccountByEmail(email, out DBAccount account) == false)
+            if (_accounts.TryQueryAccountByEmail(email, out DBAccount account) == false)
                 return AccountOperationResult.EmailNotFound;
 
             return SetFlag(account, flag);
@@ -231,20 +233,20 @@ namespace MHServerEmu.PlayerManagement.Players
         /// <summary>
         /// Sets the specified <see cref="AccountFlags"/> for the provided <see cref="DBAccount"/>.
         /// </summary>
-        public static AccountOperationResult SetFlag(DBAccount account, AccountFlags flag)
+        public AccountOperationResult SetFlag(DBAccount account, AccountFlags flag)
         {
             if (account.Flags.HasFlag(flag))
                 return AccountOperationResult.FlagAlreadySet;
 
             AccountFlags oldFlags = account.Flags;
             account.Flags |= flag;
-            if (TryUpdateAccount(IDBManager.Instance, account) == false)
+            if (TryUpdateAccount(account) == false)
             {
                 account.Flags = oldFlags;
                 return AccountOperationResult.DatabaseError;
             }
 
-            SecurityNotifier.Notify((ulong)account.Id, AccountSecurityChangeType.AccountStatusChanged);
+            _securityNotifier.Notify((ulong)account.Id, AccountSecurityChangeType.AccountStatusChanged);
             Logger.Info($"SetFlag(): account=[{account}], flag=[{flag}]");
             return AccountOperationResult.Success;
         }
@@ -252,9 +254,9 @@ namespace MHServerEmu.PlayerManagement.Players
         /// <summary>
         /// Clears the specified <see cref="AccountFlags"/> for the <see cref="DBAccount"/> with the provided email.
         /// </summary>
-        public static AccountOperationResult ClearFlag(string email, AccountFlags flag)
+        public AccountOperationResult ClearFlag(string email, AccountFlags flag)
         {
-            if (IDBManager.Instance.TryQueryAccountByEmail(email, out DBAccount account) == false)
+            if (_accounts.TryQueryAccountByEmail(email, out DBAccount account) == false)
                 return AccountOperationResult.EmailNotFound;
 
             return ClearFlag(account, flag);
@@ -263,20 +265,20 @@ namespace MHServerEmu.PlayerManagement.Players
         /// <summary>
         /// Clears the specified <see cref="AccountFlags"/> for the provided <see cref="DBAccount"/>.
         /// </summary>
-        public static AccountOperationResult ClearFlag(DBAccount account, AccountFlags flag)
+        public AccountOperationResult ClearFlag(DBAccount account, AccountFlags flag)
         {
             if (account.Flags.HasFlag(flag) == false)
                 return AccountOperationResult.FlagNotSet;
 
             AccountFlags oldFlags = account.Flags;
             account.Flags &= ~flag;
-            if (TryUpdateAccount(IDBManager.Instance, account) == false)
+            if (TryUpdateAccount(account) == false)
             {
                 account.Flags = oldFlags;
                 return AccountOperationResult.DatabaseError;
             }
 
-            SecurityNotifier.Notify((ulong)account.Id, AccountSecurityChangeType.AccountStatusChanged);
+            _securityNotifier.Notify((ulong)account.Id, AccountSecurityChangeType.AccountStatusChanged);
             Logger.Info($"ClearFlag(): account=[{account}], flag=[{flag}]");
             return AccountOperationResult.Success;
         }
@@ -351,11 +353,11 @@ namespace MHServerEmu.PlayerManagement.Players
             return password != null && password.Length >= PasswordMinLength && password.Length <= PasswordMaxLength;
         }
 
-        private static bool TryUpdateAccount(IDBManager dbManager, DBAccount account)
+        private bool TryUpdateAccount(DBAccount account)
         {
             try
             {
-                return dbManager.UpdateAccount(account);
+                return _accounts.UpdateAccount(account);
             }
             catch (Exception e)
             {

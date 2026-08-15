@@ -2,27 +2,21 @@ using Gazillion;
 using MHServerEmu.Core.Network;
 using MHServerEmu.DatabaseAccess;
 using MHServerEmu.DatabaseAccess.Models;
+using MHServerEmu.DatabaseAccess.Persistence;
 using MHServerEmu.PlayerManagement.Auth;
 using MHServerEmu.PlayerManagement.Players;
 
 namespace MHServerEmu.PlayerManagement.Tests
 {
-    [Collection("IDBManager")]
-    public class AccountManagerTests : IDisposable
+    public class AccountManagerTests
     {
-        private readonly IDBManager _previousDbManager;
         private readonly StubDBManager _dbManager = new();
+        private readonly RecordingAccountSecurityNotifier _notifier = new();
+        private readonly AccountManager _accountManager;
 
         public AccountManagerTests()
         {
-            _previousDbManager = IDBManager.Instance;
-            IDBManager.Instance = _dbManager;
-        }
-
-        public void Dispose()
-        {
-            IDBManager.Instance = _previousDbManager;
-            AccountManager.SecurityNotifier = new ServerAccountSecurityNotifier();
+            _accountManager = new(_dbManager, _dbManager, PersistenceCapabilities.SQLite, _notifier);
         }
 
         [Theory]
@@ -36,8 +30,8 @@ namespace MHServerEmu.PlayerManagement.Tests
             DBAccount existingAccount = new("existing@example.com", "Existing", "legacy");
             _dbManager.Accounts.Add(existingAccount.Email, existingAccount);
 
-            AccountOperationResult createResult = AccountManager.CreateAccount("new@example.com", "NewPlayer", password);
-            AccountOperationResult changeResult = AccountManager.ChangeAccountPassword(existingAccount.Email, password);
+            AccountOperationResult createResult = _accountManager.CreateAccount("new@example.com", "NewPlayer", password);
+            AccountOperationResult changeResult = _accountManager.ChangeAccountPassword(existingAccount.Email, password);
 
             AccountOperationResult expected = valid ? AccountOperationResult.Success : AccountOperationResult.PasswordInvalid;
             Assert.Equal(expected, createResult);
@@ -47,7 +41,7 @@ namespace MHServerEmu.PlayerManagement.Tests
         [Fact]
         public void ChangeAccountPassword_NullPassword_IsInvalid()
         {
-            Assert.Equal(AccountOperationResult.PasswordInvalid, AccountManager.ChangeAccountPassword("missing@example.com", null));
+            Assert.Equal(AccountOperationResult.PasswordInvalid, _accountManager.ChangeAccountPassword("missing@example.com", null));
         }
 
         [Fact]
@@ -61,7 +55,7 @@ namespace MHServerEmu.PlayerManagement.Tests
                 .SetPassword(password)
                 .Build();
 
-            AuthStatusCode result = AccountManager.TryGetAccountByLoginDataPB(loginData, false, out DBAccount authenticatedAccount);
+            AuthStatusCode result = _accountManager.TryGetAccountByLoginDataPB(loginData, false, out DBAccount authenticatedAccount);
 
             Assert.Equal(AuthStatusCode.Success, result);
             Assert.Same(account, authenticatedAccount);
@@ -83,7 +77,7 @@ namespace MHServerEmu.PlayerManagement.Tests
             _dbManager.UpdateAccountResult = false;
             _dbManager.ThrowOnUpdateAccount = throwOnUpdate;
 
-            AccountOperationResult result = AccountManager.ChangeAccountPassword(account.Email, "new-password1");
+            AccountOperationResult result = _accountManager.ChangeAccountPassword(account.Email, "new-password1");
 
             Assert.Equal(AccountOperationResult.DatabaseError, result);
             Assert.Equal(oldHash, account.PasswordHash);
@@ -113,10 +107,10 @@ namespace MHServerEmu.PlayerManagement.Tests
 
             AccountOperationResult result = mutation switch
             {
-                AccountMutation.PlayerName => AccountManager.ChangeAccountPlayerName(account.Email, "PlayerTwo"),
-                AccountMutation.UserLevel => AccountManager.SetAccountUserLevel(account.Email, AccountUserLevel.Admin),
-                AccountMutation.SetFlag => AccountManager.SetFlag(account.Email, AccountFlags.IsBanned),
-                AccountMutation.ClearFlag => AccountManager.ClearFlag(account.Email, AccountFlags.IsPasswordExpired),
+                AccountMutation.PlayerName => _accountManager.ChangeAccountPlayerName(account.Email, "PlayerTwo"),
+                AccountMutation.UserLevel => _accountManager.SetAccountUserLevel(account.Email, AccountUserLevel.Admin),
+                AccountMutation.SetFlag => _accountManager.SetFlag(account.Email, AccountFlags.IsBanned),
+                AccountMutation.ClearFlag => _accountManager.ClearFlag(account.Email, AccountFlags.IsPasswordExpired),
                 _ => throw new ArgumentOutOfRangeException(nameof(mutation))
             };
 
@@ -145,14 +139,14 @@ namespace MHServerEmu.PlayerManagement.Tests
             };
             _dbManager.Accounts.Add(account.Email, account);
             RecordingAccountSecurityNotifier notifier = new(() => _dbManager.UpdateAccountCallCount > 0);
-            AccountManager.SecurityNotifier = notifier;
+            AccountManager accountManager = CreateAccountManager(notifier);
 
             AccountOperationResult result = mutation switch
             {
-                AccountMutation.Password => AccountManager.ChangeAccountPassword(account.Email, "new-password1"),
-                AccountMutation.UserLevel => AccountManager.SetAccountUserLevel(account.Email, AccountUserLevel.Admin),
-                AccountMutation.SetFlag => AccountManager.SetFlag(account.Email, AccountFlags.IsBanned),
-                AccountMutation.ClearFlag => AccountManager.ClearFlag(account.Email, AccountFlags.IsPasswordExpired),
+                AccountMutation.Password => accountManager.ChangeAccountPassword(account.Email, "new-password1"),
+                AccountMutation.UserLevel => accountManager.SetAccountUserLevel(account.Email, AccountUserLevel.Admin),
+                AccountMutation.SetFlag => accountManager.SetFlag(account.Email, AccountFlags.IsBanned),
+                AccountMutation.ClearFlag => accountManager.ClearFlag(account.Email, AccountFlags.IsPasswordExpired),
                 _ => throw new ArgumentOutOfRangeException(nameof(mutation))
             };
 
@@ -181,18 +175,45 @@ namespace MHServerEmu.PlayerManagement.Tests
             _dbManager.UpdateAccountResult = false;
             _dbManager.ThrowOnUpdateAccount = throwOnUpdate;
             RecordingAccountSecurityNotifier notifier = new();
-            AccountManager.SecurityNotifier = notifier;
+            AccountManager accountManager = CreateAccountManager(notifier);
 
             _ = mutation switch
             {
-                AccountMutation.Password => AccountManager.ChangeAccountPassword(account.Email, "new-password1"),
-                AccountMutation.UserLevel => AccountManager.SetAccountUserLevel(account.Email, AccountUserLevel.Admin),
-                AccountMutation.SetFlag => AccountManager.SetFlag(account.Email, AccountFlags.IsBanned),
-                AccountMutation.ClearFlag => AccountManager.ClearFlag(account.Email, AccountFlags.IsPasswordExpired),
+                AccountMutation.Password => accountManager.ChangeAccountPassword(account.Email, "new-password1"),
+                AccountMutation.UserLevel => accountManager.SetAccountUserLevel(account.Email, AccountUserLevel.Admin),
+                AccountMutation.SetFlag => accountManager.SetFlag(account.Email, AccountFlags.IsBanned),
+                AccountMutation.ClearFlag => accountManager.ClearFlag(account.Email, AccountFlags.IsPasswordExpired),
                 _ => throw new ArgumentOutOfRangeException(nameof(mutation))
             };
 
             Assert.False(notifier.Notified);
+        }
+
+        [Fact]
+        public void TryGetAccountByLoginDataPB_JsonCapabilities_ReturnsAccountWithWrongPassword()
+        {
+            DBAccount account = new("account@example.com", "PlayerOne", "correct-password");
+            _dbManager.Accounts.Add(account.Email, account);
+            LoginDataPB loginData = LoginDataPB.CreateBuilder().SetEmailAddress(account.Email).SetPassword("wrong-password").Build();
+            AccountManager accountManager = new(_dbManager, _dbManager, PersistenceCapabilities.Json, _notifier);
+
+            AuthStatusCode result = accountManager.TryGetAccountByLoginDataPB(loginData, false, out DBAccount authenticatedAccount);
+
+            Assert.Equal(AuthStatusCode.Success, result);
+            Assert.Same(account, authenticatedAccount);
+        }
+
+        [Fact]
+        public void TryGetAccountByLoginDataPB_SQLiteCapabilities_RejectsWrongPassword()
+        {
+            DBAccount account = new("account@example.com", "PlayerOne", "correct-password");
+            _dbManager.Accounts.Add(account.Email, account);
+            LoginDataPB loginData = LoginDataPB.CreateBuilder().SetEmailAddress(account.Email).SetPassword("wrong-password").Build();
+
+            AuthStatusCode result = _accountManager.TryGetAccountByLoginDataPB(loginData, false, out DBAccount authenticatedAccount);
+
+            Assert.Equal(AuthStatusCode.IncorrectUsernameOrPassword403, result);
+            Assert.Null(authenticatedAccount);
         }
 
         public enum AccountMutation
@@ -202,6 +223,11 @@ namespace MHServerEmu.PlayerManagement.Tests
             UserLevel,
             SetFlag,
             ClearFlag
+        }
+
+        private AccountManager CreateAccountManager(IAccountSecurityNotifier notifier)
+        {
+            return new(_dbManager, _dbManager, PersistenceCapabilities.SQLite, notifier);
         }
 
         private sealed class RecordingAccountSecurityNotifier(Func<bool> wasCommitted = null) : IAccountSecurityNotifier
