@@ -1,4 +1,5 @@
 using Gazillion;
+using MHServerEmu.Core.Network;
 using MHServerEmu.DatabaseAccess;
 using MHServerEmu.DatabaseAccess.Models;
 using MHServerEmu.PlayerManagement.Auth;
@@ -21,6 +22,7 @@ namespace MHServerEmu.PlayerManagement.Tests
         public void Dispose()
         {
             IDBManager.Instance = _previousDbManager;
+            AccountManager.SecurityNotifier = new ServerAccountSecurityNotifier();
         }
 
         [Theory]
@@ -130,12 +132,92 @@ namespace MHServerEmu.PlayerManagement.Tests
             Assert.Equal("Password must be between 12 and 64 characters long.", AccountManager.GetOperationResultString(AccountOperationResult.PasswordInvalid));
         }
 
+        [Theory]
+        [InlineData(AccountMutation.Password, AccountSecurityChangeType.CredentialChanged)]
+        [InlineData(AccountMutation.UserLevel, AccountSecurityChangeType.AuthorizationChanged)]
+        [InlineData(AccountMutation.SetFlag, AccountSecurityChangeType.AccountStatusChanged)]
+        [InlineData(AccountMutation.ClearFlag, AccountSecurityChangeType.AccountStatusChanged)]
+        public void AccountSecurityMutation_UpdateSucceeds_NotifiesAfterCommit(AccountMutation mutation, AccountSecurityChangeType expectedChangeType)
+        {
+            DBAccount account = new("account@example.com", "PlayerOne", "old-password")
+            {
+                Flags = AccountFlags.IsPasswordExpired
+            };
+            _dbManager.Accounts.Add(account.Email, account);
+            RecordingAccountSecurityNotifier notifier = new(() => _dbManager.UpdateAccountCallCount > 0);
+            AccountManager.SecurityNotifier = notifier;
+
+            AccountOperationResult result = mutation switch
+            {
+                AccountMutation.Password => AccountManager.ChangeAccountPassword(account.Email, "new-password1"),
+                AccountMutation.UserLevel => AccountManager.SetAccountUserLevel(account.Email, AccountUserLevel.Admin),
+                AccountMutation.SetFlag => AccountManager.SetFlag(account.Email, AccountFlags.IsBanned),
+                AccountMutation.ClearFlag => AccountManager.ClearFlag(account.Email, AccountFlags.IsPasswordExpired),
+                _ => throw new ArgumentOutOfRangeException(nameof(mutation))
+            };
+
+            Assert.Equal(AccountOperationResult.Success, result);
+            Assert.Equal((ulong)account.Id, notifier.AccountId);
+            Assert.Equal(expectedChangeType, notifier.ChangeType);
+            Assert.True(notifier.NotifiedAfterCommit);
+        }
+
+        [Theory]
+        [InlineData(AccountMutation.Password, false)]
+        [InlineData(AccountMutation.Password, true)]
+        [InlineData(AccountMutation.UserLevel, false)]
+        [InlineData(AccountMutation.UserLevel, true)]
+        [InlineData(AccountMutation.SetFlag, false)]
+        [InlineData(AccountMutation.SetFlag, true)]
+        [InlineData(AccountMutation.ClearFlag, false)]
+        [InlineData(AccountMutation.ClearFlag, true)]
+        public void AccountSecurityMutation_UpdateFails_DoesNotNotify(AccountMutation mutation, bool throwOnUpdate)
+        {
+            DBAccount account = new("account@example.com", "PlayerOne", "old-password")
+            {
+                Flags = AccountFlags.IsPasswordExpired
+            };
+            _dbManager.Accounts.Add(account.Email, account);
+            _dbManager.UpdateAccountResult = false;
+            _dbManager.ThrowOnUpdateAccount = throwOnUpdate;
+            RecordingAccountSecurityNotifier notifier = new();
+            AccountManager.SecurityNotifier = notifier;
+
+            _ = mutation switch
+            {
+                AccountMutation.Password => AccountManager.ChangeAccountPassword(account.Email, "new-password1"),
+                AccountMutation.UserLevel => AccountManager.SetAccountUserLevel(account.Email, AccountUserLevel.Admin),
+                AccountMutation.SetFlag => AccountManager.SetFlag(account.Email, AccountFlags.IsBanned),
+                AccountMutation.ClearFlag => AccountManager.ClearFlag(account.Email, AccountFlags.IsPasswordExpired),
+                _ => throw new ArgumentOutOfRangeException(nameof(mutation))
+            };
+
+            Assert.False(notifier.Notified);
+        }
+
         public enum AccountMutation
         {
             PlayerName,
+            Password,
             UserLevel,
             SetFlag,
             ClearFlag
+        }
+
+        private sealed class RecordingAccountSecurityNotifier(Func<bool> wasCommitted = null) : IAccountSecurityNotifier
+        {
+            public bool Notified { get; private set; }
+            public ulong AccountId { get; private set; }
+            public AccountSecurityChangeType ChangeType { get; private set; }
+            public bool NotifiedAfterCommit { get; private set; }
+
+            public void Notify(ulong accountId, AccountSecurityChangeType changeType)
+            {
+                Notified = true;
+                AccountId = accountId;
+                ChangeType = changeType;
+                NotifiedAfterCommit = wasCommitted?.Invoke() ?? true;
+            }
         }
     }
 }

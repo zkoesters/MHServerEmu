@@ -14,6 +14,7 @@ namespace MHServerEmu.PlayerManagement.Tests
         public bool LoadPlayerDataResult { get; set; } = true;
         public bool SavePlayerDataResult { get; set; } = true;
         public bool ThrowOnUpdateAccount { get; set; }
+        public int UpdateAccountCallCount { get; private set; }
 
         public bool Initialize()
         {
@@ -83,6 +84,8 @@ namespace MHServerEmu.PlayerManagement.Tests
 
         public bool UpdateAccount(DBAccount account)
         {
+            UpdateAccountCallCount++;
+
             if (ThrowOnUpdateAccount)
                 throw new InvalidOperationException("Configured account update failure.");
 

@@ -85,6 +85,10 @@ namespace MHServerEmu.PlayerManagement.Network
                     OnPlayerNameChanged(playerNameChanged);
                     break;
 
+                case ServiceMessage.AccountSecurityChanged accountSecurityChanged:
+                    OnAccountSecurityChanged(accountSecurityChanged);
+                    break;
+
                 case ServiceMessage.CommunityStatusUpdate communityStatusUpdate:
                     OnCommunityStatusUpdate(communityStatusUpdate);
                     break;
@@ -459,6 +463,12 @@ namespace MHServerEmu.PlayerManagement.Network
             }
 
             _playerManager.LoginQueueManager.EnqueueNewClient(client);
+            return true;
+        }
+
+        private bool OnAccountSecurityChanged(in ServiceMessage.AccountSecurityChanged accountSecurityChanged)
+        {
+            _playerManager.SessionManager.RevokeAccountSessions(accountSecurityChanged.AccountId);
             return true;
         }
 

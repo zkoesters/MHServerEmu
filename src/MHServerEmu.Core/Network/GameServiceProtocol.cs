@@ -45,6 +45,13 @@ namespace MHServerEmu.Core.Network
         ClearFlag,
     }
 
+    public enum AccountSecurityChangeType
+    {
+        CredentialChanged,
+        AccountStatusChanged,
+        AuthorizationChanged,
+    }
+
     #endregion
 
     public static class ServiceMessage
@@ -296,6 +303,13 @@ namespace MHServerEmu.Core.Network
             public readonly ulong PlayerDbId = playerDbId;
             public readonly string OldPlayerName = oldPlayerName;
             public readonly string NewPlayerName = newPlayerName;
+        }
+
+        public readonly struct AccountSecurityChanged(ulong accountId, AccountSecurityChangeType type)
+            : IGameServiceMessage
+        {
+            public readonly ulong AccountId = accountId;
+            public readonly AccountSecurityChangeType Type = type;
         }
 
         /// <summary>

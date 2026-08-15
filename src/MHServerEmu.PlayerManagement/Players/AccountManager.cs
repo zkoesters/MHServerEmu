@@ -34,6 +34,8 @@ namespace MHServerEmu.PlayerManagement.Players
 
         private static readonly Logger Logger = LogManager.CreateLogger();
 
+        internal static IAccountSecurityNotifier SecurityNotifier { get; set; } = new ServerAccountSecurityNotifier();
+
         /// <summary>
         /// Queries a <see cref="DBAccount"/> using the provided <see cref="LoginDataPB"/> instance.
         /// <see cref="AuthStatusCode"/> indicates the outcome of the query.
@@ -186,6 +188,7 @@ namespace MHServerEmu.PlayerManagement.Players
                 return AccountOperationResult.DatabaseError;
             }
 
+            SecurityNotifier.Notify((ulong)account.Id, AccountSecurityChangeType.CredentialChanged);
             Logger.Info($"ChangeAccountPassword(): account=[{account}]");
             return AccountOperationResult.Success;
         }
@@ -209,6 +212,7 @@ namespace MHServerEmu.PlayerManagement.Players
                 return AccountOperationResult.DatabaseError;
             }
 
+            SecurityNotifier.Notify((ulong)account.Id, AccountSecurityChangeType.AuthorizationChanged);
             Logger.Info($"SetAccountUserLevel(): account=[{account}], userLevel=[{userLevel}]");
             return AccountOperationResult.Success;
         }
@@ -240,6 +244,7 @@ namespace MHServerEmu.PlayerManagement.Players
                 return AccountOperationResult.DatabaseError;
             }
 
+            SecurityNotifier.Notify((ulong)account.Id, AccountSecurityChangeType.AccountStatusChanged);
             Logger.Info($"SetFlag(): account=[{account}], flag=[{flag}]");
             return AccountOperationResult.Success;
         }
@@ -271,6 +276,7 @@ namespace MHServerEmu.PlayerManagement.Players
                 return AccountOperationResult.DatabaseError;
             }
 
+            SecurityNotifier.Notify((ulong)account.Id, AccountSecurityChangeType.AccountStatusChanged);
             Logger.Info($"ClearFlag(): account=[{account}], flag=[{flag}]");
             return AccountOperationResult.Success;
         }
