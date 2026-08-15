@@ -11,7 +11,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
     /// <summary>
     /// Provides functionality for storing <see cref="DBAccount"/> instances in a SQLite database using the <see cref="IDBManager"/> interface.
     /// </summary>
-    public class SQLiteDBManager : IDBManager
+    public class SQLiteDBManager : IDBManager, IAccountStore, IPlayerStore, IGuildStore
     {
         private const int CurrentSchemaVersion = 6;         // Increment this when making changes to the database schema
         private const int MinimumSchemaVersion = 6;         // Used to ignore legacy 0.x database files.
