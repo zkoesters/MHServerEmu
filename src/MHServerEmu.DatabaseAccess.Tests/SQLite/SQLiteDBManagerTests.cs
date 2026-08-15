@@ -59,5 +59,17 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
             DBEntity avatar = Assert.Single(loadedAccount.Avatars.Entries);
             Assert.Equal(new byte[] { 0x40, 0x50, 0x60 }, avatar.ArchiveData);
         }
+
+        [Fact]
+        public void UpdateAccount_UninsertedAccount_ReturnsFalse()
+        {
+            using TemporaryDirectory temporaryDirectory = new();
+            string databasePath = Path.Combine(temporaryDirectory.Path, "Account.db");
+            SQLiteDBManager manager = new();
+            DBAccount account = new("account@example.com", "PlayerOne", "twelve-chars");
+
+            Assert.True(manager.Initialize(databasePath, 0, TimeSpan.FromHours(1)));
+            Assert.False(manager.UpdateAccount(account));
+        }
     }
 }

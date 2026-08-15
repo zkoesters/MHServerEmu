@@ -153,13 +153,13 @@ namespace MHServerEmu.DatabaseAccess.SQLite
         {
             lock (_writeLock)
             {
-                using SQLiteConnection connection = GetConnection();
-
                 try
                 {
-                    connection.Execute(@"UPDATE Account SET Email=@Email, PlayerName=@PlayerName, PasswordHash=@PasswordHash, Salt=@Salt,
+                    using SQLiteConnection connection = GetConnection();
+
+                    int updated = connection.Execute(@"UPDATE Account SET Email=@Email, PlayerName=@PlayerName, PasswordHash=@PasswordHash, Salt=@Salt,
                         UserLevel=@UserLevel, Flags=@Flags WHERE Id=@Id", account);
-                    return true;
+                    return updated == 1;
                 }
                 catch (Exception e)
                 {
