@@ -10,10 +10,20 @@ You need to set up a web server to serve SiteConfig.xml and redirect login reque
 
 2. Extract the ```Apache24``` folder in the archive to ```C:\Apache24```. If you would like to run it from another directory, make sure to edit the `SRVROOT` variable value in `Apache24\conf\httpd.conf`.
 
-3. Open `Apache24\conf\httpd.conf` with any text editor and uncomment (by removing the # symbol) the following six lines: `LoadModule rewrite_module modules/mod_rewrite.so`, `LoadModule proxy_module modules/mod_proxy.so`,  `LoadModule proxy_http_module modules/mod_proxy_http.so`,  `LoadModule ssl_module modules/mod_ssl.so`, `LoadModule socache_shmcb_module modules/mod_socache_shmcb.so`, and `Include conf/extra/httpd-ssl.conf`. Make sure you remove only the # symbol and not the entire line!
+3. Open `Apache24\conf\httpd.conf` with any text editor and uncomment (by removing the # symbol) the following seven lines: `LoadModule rewrite_module modules/mod_rewrite.so`, `LoadModule proxy_module modules/mod_proxy.so`, `LoadModule proxy_http_module modules/mod_proxy_http.so`, `LoadModule headers_module modules/mod_headers.so`, `LoadModule ssl_module modules/mod_ssl.so`, `LoadModule socache_shmcb_module modules/mod_socache_shmcb.so`, and `Include conf/extra/httpd-ssl.conf`. Make sure you remove only the # symbol and not the entire line!
 
-4. Open ```Apache24\conf\extra\httpd-ssl.conf``` with any text editor, find the `<VirtualHost _default_:443>` section, and add the following two lines to it:
-   `RewriteEngine on` and `RewriteRule ^/AuthServer(.*) http://localhost:8080$1 [P]`.
+4. Open ```Apache24\conf\extra\httpd-ssl.conf``` with any text editor, find the `<VirtualHost _default_:443>` section, and add the following lines to it:
+
+   ```apache
+   RewriteEngine On
+   RewriteRule ^/AuthServer(.*) http://127.0.0.1:8080$1 [P]
+
+   # Remove a client-supplied header; mod_proxy adds the connecting client IP.
+   RequestHeader unset X-Forwarded-For
+   ProxyAddHeaders On
+   ```
+
+   Keep the web frontend bound to loopback and do not expose port `8080` through the firewall. If you proxy from a different host, allowlist only that proxy address or CIDR in `TrustedProxyNetworks`; never allowlist client or public networks. Apache must be the only component that sets or appends `X-Forwarded-For` for the backend.
 
 5. Put the [server.crt](./../../assets/ssl/server.crt) and [server.key](./../../assets/ssl/server.key) files provided in this repository in `Apache24\conf`. Alternatively, you can generate your own SSL certificate.
 
@@ -31,7 +41,7 @@ Now you can actually start everything and get in-game.
 
 2. Start MHServerEmu and wait for it to load.
 
-3. Open the following link in your web browser and create your account: [http://localhost:8080/Dashboard/](http://localhost:8080/Dashboard/). This link is going to work only when MHServerEmu is fully up and running.
+3. With the Legacy profile, open [http://localhost:8080/Dashboard/](http://localhost:8080/Dashboard/) and create your account. This link works only when MHServerEmu is fully up and running. Portal has no dashboard or private administration site; create accounts with the server console instead.
 
 4. Launch the game with the following argument: `-siteconfigurl=localhost/SiteConfig.xml`.
 
@@ -42,3 +52,5 @@ If everything works correctly, the server should display client connection infor
 *Note: you can launch the game without Steam by running MarvelHeroesOmega.exe with the following arguments: -robocopy -nosteam.*
 
 You can customize how the emulator functions by editing the `Config.ini` file. See [Advanced Setup](./AdvancedSetup.md) for more advanced setup topics.
+
+See [Security](./../ServerEmu/Security.md) before exposing any web endpoint outside the local machine.

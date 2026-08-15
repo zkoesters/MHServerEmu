@@ -16,13 +16,15 @@ The following instructions are intended for stable builds of the server. If you 
 
 1. Run `StartServer.bat` and wait for MHServerEmu to initialize. There should be two server windows, one of them should be minimized by default and blank.
 
-2. (Optional) Open [http://localhost:8080/Dashboard/](http://localhost:8080/Dashboard/) and create an account. Please note that this link is going to work only when the server is running.
+2. (Optional, Legacy profile only) Open [http://localhost:8080/Dashboard/](http://localhost:8080/Dashboard/) and create an account. Please note that this link is going to work only when the server is running. The Portal profile does not include a dashboard or private administration site; create accounts from the server console instead.
 
-The SQLite database starts without accounts. In the server console, run `!account create <email> <player-name> <password>` before logging in. Passwords must contain 3-64 characters. Existing databases and JSON development mode are not modified.
+The SQLite database starts without accounts. In the server console, run `!account create <email> <player-name> <password>` before logging in. New passwords must contain 12-64 characters. Existing databases and JSON development mode are not modified.
 
 3. Run `StartClient.bat` and log in with your created account.
 
 4. When you are done, run the `StopServer.bat` file to stop the server.
+
+For web deployment profiles, request limits, and account security behavior, see [Security](./../ServerEmu/Security.md).
 
 ## Updating MHServerEmu
 

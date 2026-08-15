@@ -2,6 +2,8 @@
 
 MHServerEmu can provide web API functionality as part of its web frontend. It is enabled by default, and the server listens for requests on `http://localhost:8080/`. This can be customized in the `WebFrontend` section of `Config.ini`.
 
+The endpoints on this page are available only with `[WebFrontend] DeploymentProfile=Legacy`. The Phase0 `Portal` profile returns `404 Not Found` for these legacy API, status, and metrics routes, does not load `Data/Web/ApiKeys.json`, and does not provide a replacement private administration API. Legacy API bearer keys are stored as plaintext tokens in `Data/Web/ApiKeys.json`; keep Legacy local or protect it with the deployment network.
+
 The web API uses JSON for serialization. Requests return JSON as output and expect JSON as input in the request's body when needed.
 
 Some endpoints are restricted and require an API key to access.
