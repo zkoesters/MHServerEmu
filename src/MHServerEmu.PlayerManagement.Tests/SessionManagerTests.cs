@@ -52,6 +52,22 @@ namespace MHServerEmu.PlayerManagement.Tests
             Assert.Equal(0, sessionManager.ActiveSessionCount);
         }
 
+        [Fact]
+        public void RemovePendingSession_ReleasesPlatformTicket()
+        {
+            SessionManager sessionManager = new(false);
+            DBAccount account = new("account@example.com", "Player", "password") { Id = 1 };
+            ClientSession session = CreateSession(1, account);
+            sessionManager.RegisterPendingSessionForTesting(session);
+
+            Assert.True(sessionManager.TryGetPlatformTicketForTesting(session.PlatformTicket, out _));
+
+            sessionManager.RemovePendingSessionForTesting(session.Id);
+
+            Assert.Equal(0, sessionManager.PendingSessionCount);
+            Assert.False(sessionManager.TryGetPlatformTicketForTesting(session.PlatformTicket, out _));
+        }
+
         private static ClientSession CreateSession(ulong sessionId, DBAccount account)
         {
             return new ClientSession(sessionId, account, $"ticket-{sessionId}", ClientDownloader.None, "en_us");
