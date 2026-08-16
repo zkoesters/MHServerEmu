@@ -56,7 +56,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Configuration
             try
             {
                 NpgsqlConnectionStringBuilder builder = new(connectionString);
-                if (ContainsRejectedSetting(builder) || builder.IncludeErrorDetail || builder.PersistSecurityInfo)
+                if (ContainsRejectedSetting(builder))
                 {
                     failure = new("InvalidSettings", "SettingsLoad");
                     return false;
@@ -108,7 +108,9 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Configuration
                 || builder.ShouldSerialize("Maximum Pool Size")
                 || builder.ShouldSerialize("Timeout")
                 || builder.ShouldSerialize("Command Timeout")
-                || builder.ShouldSerialize("Cancellation Timeout");
+                || builder.ShouldSerialize("Cancellation Timeout")
+                || builder.ShouldSerialize("Include Error Detail")
+                || builder.ShouldSerialize("Persist Security Info");
         }
     }
 }
