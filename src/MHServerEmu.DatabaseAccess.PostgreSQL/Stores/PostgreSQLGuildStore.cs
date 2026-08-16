@@ -85,9 +85,11 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
             {
                 await using NpgsqlCommand guildCommand = new($"INSERT INTO {GuildTable} (id, name, normalized_name, motd, creator_account_id, creation_time) VALUES (@id, @name, @normalizedName, @motd, @creatorAccountId, @creationTime) RETURNING revision, created_at_utc, updated_at_utc", connection, transaction);
                 AddGuildParameters(guildCommand, guild, normalizedName);
-                await using NpgsqlDataReader reader = await guildCommand.ExecuteReaderAsync(cancellationToken);
-                if (await reader.ReadAsync(cancellationToken))
-                    metadata = ReadMetadata(reader);
+                await using (NpgsqlDataReader reader = await guildCommand.ExecuteReaderAsync(cancellationToken))
+                {
+                    if (await reader.ReadAsync(cancellationToken))
+                        metadata = ReadMetadata(reader);
+                }
 
                 await using NpgsqlCommand memberCommand = new($"INSERT INTO {GuildMemberTable} (player_account_id, guild_id, membership) VALUES (@playerId, @guildId, @membership)", connection, transaction);
                 AddMemberParameters(memberCommand, leader);
@@ -247,9 +249,11 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
                 command.Parameters.AddWithValue("id", NpgsqlDbType.Bigint, guild.Id);
                 command.Parameters.AddWithValue("revision", NpgsqlDbType.Bigint, guild.PersistenceRevision);
                 addParameters(command.Parameters);
-                await using NpgsqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
-                if (await reader.ReadAsync(cancellationToken))
-                    metadata = ReadMetadata(reader);
+                await using (NpgsqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken))
+                {
+                    if (await reader.ReadAsync(cancellationToken))
+                        metadata = ReadMetadata(reader);
+                }
                 if (metadata.HasValue == false)
                     exists = await GuildExistsAsync(connection, transaction, guild.Id, cancellationToken);
             }).GetAwaiter().GetResult();
