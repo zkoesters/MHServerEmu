@@ -143,7 +143,7 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
             Assert.Equal(AccountStoreResult.Success, fixture.AccountStore.InsertAccount(account));
             DateTime? updatedAtUtc = account.UpdatedAtUtc;
 
-            await CreateDeferredCommitFailureAsync(fixture.Provider.DataSource);
+            await CreateDeferredBackendTerminationAsync(fixture.Provider.DataSource);
             try
             {
                 Assert.Equal(AccountStoreResult.OutcomeUncertain, fixture.AccountStore.ChangeFlags(account, AccountFlags.IsBanned));
@@ -155,27 +155,29 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
             }
             finally
             {
-                await DropDeferredCommitFailureAsync(fixture.Provider.DataSource);
+                await DropDeferredBackendTerminationAsync(fixture.Provider.DataSource);
             }
 
+            Assert.True(fixture.AccountStore.TryQueryAccountByEmail(account.Email, out DBAccount persistedAfterAmbiguity));
+            fixture.Provider.FenceForTest();
             Assert.Equal(AccountStoreResult.OutcomeUncertain, fixture.AccountStore.ChangeUserLevel(account, AccountUserLevel.Admin));
-            Assert.True(fixture.AccountStore.TryQueryAccountByEmail(account.Email, out DBAccount stored));
-            Assert.Equal(AccountUserLevel.User, stored.UserLevel);
-            Assert.Equal(AccountFlags.None, stored.Flags);
-            Assert.Equal(0, stored.PersistenceRevision);
+            Assert.True(fixture.AccountStore.TryQueryAccountByEmail(account.Email, out DBAccount persistedAfterRetry));
+            Assert.Equal(persistedAfterAmbiguity.UserLevel, persistedAfterRetry.UserLevel);
+            Assert.Equal(persistedAfterAmbiguity.Flags, persistedAfterRetry.Flags);
+            Assert.Equal(persistedAfterAmbiguity.PersistenceRevision, persistedAfterRetry.PersistenceRevision);
         }
 
-        private static async Task CreateDeferredCommitFailureAsync(NpgsqlDataSource dataSource)
+        private static async Task CreateDeferredBackendTerminationAsync(NpgsqlDataSource dataSource)
         {
             await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync();
-            await using NpgsqlCommand command = new("CREATE FUNCTION mhserveremu.account_store_test_commit_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test commit ambiguity'; END; $$; CREATE CONSTRAINT TRIGGER account_store_test_commit_failure AFTER UPDATE ON mhserveremu.account DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION mhserveremu.account_store_test_commit_failure();", connection);
+            await using NpgsqlCommand command = new("CREATE FUNCTION mhserveremu.account_store_test_backend_termination() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_terminate_backend(pg_backend_pid()); RETURN NULL; END; $$; CREATE CONSTRAINT TRIGGER account_store_test_backend_termination AFTER UPDATE ON mhserveremu.account DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION mhserveremu.account_store_test_backend_termination();", connection);
             await command.ExecuteNonQueryAsync();
         }
 
-        private static async Task DropDeferredCommitFailureAsync(NpgsqlDataSource dataSource)
+        private static async Task DropDeferredBackendTerminationAsync(NpgsqlDataSource dataSource)
         {
             await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync();
-            await using NpgsqlCommand command = new("DROP TRIGGER IF EXISTS account_store_test_commit_failure ON mhserveremu.account; DROP FUNCTION IF EXISTS mhserveremu.account_store_test_commit_failure();", connection);
+            await using NpgsqlCommand command = new("DROP TRIGGER IF EXISTS account_store_test_backend_termination ON mhserveremu.account; DROP FUNCTION IF EXISTS mhserveremu.account_store_test_backend_termination();", connection);
             await command.ExecuteNonQueryAsync();
         }
     }
