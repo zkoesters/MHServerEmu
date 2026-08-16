@@ -48,6 +48,21 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL
             Assert.DoesNotContain(connectionString, failure.ToString(), StringComparison.Ordinal);
         }
 
+        [Theory]
+        [InlineData("Include Error Detail", "false")]
+        [InlineData("Include Error Detail", "true")]
+        [InlineData("Persist Security Info", "false")]
+        [InlineData("Persist Security Info", "true")]
+        public void TryCreate_ExplicitErrorDetailFlags_ReturnsSanitizedFailure(string key, string value)
+        {
+            bool result = PostgreSQLSettings.TryCreate($"Host=localhost;Password=secret;{key}={value}", new PostgreSQLConfig(), false, out PostgreSQLSettings settings, out PostgreSQLPersistenceFailure failure);
+
+            Assert.False(result);
+            Assert.Null(settings);
+            Assert.Equal("InvalidSettings", failure.Code);
+            Assert.DoesNotContain("secret", failure.ToString(), StringComparison.OrdinalIgnoreCase);
+        }
+
         [Fact]
         public void TryCreate_InvalidTypedSettings_ReturnsSanitizedFailure()
         {
