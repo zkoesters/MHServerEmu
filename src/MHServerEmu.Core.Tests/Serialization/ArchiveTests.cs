@@ -644,6 +644,15 @@ namespace MHServerEmu.Core.Tests.Serialization
         }
 
         [Fact]
+        public void Transfer_ISerializeFailure_ReturnsFalse()
+        {
+            using Archive archive = new(ArchiveSerializeType.Database);
+            ISerialize data = new FailingSerialize();
+
+            Assert.False(archive.Transfer(ref data));
+        }
+
+        [Fact]
         public void Serialize_UpdateAvatarState_UnpacksWithMouseInput()
         {
             byte[] buffer = Convert.FromHexString("0100C9F7FD0601012CF453FE02801605010102F453FE02801000AC3A81030600");
@@ -794,6 +803,16 @@ namespace MHServerEmu.Core.Tests.Serialization
                 Assert.Equal(0, vertexSideRadius1);
 
                 Assert.True(success);
+            }
+        }
+
+        private sealed class FailingSerialize : ISerialize
+        {
+            public bool Serialize(Archive archive)
+            {
+                int value = 42;
+                _ = archive.Transfer(ref value);
+                return false;
             }
         }
     }

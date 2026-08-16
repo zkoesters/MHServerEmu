@@ -53,13 +53,13 @@ namespace MHServerEmu.DatabaseAccess.Models
         [JsonIgnore]
         public DateTime? UpdatedAtUtc { get; set; }
         [JsonIgnore]
-        public string PasswordAlgorithm { get; set; } = "PBKDF2-HMAC-SHA512";
+        public string PasswordAlgorithm { get; set; } = CryptographyHelper.PasswordAlgorithm;
         [JsonIgnore]
-        public int PasswordFormatVersion { get; set; } = 1;
+        public int PasswordFormatVersion { get; set; } = CryptographyHelper.PasswordFormatVersion;
         [JsonIgnore]
-        public int PasswordIterations { get; set; } = 210000;
+        public int PasswordIterations { get; set; } = CryptographyHelper.PasswordIterationCount;
         [JsonIgnore]
-        public int PasswordKeySize { get; set; } = 64;
+        public int PasswordKeySize { get; set; } = CryptographyHelper.PasswordKeySize;
         [JsonIgnore]
         public int CredentialVersion { get; set; } = 1;
         [JsonIgnore]

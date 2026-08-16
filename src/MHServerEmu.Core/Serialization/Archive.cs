@@ -464,8 +464,8 @@ namespace MHServerEmu.Core.Serialization
             uint size = 0;
 
             bool success = StartSizeChecking(ref startPosition, ref size);
-            success |= ioData.Serialize(this);
-            success |= EndSizeChecking(ref startPosition, ref size, false);
+            success &= ioData.Serialize(this);
+            success &= EndSizeChecking(ref startPosition, ref size, false);
 
             return success;
         }

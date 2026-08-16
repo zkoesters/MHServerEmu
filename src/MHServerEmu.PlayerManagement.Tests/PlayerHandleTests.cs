@@ -40,16 +40,47 @@ namespace MHServerEmu.PlayerManagement.Tests
         }
 
         [Fact]
-        public void SetArchiveMetadata_UsesCurrentArchiveAndBuildVersions()
+        public void TryStoreSerializedPlayerData_TransferSucceeds_StoresArchiveAndMetadata()
         {
-            MethodInfo setArchiveMetadata = typeof(PlayerConnection).GetMethod("SetArchiveMetadata", BindingFlags.NonPublic | BindingFlags.Static);
-            DBPlayer player = new();
+            MethodInfo tryStoreSerializedPlayerData = typeof(PlayerConnection).GetMethod("TryStoreSerializedPlayerData", BindingFlags.NonPublic | BindingFlags.Static);
+            DBPlayer player = new() { ArchiveData = [0x01] };
+            using Archive archive = new(ArchiveSerializeType.Database);
 
-            Assert.NotNull(setArchiveMetadata);
-            setArchiveMetadata.Invoke(null, [player]);
+            Assert.NotNull(tryStoreSerializedPlayerData);
+            Assert.True((bool)tryStoreSerializedPlayerData.Invoke(null, [player, archive, new TestSerialize(true)]));
 
+            Assert.Equal(archive.AsSpan().ToArray(), player.ArchiveData);
             Assert.Equal((int)ArchiveVersion.Current, player.ArchiveVersion);
             Assert.Equal((int)GameBuildNumber.Current, player.GameBuildNumber);
+        }
+
+        [Fact]
+        public void TryStoreSerializedPlayerData_TransferFails_PreservesArchiveAndMetadata()
+        {
+            MethodInfo tryStoreSerializedPlayerData = typeof(PlayerConnection).GetMethod("TryStoreSerializedPlayerData", BindingFlags.NonPublic | BindingFlags.Static);
+            DBPlayer player = new()
+            {
+                ArchiveData = [0x01, 0x02],
+                ArchiveVersion = 7,
+                GameBuildNumber = 8
+            };
+            using Archive archive = new(ArchiveSerializeType.Database);
+
+            Assert.NotNull(tryStoreSerializedPlayerData);
+            Assert.False((bool)tryStoreSerializedPlayerData.Invoke(null, [player, archive, new TestSerialize(false)]));
+
+            Assert.Equal([0x01, 0x02], player.ArchiveData);
+            Assert.Equal(7, player.ArchiveVersion);
+            Assert.Equal(8, player.GameBuildNumber);
+        }
+
+        private sealed class TestSerialize(bool success) : ISerialize
+        {
+            public bool Serialize(Archive archive)
+            {
+                int value = 42;
+                return archive.Transfer(ref value) && success;
+            }
         }
 
         private sealed class FakeFrontendClient : IFrontendClient, IDBAccountOwner
