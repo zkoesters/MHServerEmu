@@ -43,7 +43,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
                 }
 
                 if (attempt + 1 < settings.StartupRetryCount)
-                    await _delayAsync(TimeSpan.FromMilliseconds(settings.StartupRetryDelayMilliseconds * (attempt + 1)), cancellationToken);
+                    await _delayAsync(TimeSpan.FromMilliseconds((long)settings.StartupRetryDelayMilliseconds * (1L << attempt)), cancellationToken);
             }
 
             return failure;

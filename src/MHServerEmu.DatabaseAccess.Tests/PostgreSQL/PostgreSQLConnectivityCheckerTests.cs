@@ -63,5 +63,30 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => checker.CheckAsync(settings, cancellationSource.Token));
             Assert.Equal(1, attempts);
         }
+
+        [Fact]
+        public async Task CheckAsync_MaximumValidStartupBackoff_ReturnsSanitizedFailure()
+        {
+            List<TimeSpan> delays = new();
+            PostgreSQLConfig config = new()
+            {
+                StartupRetryCount = 3,
+                StartupRetryDelayMilliseconds = 1073741823,
+            };
+            PostgreSQLConnectivityChecker checker = new(
+                (_, _, _) => Task.FromException(new InvalidOperationException("Password=secret")),
+                (delay, _) =>
+                {
+                    delays.Add(delay);
+                    return Task.CompletedTask;
+                });
+            Assert.True(PostgreSQLSettings.TryCreate("Host=localhost", config, false, out PostgreSQLSettings settings, out _));
+
+            PostgreSQLPersistenceFailure failure = await checker.CheckAsync(settings, CancellationToken.None);
+
+            Assert.Equal("ConnectivityCheckFailed", failure.Code);
+            Assert.Equal(new[] { TimeSpan.FromMilliseconds(1073741823), TimeSpan.FromMilliseconds(2147483646) }, delays);
+            Assert.DoesNotContain("secret", failure.ToString(), StringComparison.OrdinalIgnoreCase);
+        }
     }
 }
