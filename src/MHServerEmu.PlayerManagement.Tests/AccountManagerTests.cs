@@ -221,11 +221,20 @@ namespace MHServerEmu.PlayerManagement.Tests
         public void DefaultPasswordHashMetadata_DescribesCurrentPasswordFormat()
         {
             var metadata = CryptographyHelper.DefaultPasswordHashMetadata;
+            DBAccount account = new();
 
-            Assert.Equal("PBKDF2-HMAC-SHA512", metadata.Algorithm);
-            Assert.Equal(1, metadata.FormatVersion);
-            Assert.Equal(210000, metadata.Iterations);
-            Assert.Equal(64, metadata.KeySize);
+            Assert.Equal("PBKDF2-HMAC-SHA512", CryptographyHelper.PasswordAlgorithm);
+            Assert.Equal(1, CryptographyHelper.PasswordFormatVersion);
+            Assert.Equal(210000, CryptographyHelper.PasswordIterationCount);
+            Assert.Equal(64, CryptographyHelper.PasswordKeySize);
+            Assert.Equal(CryptographyHelper.PasswordAlgorithm, metadata.Algorithm);
+            Assert.Equal(CryptographyHelper.PasswordFormatVersion, metadata.FormatVersion);
+            Assert.Equal(CryptographyHelper.PasswordIterationCount, metadata.Iterations);
+            Assert.Equal(CryptographyHelper.PasswordKeySize, metadata.KeySize);
+            Assert.Equal(CryptographyHelper.PasswordAlgorithm, account.PasswordAlgorithm);
+            Assert.Equal(CryptographyHelper.PasswordFormatVersion, account.PasswordFormatVersion);
+            Assert.Equal(CryptographyHelper.PasswordIterationCount, account.PasswordIterations);
+            Assert.Equal(CryptographyHelper.PasswordKeySize, account.PasswordKeySize);
         }
 
         [Theory]

@@ -260,20 +260,11 @@ namespace MHServerEmu.Games.Network
             using (Archive archive = new(ArchiveSerializeType.Database))
             {
                 DBPlayer dbPlayer = _dbAccount.Player;
-                Span<byte> oldArchiveData = dbPlayer.ArchiveData ?? Span<byte>.Empty;
 
                 // NOTE: Use Transfer() and NOT Player.Serialize() to make sure we pack the size of the player
-                Serializer.Transfer(archive, Player);
-                Span<byte> newArchiveData = archive.AsSpan();
-
-                // No point in doing a SequenceEqual check here, it's always different in practice.
-                if (newArchiveData.Length == oldArchiveData.Length)
-                    newArchiveData.CopyTo(oldArchiveData);
-                else
-                    dbPlayer.ArchiveData = newArchiveData.ToArray();
+                if (TryStoreSerializedPlayerData(dbPlayer, archive, Player) == false)
+                    return Logger.WarnReturn(false, $"SaveToDBAccount(): Failed to serialize player data for [{_dbAccount}]");
             }
-
-            SetArchiveMetadata(_dbAccount.Player);
 
             // Save last town as a separate database field to be able to access it without deserializing the player entity
             PrototypeId lastTownProtoRef = Player.Properties[PropertyEnum.LastTownRegionForAccount];
@@ -316,6 +307,24 @@ namespace MHServerEmu.Games.Network
 
             TimeSpan elapsed = Clock.UnixTime - startTime;
             Logger.Trace($"Saved player data for {_dbAccount} in {(long)elapsed.TotalMilliseconds} ms");
+            return true;
+        }
+
+        private static bool TryStoreSerializedPlayerData(DBPlayer dbPlayer, Archive archive, ISerialize player)
+        {
+            if (Serializer.Transfer(archive, player) == false)
+                return false;
+
+            Span<byte> oldArchiveData = dbPlayer.ArchiveData ?? Span<byte>.Empty;
+            Span<byte> newArchiveData = archive.AsSpan();
+
+            // No point in doing a SequenceEqual check here, it's always different in practice.
+            if (newArchiveData.Length == oldArchiveData.Length)
+                newArchiveData.CopyTo(oldArchiveData);
+            else
+                dbPlayer.ArchiveData = newArchiveData.ToArray();
+
+            SetArchiveMetadata(dbPlayer);
             return true;
         }
 
