@@ -12,6 +12,15 @@ namespace MHServerEmu.PlayerManagement.Tests
         public bool UpdateAccountResult { get; set; } = true;
         public bool LoadPlayerDataResult { get; set; } = true;
         public bool SavePlayerDataResult { get; set; } = true;
+        public AccountStoreResult InsertAccountStoreResult { get; set; } = AccountStoreResult.Success;
+        public AccountStoreResult AccountChangeStoreResult { get; set; } = AccountStoreResult.Success;
+        public PlayerStoreResult LoadPlayerDataStoreResult { get; set; } = PlayerStoreResult.Success;
+        public PlayerStoreResult SavePlayerDataStoreResult { get; set; } = PlayerStoreResult.Success;
+        public GuildStoreResult CreateGuildStoreResult { get; set; } = GuildStoreResult.Success;
+        public GuildStoreResult ChangeGuildNameStoreResult { get; set; } = GuildStoreResult.Success;
+        public GuildStoreResult ChangeGuildMotdStoreResult { get; set; } = GuildStoreResult.Success;
+        public GuildStoreResult ApplyMembershipTransitionStoreResult { get; set; } = GuildStoreResult.Success;
+        public GuildStoreResult DeleteGuildStoreResult { get; set; } = GuildStoreResult.Success;
         public bool ThrowOnUpdateAccount { get; set; }
         public int UpdateAccountCallCount { get; private set; }
         public int TryGetPlayerNameCallCount { get; private set; }
@@ -23,6 +32,8 @@ namespace MHServerEmu.PlayerManagement.Tests
         public int DeleteGuildCallCount { get; private set; }
         public int SaveGuildMemberCallCount { get; private set; }
         public int DeleteGuildMemberCallCount { get; private set; }
+        public int GuildMemberTransitionCallCount { get; private set; }
+        public List<GuildMemberTransition> GuildMemberTransitions { get; } = new();
 
         public bool TryQueryAccountByEmail(string email, out DBAccount account)
         {
@@ -67,7 +78,6 @@ namespace MHServerEmu.PlayerManagement.Tests
 
         public bool GetPlayerNames(Dictionary<ulong, string> playerNames)
         {
-            playerNames.Clear();
             foreach (DBAccount account in Accounts.Values)
                 playerNames[(ulong)account.Id] = account.PlayerName;
 
@@ -86,7 +96,7 @@ namespace MHServerEmu.PlayerManagement.Tests
                 return AccountStoreResult.Failed;
 
             Accounts[account.Email] = account;
-            return AccountStoreResult.Success;
+            return InsertAccountStoreResult;
         }
 
         public AccountStoreResult ChangePlayerName(DBAccount account, string playerName)
@@ -116,19 +126,19 @@ namespace MHServerEmu.PlayerManagement.Tests
             if (ThrowOnUpdateAccount)
                 throw new InvalidOperationException("Configured account update failure.");
 
-            return UpdateAccountResult ? AccountStoreResult.Success : AccountStoreResult.Failed;
+            return UpdateAccountResult ? AccountChangeStoreResult : AccountStoreResult.Failed;
         }
 
         public PlayerStoreResult LoadPlayerData(DBAccount account)
         {
             LoadPlayerDataCallCount++;
-            return LoadPlayerDataResult ? PlayerStoreResult.Success : PlayerStoreResult.Failed;
+            return LoadPlayerDataResult ? LoadPlayerDataStoreResult : PlayerStoreResult.Failed;
         }
 
         public PlayerStoreResult SavePlayerData(DBAccount account)
         {
             SavePlayerDataCallCount++;
-            return SavePlayerDataResult ? PlayerStoreResult.Success : PlayerStoreResult.Failed;
+            return SavePlayerDataResult ? SavePlayerDataStoreResult : PlayerStoreResult.Failed;
         }
 
         public bool LoadGuilds(List<DBGuild> guilds)
@@ -141,31 +151,33 @@ namespace MHServerEmu.PlayerManagement.Tests
         public GuildStoreResult CreateGuild(DBGuild guild, DBGuildMember creator)
         {
             SaveGuildCallCount++;
-            return GuildStoreResult.Success;
+            return CreateGuildStoreResult;
         }
 
         public GuildStoreResult ChangeGuildName(DBGuild guild, string name)
         {
             SaveGuildCallCount++;
-            return GuildStoreResult.Success;
+            return ChangeGuildNameStoreResult;
         }
 
         public GuildStoreResult ChangeGuildMotd(DBGuild guild, string motd)
         {
             SaveGuildCallCount++;
-            return GuildStoreResult.Success;
+            return ChangeGuildMotdStoreResult;
         }
 
         public GuildStoreResult ApplyMembershipTransition(DBGuild guild, GuildMemberTransition transition)
         {
-            SaveGuildMemberCallCount += transition.Changes.Count;
-            return GuildStoreResult.Success;
+            SaveGuildMemberCallCount++;
+            GuildMemberTransitionCallCount++;
+            GuildMemberTransitions.Add(transition);
+            return ApplyMembershipTransitionStoreResult;
         }
 
         public GuildStoreResult DeleteGuild(DBGuild guild)
         {
             DeleteGuildCallCount++;
-            return GuildStoreResult.Success;
+            return DeleteGuildStoreResult;
         }
     }
 }
