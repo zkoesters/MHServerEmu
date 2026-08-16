@@ -67,7 +67,7 @@ namespace MHServerEmu.PlayerManagement.Social
                     continue;
                 }
 
-                MasterGuild guild = CreateGuild(dbGuild, false);
+                MasterGuild guild = CreateGuild(dbGuild, false, out _);
                 if (guild == null)
                 {
                     Logger.Warn("Initialize(): guild == null");
@@ -125,18 +125,38 @@ namespace MHServerEmu.PlayerManagement.Social
             _guildsByMember[playerDbId] = guild;
         }
 
-        private MasterGuild CreateGuild(DBGuild data, bool saveToDatabase)
+        private MasterGuild CreateGuild(DBGuild data, bool persistCreation, out GuildStoreResult storeResult)
         {
+            storeResult = GuildStoreResult.Success;
             ulong guildId = (ulong)data.Id;
             string guildName = data.Name;
 
             if (_guilds.ContainsKey(guildId))
                 return Logger.WarnReturn<MasterGuild>(null, $"CreateGuild(): Guild id {guildId} is already in use");
 
+            if (_guildNameRegistry.ValidateNameForGuildForm(guildName) == GuildFormResultCode.eGFCDuplicateName)
+            {
+                storeResult = GuildStoreResult.NameConflict;
+                return Logger.WarnReturn<MasterGuild>(null, $"CreateGuild(): Guild name {guildName} is already in use");
+            }
+
+            if (persistCreation && _playerManager.Config.EnablePersistence)
+            {
+                if (data.Members.Count != 1)
+                {
+                    storeResult = GuildStoreResult.InvalidData;
+                    return Logger.WarnReturn<MasterGuild>(null, "CreateGuild(): A new guild must have one leader");
+                }
+
+                storeResult = _guildStore.CreateGuild(data, data.Members[0]);
+                if (storeResult != GuildStoreResult.Success)
+                    return null;
+            }
+
             if (_guildNameRegistry.AddGuildNameInUse(guildName) == false)
                 return Logger.WarnReturn<MasterGuild>(null, $"CreateGuild(): Guild name {guildName} is already in use");
 
-            MasterGuild guild = new(data, saveToDatabase, _guildStore, _playerNameCache, this, _playerManager.ClientManager, _playerManager.Config.EnablePersistence);
+            MasterGuild guild = new(data, false, _guildStore, _playerNameCache, this, _playerManager.ClientManager, _playerManager.Config.EnablePersistence);
             _guilds.Add(guild.Id, guild);
             return guild;
         }
@@ -188,8 +208,8 @@ namespace MHServerEmu.PlayerManagement.Social
                 DBGuildMember creator = new(creatorDbGuid, guildId, (long)GuildMembership.eGMLeader);
                 dbGuild.Members.Add(creator);
 
-                if (CreateGuild(dbGuild, true) == null)
-                    result = GuildFormResultCode.eGFCInternalError;
+                if (CreateGuild(dbGuild, true, out GuildStoreResult storeResult) == null)
+                    result = storeResult == GuildStoreResult.NameConflict ? GuildFormResultCode.eGFCDuplicateName : GuildFormResultCode.eGFCInternalError;
             }
 
             ulong gameId = player.CurrentGame.Id;
