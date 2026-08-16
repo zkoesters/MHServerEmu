@@ -33,15 +33,15 @@ namespace MHServerEmu.DatabaseAccess.Validation
             if (value == null)
                 throw new ArgumentException("Identity value cannot be null.", parameterName);
 
-            string normalized = value.Trim().Normalize(NormalizationForm.FormC);
-            if (normalized.Length > 320)
-                throw new ArgumentException("Identity value cannot exceed 320 characters.", parameterName);
-
-            foreach (char character in normalized)
+            foreach (char character in value)
             {
                 if (char.IsControl(character))
                     throw new ArgumentException("Identity value cannot contain control characters.", parameterName);
             }
+
+            string normalized = value.Trim().Normalize(NormalizationForm.FormC);
+            if (normalized.Length > 320)
+                throw new ArgumentException("Identity value cannot exceed 320 characters.", parameterName);
 
             return normalized;
         }
