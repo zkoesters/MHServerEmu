@@ -46,6 +46,17 @@ namespace MHServerEmu.DatabaseAccess.Tests.Json
                 "PersistenceRevision", "PersistenceState", "CreatedAtUtc", "UpdatedAtUtc");
         }
 
+        [Fact]
+        public void Constructor_InitializesCurrentCredentialMetadata()
+        {
+            DBAccount account = new("account@example.com", "PlayerOne", "password");
+
+            Assert.Equal("PBKDF2-HMAC-SHA512", account.PasswordAlgorithm);
+            Assert.Equal(1, account.PasswordFormatVersion);
+            Assert.Equal(210000, account.PasswordIterations);
+            Assert.Equal(64, account.PasswordKeySize);
+        }
+
         private static void AssertMetadataIsExcluded(string json, params string[] propertyNames)
         {
             using JsonDocument document = JsonDocument.Parse(json);
