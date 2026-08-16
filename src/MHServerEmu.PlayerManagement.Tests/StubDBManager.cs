@@ -8,8 +8,6 @@ namespace MHServerEmu.PlayerManagement.Tests
         public Dictionary<string, DBAccount> Accounts { get; } = new(StringComparer.OrdinalIgnoreCase);
         public List<DBGuild> GuildsToLoad { get; } = new();
 
-        public bool VerifyAccounts { get; set; } = true;
-        public bool InitializeResult { get; set; } = true;
         public bool InsertAccountResult { get; set; } = true;
         public bool UpdateAccountResult { get; set; } = true;
         public bool LoadPlayerDataResult { get; set; } = true;
@@ -25,11 +23,6 @@ namespace MHServerEmu.PlayerManagement.Tests
         public int DeleteGuildCallCount { get; private set; }
         public int SaveGuildMemberCallCount { get; private set; }
         public int DeleteGuildMemberCallCount { get; private set; }
-
-        public bool Initialize()
-        {
-            return InitializeResult;
-        }
 
         public bool TryQueryAccountByEmail(string email, out DBAccount account)
         {
