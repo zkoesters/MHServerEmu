@@ -60,6 +60,8 @@ namespace MHServerEmu.Core.Tests.Config
 
         [Theory]
         [InlineData((int)UnixFileMode.GroupRead)]
+        [InlineData((int)UnixFileMode.GroupWrite)]
+        [InlineData((int)UnixFileMode.OtherRead)]
         [InlineData((int)UnixFileMode.OtherWrite)]
         public void HasUnsafeOverrideFilePermissions_ExistingOverrideAllowsGroupOrOtherReadWrite_ReturnsTrue(int unsafeMode)
         {
@@ -74,10 +76,26 @@ namespace MHServerEmu.Core.Tests.Config
             Assert.True(manager.HasUnsafeOverrideFilePermissions());
         }
 
+        [Theory]
+        [InlineData((int)UnixFileMode.GroupExecute)]
+        [InlineData((int)UnixFileMode.OtherExecute)]
+        public void HasUnsafeOverrideFilePermissions_ExistingOverrideAllowsOnlyGroupOrOtherExecute_ReturnsFalse(int executeMode)
+        {
+            if (OperatingSystem.IsWindows())
+                return;
+
+            using TemporaryConfigFiles files = new();
+            files.WriteOverride(string.Empty);
+            File.SetUnixFileMode(files.OverridePath, UnixFileMode.UserRead | UnixFileMode.UserWrite | (UnixFileMode)executeMode);
+            ConfigManager manager = new(files.ConfigPath, files.OverridePath);
+
+            Assert.False(manager.HasUnsafeOverrideFilePermissions());
+        }
+
         [Fact]
         public void HasUnsafeOverrideFilePermissions_OnWindows_ReturnsFalse()
         {
-            if (OperatingSystem.IsWindows() == false)
+            if (!OperatingSystem.IsWindows())
                 return;
 
             using TemporaryConfigFiles files = new();
