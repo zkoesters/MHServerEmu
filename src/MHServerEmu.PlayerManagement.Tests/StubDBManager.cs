@@ -95,7 +95,9 @@ namespace MHServerEmu.PlayerManagement.Tests
             if (InsertAccountResult == false)
                 return AccountStoreResult.Failed;
 
-            Accounts[account.Email] = account;
+            if (InsertAccountStoreResult == AccountStoreResult.Success)
+                Accounts[account.Email] = account;
+
             return InsertAccountStoreResult;
         }
 

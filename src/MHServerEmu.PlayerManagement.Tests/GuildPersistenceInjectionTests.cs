@@ -118,6 +118,8 @@ namespace MHServerEmu.PlayerManagement.Tests
             Assert.Equal(GuildStoreResult.InvalidData, store.ChangeGuildMotd(guild, "Motd"));
             Assert.Equal(GuildStoreResult.MembershipConflict, store.ApplyMembershipTransition(guild, transition));
             Assert.Equal(GuildStoreResult.Failed, store.DeleteGuild(guild));
+            Assert.False(store.TryQueryAccountByEmail(account.Email, out _));
+            store.Accounts[account.Email] = account;
             Assert.True(store.GetPlayerNames(playerNames));
             Assert.Equal("Existing", playerNames[2]);
             Assert.Equal("PlayerOne", playerNames[1]);

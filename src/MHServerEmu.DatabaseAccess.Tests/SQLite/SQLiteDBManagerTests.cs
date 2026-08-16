@@ -95,15 +95,15 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
         }
 
         [Fact]
-        public void ChangePassword_UpdatesOnlyCredentialsAndSynthesizesMetadataAfterSuccess()
+        public void ChangePassword_PersistsCredentialsAndClearsPasswordExpiredFlag()
         {
             using TemporaryDirectory temporaryDirectory = new();
             SQLiteDBManager manager = InitializeManager(temporaryDirectory);
             DBAccount account = CreateAccount(1, "account@example.com", "PlayerOne");
-            account.Flags = AccountFlags.BypassLoginQueue;
+            account.Flags = AccountFlags.BypassLoginQueue | AccountFlags.IsPasswordExpired;
             Assert.Equal(AccountStoreResult.Success, manager.InsertAccount(account));
 
-            account.Flags = AccountFlags.None;
+            account.Flags &= ~AccountFlags.IsPasswordExpired;
             account.PersistenceRevision = 42;
             account.PersistenceState = PersistenceState.OutcomeUncertain;
 
@@ -112,6 +112,21 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
             Assert.Equal(PersistenceState.Clean, account.PersistenceState);
             Assert.True(manager.TryQueryAccountByEmail(account.Email, out DBAccount stored));
             Assert.Equal(AccountFlags.BypassLoginQueue, stored.Flags);
+            Assert.Equal(new byte[] { 0x01 }, stored.PasswordHash);
+            Assert.Equal(new byte[] { 0x02 }, stored.Salt);
+        }
+
+        [Fact]
+        public void ChangePlayerName_FinalPlayerNameUniqueConstraint_ReturnsPlayerNameConflict()
+        {
+            using TemporaryDirectory temporaryDirectory = new();
+            SQLiteDBManager manager = InitializeManager(temporaryDirectory);
+            DBAccount first = CreateAccount(1, "first@example.com", "PlayerOne");
+            DBAccount second = CreateAccount(2, "second@example.com", "PlayerTwo");
+            Assert.Equal(AccountStoreResult.Success, manager.InsertAccount(first));
+            Assert.Equal(AccountStoreResult.Success, manager.InsertAccount(second));
+
+            Assert.Equal(AccountStoreResult.PlayerNameConflict, manager.ChangePlayerName(first, second.PlayerName));
         }
 
         [Fact]
@@ -144,6 +159,31 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
         }
 
         [Fact]
+        public void CreateGuild_FinalNameUniqueConstraint_ReturnsNameConflict()
+        {
+            using TemporaryDirectory temporaryDirectory = new();
+            string databasePath = Path.Combine(temporaryDirectory.Path, "Account.db");
+            SQLiteDBManager manager = new();
+            Assert.True(manager.Initialize(databasePath, 0, TimeSpan.FromHours(1)));
+            InsertGuild(databasePath, 1, "Existing");
+
+            Assert.Equal(GuildStoreResult.NameConflict, manager.CreateGuild(new DBGuild(2, "Existing", string.Empty, 2, 0), new DBGuildMember(2, 2, 3)));
+        }
+
+        [Fact]
+        public void ChangeGuildName_FinalNameUniqueConstraint_ReturnsNameConflict()
+        {
+            using TemporaryDirectory temporaryDirectory = new();
+            string databasePath = Path.Combine(temporaryDirectory.Path, "Account.db");
+            SQLiteDBManager manager = new();
+            Assert.True(manager.Initialize(databasePath, 0, TimeSpan.FromHours(1)));
+            InsertGuild(databasePath, 1, "First");
+            InsertGuild(databasePath, 2, "Second");
+
+            Assert.Equal(GuildStoreResult.NameConflict, manager.ChangeGuildName(new DBGuild(1, "First", string.Empty, 1, 0), "Second"));
+        }
+
+        [Fact]
         public void DeleteGuild_MissingGuild_ReturnsGuildNotFound()
         {
             using TemporaryDirectory temporaryDirectory = new();
@@ -153,7 +193,7 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
         }
 
         [Fact]
-        public void ApplyMembershipTransition_NonLegacyRevision_ReturnsStaleRevision()
+        public void ApplyMembershipTransition_IgnoresSuppliedOptimisticRevisions()
         {
             using TemporaryDirectory temporaryDirectory = new();
             string databasePath = Path.Combine(temporaryDirectory.Path, "Account.db");
@@ -161,10 +201,15 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
             Assert.True(manager.Initialize(databasePath, 0, TimeSpan.FromHours(1)));
             InsertGuild(databasePath, 1, "Guild");
             InsertGuildMember(databasePath, 1, 1, 3);
+            InsertGuildMember(databasePath, 2, 1, 1);
             DBGuild guild = new(1, "Guild", string.Empty, 1, 0) { PersistenceRevision = 1 };
-            GuildMemberTransition transition = new(1, 0, new GuildMemberChange(1, 3, 2));
+            GuildMemberTransition transition = new(1, 99,
+                new GuildMemberChange(1, 3, 2),
+                new GuildMemberChange(2, 1, 3));
 
-            Assert.Equal(GuildStoreResult.StaleRevision, manager.ApplyMembershipTransition(guild, transition));
+            Assert.Equal(GuildStoreResult.Success, manager.ApplyMembershipTransition(guild, transition));
+            Assert.Equal(0, guild.PersistenceRevision);
+            Assert.Equal(PersistenceState.Clean, guild.PersistenceState);
         }
 
         [Fact]
