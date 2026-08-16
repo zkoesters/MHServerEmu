@@ -46,22 +46,40 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Locking
             return new PostgreSQLWriterOwner(connection, fenceToken, await GetBackendProcessIdAsync(connection, cancellationToken));
         }
 
-        internal async Task ValidateTransactionAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, PostgreSQLWriterFenceToken token, CancellationToken cancellationToken)
+        internal async Task ValidateTransactionAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, PostgreSQLWriterFenceToken token, PostgreSQLOperationDeadline deadline, CancellationToken cancellationToken)
         {
             if (IsFenced || token == null || token.OwnerId != FenceToken.OwnerId || token.Generation != FenceToken.Generation)
                 throw new PostgreSQLWriterFencedException();
 
-            await using (NpgsqlCommand lockCommand = new("SELECT pg_advisory_xact_lock_shared(@namespace, @resource)", connection, transaction))
+            while (true)
             {
+                if (IsFenced)
+                    throw new PostgreSQLWriterFencedException();
+
+                await using NpgsqlCommand lockCommand = new("SELECT pg_try_advisory_xact_lock_shared(@namespace, @resource)", connection, transaction)
+                {
+                    CommandTimeout = deadline.RemainingCommandTimeoutSeconds,
+                };
                 lockCommand.Parameters.AddWithValue("namespace", PostgreSQLAdvisoryKeys.Namespace);
                 lockCommand.Parameters.AddWithValue("resource", PostgreSQLAdvisoryKeys.WriterResource);
-                await lockCommand.ExecuteNonQueryAsync(cancellationToken);
+                using (CancellationTokenSource source = deadline.CreateCancellationSource(cancellationToken))
+                {
+                    if ((bool)await lockCommand.ExecuteScalarAsync(source.Token))
+                        break;
+                }
+
+                using CancellationTokenSource delayCancellation = deadline.CreateCancellationSource(cancellationToken);
+                await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(50, deadline.Remaining.TotalMilliseconds)), delayCancellation.Token);
             }
 
-            await using NpgsqlCommand validationCommand = new("SELECT 1 FROM mhserveremu.writer_fence WHERE singleton = true AND generation = @generation AND owner_id = @ownerId", connection, transaction);
+            await using NpgsqlCommand validationCommand = new("SELECT 1 FROM mhserveremu.writer_fence WHERE singleton = true AND generation = @generation AND owner_id = @ownerId", connection, transaction)
+            {
+                CommandTimeout = deadline.RemainingCommandTimeoutSeconds,
+            };
             validationCommand.Parameters.AddWithValue("generation", token.Generation);
             validationCommand.Parameters.AddWithValue("ownerId", token.OwnerId);
-            if (await validationCommand.ExecuteScalarAsync(cancellationToken) == null)
+            using (CancellationTokenSource source = deadline.CreateCancellationSource(cancellationToken))
+            if (await validationCommand.ExecuteScalarAsync(source.Token) == null)
                 throw new PostgreSQLWriterFencedException();
         }
 
