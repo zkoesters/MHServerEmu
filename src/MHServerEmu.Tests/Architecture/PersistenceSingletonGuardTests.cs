@@ -14,9 +14,13 @@ namespace MHServerEmu.Tests.Architecture
         [InlineData("IDBManager .Instance")]
         [InlineData("IDBManager\t.Instance")]
         [InlineData("IDBManager\n.Instance")]
+        [InlineData("IDBManager/* legacy */.Instance")]
+        [InlineData("IDBManager// legacy\n.Instance")]
         [InlineData("PlayerNameCache .Instance")]
         [InlineData("PlayerNameCache\t.Instance")]
         [InlineData("PlayerNameCache\n.Instance")]
+        [InlineData("PlayerNameCache/* legacy */.Instance")]
+        [InlineData("PlayerNameCache// legacy\n.Instance")]
         public void ContainsPersistenceSingleton_DetectsWhitespaceSeparatedSingletonReferences(string source)
         {
             Assert.True(ContainsPersistenceSingleton(source));
@@ -38,6 +42,8 @@ namespace MHServerEmu.Tests.Architecture
 
         private static bool ContainsPersistenceSingleton(string source)
         {
+            source = Regex.Replace(source, @"/\*.*?\*/", "", RegexOptions.Singleline);
+            source = Regex.Replace(source, @"//[^\r\n]*", "");
             return SingletonReferencePatterns.Any(pattern => pattern.IsMatch(source));
         }
     }
