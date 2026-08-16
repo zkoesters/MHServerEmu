@@ -12,6 +12,10 @@ The following instructions are intended for stable builds of the server. If you 
 
 4. Run the included `Setup` tool and point it to your Marvel Heroes game files. If you have the game on Steam, you can find them by right clicking on the game in your library and choosing `Manage` -> `Browse local files`.
 
+## Persistence
+
+JSON and SQLite persistence are available. SQLite is the default for a new setup; JSON remains available for development and legacy single-account use. PostgreSQL configuration is present only as a persistence foundation: selecting PostgreSQL is intentionally rejected until PR1C. Do not add a PostgreSQL connection string to `Config.ini`.
+
 ## Running the Server
 
 1. Run `StartServer.bat` and wait for MHServerEmu to initialize. There should be two server windows, one of them should be minimized by default and blank.
