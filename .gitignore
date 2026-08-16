@@ -405,3 +405,5 @@ FodyWeavers.xsd
 # Build directory
 /build
 
+# Runtime configuration overrides
+/src/MHServerEmu/ConfigOverride.ini
