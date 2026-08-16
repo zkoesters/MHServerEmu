@@ -35,6 +35,20 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
         }
 
         [PostgreSQLIntegrationFact]
+        public async Task RunAsync_FreshDatabase_CreatesPlayerEntityInventorySlotIndex()
+        {
+            NpgsqlDataSource dataSource = await _database.CreateDataSourceAsync();
+
+            PostgreSQLMigrationResult result = await new PostgreSQLMigrationRunner(dataSource, PostgreSQLMigrationCatalog.LoadEmbedded(), TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(5)).RunAsync();
+            Assert.True(result.Succeeded, result.Failure?.ToString());
+            string indexDefinition = await ScalarAsync<string>(dataSource, "SELECT pg_get_indexdef('mhserveremu.player_entity_inventory_slot_unique'::regclass)");
+
+            Assert.Contains("CREATE UNIQUE INDEX player_entity_inventory_slot_unique", indexDefinition);
+            Assert.Contains("NULLS NOT DISTINCT", indexDefinition);
+            Assert.Contains("WHERE (inventory_proto_id <> 0)", indexDefinition);
+        }
+
+        [PostgreSQLIntegrationFact]
         public async Task RunAsync_RootControlledEntity_ViolatesNamedParentConstraint()
         {
             NpgsqlDataSource dataSource = await _database.CreateDataSourceAsync();
@@ -113,7 +127,7 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
             PostgreSQLMigrationResult[] results = await Task.WhenAll(first.RunAsync(), second.RunAsync());
 
             Assert.All(results, result => Assert.True(result.Succeeded));
-            Assert.Equal(2, results.Sum(result => result.AppliedMigrationCount));
+            Assert.Equal(catalog.Migrations.Count, results.Sum(result => result.AppliedMigrationCount));
         }
 
         [PostgreSQLIntegrationFact]

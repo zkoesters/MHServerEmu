@@ -65,9 +65,9 @@ CREATE TABLE mhserveremu.player_entity (
     CONSTRAINT player_entity_parent FOREIGN KEY (owner_account_id, parent_entity_id) REFERENCES mhserveremu.player_entity (owner_account_id, id) ON DELETE CASCADE
 );
 
-CREATE UNIQUE INDEX mhserveremu.player_entity_inventory_slot_unique ON mhserveremu.player_entity (owner_account_id, parent_entity_id, inventory_proto_id, slot) NULLS NOT DISTINCT WHERE inventory_proto_id <> 0;
-CREATE INDEX mhserveremu.player_entity_owner_account_id_index ON mhserveremu.player_entity (owner_account_id);
-CREATE INDEX mhserveremu.player_entity_owner_kind_parent_index ON mhserveremu.player_entity (owner_account_id, kind, parent_entity_id);
+CREATE UNIQUE INDEX player_entity_inventory_slot_unique ON mhserveremu.player_entity (owner_account_id, parent_entity_id, inventory_proto_id, slot) NULLS NOT DISTINCT WHERE inventory_proto_id <> 0;
+CREATE INDEX player_entity_owner_account_id_index ON mhserveremu.player_entity (owner_account_id);
+CREATE INDEX player_entity_owner_kind_parent_index ON mhserveremu.player_entity (owner_account_id, kind, parent_entity_id);
 
 CREATE TABLE mhserveremu.guild (
     id bigint PRIMARY KEY,
@@ -92,4 +92,4 @@ CREATE TABLE mhserveremu.guild_member (
     CONSTRAINT guild_member_membership CHECK (membership BETWEEN 1 AND 3)
 );
 
-CREATE UNIQUE INDEX mhserveremu.guild_member_one_leader_unique ON mhserveremu.guild_member (guild_id) WHERE membership = 3;
+CREATE UNIQUE INDEX guild_member_one_leader_unique ON mhserveremu.guild_member (guild_id) WHERE membership = 3;
