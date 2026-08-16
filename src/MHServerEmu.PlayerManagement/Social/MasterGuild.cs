@@ -52,8 +52,6 @@ namespace MHServerEmu.PlayerManagement.Social
             foreach (DBGuildMember member in _data.Members)
                 AddMember(member);
 
-            _data.Members.Clear();  // we don't use this for anything but initialization, so just clear it
-
             if (_clientManager != null)
             {
                 foreach (MemberEntry member in _members.Values)
@@ -65,12 +63,9 @@ namespace MHServerEmu.PlayerManagement.Social
             }
 
             if (saveToDatabase)
-            {
-                SaveToDatabase();
+                CreateInDatabase(_data.Members[0]);
 
-                foreach (MemberEntry member in _members.Values)
-                    member.SaveToDatabase();
-            }
+            _data.Members.Clear();  // we don't use this for anything but initialization, so just clear it
         }
 
         internal MasterGuild(DBGuild data, bool saveToDatabase, IGuildStore guildStore, PlayerNameCache playerNameCache,
@@ -118,7 +113,7 @@ namespace MHServerEmu.PlayerManagement.Social
             SendMessageToAllGames(serverMessage);
 
             // Replicate to database
-            SaveToDatabase();
+            ChangeNameInDatabase(newName);
 
             return GuildChangeNameResultCode.eGCNRCSuccess;
         }
@@ -151,7 +146,7 @@ namespace MHServerEmu.PlayerManagement.Social
             SendMessageToAllGames(serverMessage);
 
             // Replicate to database
-            SaveToDatabase();
+            ChangeMotdInDatabase(newMotd);
 
             return GuildChangeMotdResultCode.eGCMotdRCSuccess;
         }
@@ -235,6 +230,8 @@ namespace MHServerEmu.PlayerManagement.Social
             if (GetMember(targetPlayerId) is not MemberEntry targetMember)
                 return GuildChangeMemberResultCode.eGCMRCUnknownMember;
 
+            long targetExpectedMembership = (long)targetMember.Membership;
+
             if (_leader is not MemberEntry leaderMember)
                 return GuildChangeMemberResultCode.eGCMRCInternalError;
 
@@ -286,6 +283,10 @@ namespace MHServerEmu.PlayerManagement.Social
                 nextLeader = targetMember;
                 secondaryTargetMember = leaderMember;
             }
+
+            long? secondaryExpectedMembership = secondaryTargetMember is MemberEntry secondaryMember
+                ? (long)secondaryMember.Membership
+                : null;
 
             // Modify memberships
             if (nextLeader != null)
@@ -371,8 +372,20 @@ namespace MHServerEmu.PlayerManagement.Social
                 return GuildChangeMemberResultCode.eGCMRCSuccessGuildDissolved;
             }
 
-            targetMember.SaveToDatabase();
-            secondaryTargetMember?.SaveToDatabase();
+            long? targetNewMembership = targetMember.Membership == GuildMembership.eGMNone ? null : (long)targetMember.Membership;
+            GuildMemberChange targetChange = new((long)targetPlayerId, targetExpectedMembership, targetNewMembership);
+
+            if (secondaryTargetMember is MemberEntry secondaryMemberToSave)
+            {
+                GuildMemberChange secondaryChange = new((long)secondaryMemberToSave.PlayerDbId, secondaryExpectedMembership,
+                    (long)secondaryMemberToSave.Membership);
+                ApplyMembershipTransition(targetChange, secondaryChange);
+            }
+            else
+            {
+                ApplyMembershipTransition(targetChange);
+            }
+
             return GuildChangeMemberResultCode.eGCMRCSuccess;
         }
 
@@ -419,12 +432,39 @@ namespace MHServerEmu.PlayerManagement.Social
                 RemoveGame(prevRegion.Game);
         }
 
-        private bool SaveToDatabase()
+        private bool CreateInDatabase(DBGuildMember creator)
         {
             if (_persistenceEnabled == false)
                 return true;
 
-            return _guildStore.SaveGuild(_data);
+            return _guildStore.CreateGuild(_data, creator) == GuildStoreResult.Success;
+        }
+
+        private bool ChangeNameInDatabase(string name)
+        {
+            if (_persistenceEnabled == false)
+                return true;
+
+            return _guildStore.ChangeGuildName(_data, name) == GuildStoreResult.Success;
+        }
+
+        private bool ChangeMotdInDatabase(string motd)
+        {
+            if (_persistenceEnabled == false)
+                return true;
+
+            return _guildStore.ChangeGuildMotd(_data, motd) == GuildStoreResult.Success;
+        }
+
+        private bool ApplyMembershipTransition(GuildMemberChange primaryChange, GuildMemberChange? secondaryChange = null)
+        {
+            if (_persistenceEnabled == false)
+                return true;
+
+            GuildMemberTransition transition = secondaryChange.HasValue
+                ? new(_data.Id, _data.PersistenceRevision, primaryChange, secondaryChange.Value)
+                : new(_data.Id, _data.PersistenceRevision, primaryChange);
+            return _guildStore.ApplyMembershipTransition(_data, transition) == GuildStoreResult.Success;
         }
 
         private bool DeleteFromDatabase()
@@ -432,7 +472,7 @@ namespace MHServerEmu.PlayerManagement.Social
             if (_persistenceEnabled == false)
                 return true;
 
-            return _guildStore.DeleteGuild(_data);
+            return _guildStore.DeleteGuild(_data) == GuildStoreResult.Success;
         }
 
         private MemberEntry? AddMember(DBGuildMember data)
@@ -447,7 +487,7 @@ namespace MHServerEmu.PlayerManagement.Social
             if (isLeader && _leader != null)
                 return Logger.WarnReturn<MemberEntry?>(null, $"AddMember(): Attempted to add a second leader [{data}] when there is an existing leader [{_leader}] in guild [{this}]");
 
-            MemberEntry member = new(data, _guildStore, _playerNameCache, _persistenceEnabled);
+            MemberEntry member = new(data, _playerNameCache);
             _members.Add(playerDbId, member);
 
             if (isLeader)
@@ -484,7 +524,7 @@ namespace MHServerEmu.PlayerManagement.Social
             SendMessageToAllGames(serverMessage);
 
             // Replicate to database
-            member.SaveToDatabase();
+            ApplyMembershipTransition(new(memberData.PlayerDbGuid, null, memberData.Membership));
 
             return true;
         }
@@ -651,13 +691,10 @@ namespace MHServerEmu.PlayerManagement.Social
         /// <summary>
         /// A wrapper for <see cref="DBGuildMember"/> for easier data access.
         /// </summary>
-        private readonly struct MemberEntry(DBGuildMember data, IGuildStore guildStore, PlayerNameCache playerNameCache,
-            bool persistenceEnabled) : IEquatable<MemberEntry>
+        private readonly struct MemberEntry(DBGuildMember data, PlayerNameCache playerNameCache) : IEquatable<MemberEntry>
         {
             private readonly DBGuildMember _data = data;
-            private readonly IGuildStore _guildStore = guildStore;
             private readonly PlayerNameCache _playerNameCache = playerNameCache;
-            private readonly bool _persistenceEnabled = persistenceEnabled;
 
             public ulong PlayerDbId { get => (ulong)_data.PlayerDbGuid; }
             public string PlayerName { get => GetPlayerName(); }
@@ -702,17 +739,6 @@ namespace MHServerEmu.PlayerManagement.Social
             public void SetMembership(GuildMembership newMembership)
             {
                 _data.Membership = (long)newMembership;
-            }
-
-            public bool SaveToDatabase()
-            {
-                if (_persistenceEnabled == false)
-                    return true;
-
-                if (Membership == GuildMembership.eGMNone)
-                    return _guildStore.DeleteGuildMember(_data);
-
-                return _guildStore.SaveGuildMember(_data);
             }
 
             private string GetPlayerName()

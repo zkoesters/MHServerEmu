@@ -27,5 +27,31 @@ namespace MHServerEmu.DatabaseAccess.Tests.Json
             Assert.True(root.TryGetProperty("Player", out JsonElement player));
             Assert.Equal(account.Id, player.GetProperty("DbGuid").GetInt64());
         }
+
+        [Fact]
+        public void PersistenceMetadata_IsExcludedFromJson()
+        {
+            DBAccount account = new("account@example.com", "PlayerOne", "password");
+            DBPlayer player = new(1);
+            DBGuild guild = new(1, "Guild", "Motd", 1, 1);
+
+            AssertMetadataIsExcluded(JsonSerializer.Serialize(account),
+                "PersistenceRevision", "PersistenceState", "CreatedAtUtc", "UpdatedAtUtc",
+                "PasswordAlgorithm", "PasswordFormatVersion", "PasswordIterations", "PasswordKeySize",
+                "CredentialVersion", "GameSecurityVersion", "EmailVerifiedAtUtc");
+            AssertMetadataIsExcluded(JsonSerializer.Serialize(player),
+                "PersistenceRevision", "PersistenceState", "CreatedAtUtc", "UpdatedAtUtc",
+                "ArchiveVersion", "GameBuildNumber");
+            AssertMetadataIsExcluded(JsonSerializer.Serialize(guild),
+                "PersistenceRevision", "PersistenceState", "CreatedAtUtc", "UpdatedAtUtc");
+        }
+
+        private static void AssertMetadataIsExcluded(string json, params string[] propertyNames)
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+
+            foreach (string propertyName in propertyNames)
+                Assert.False(document.RootElement.TryGetProperty(propertyName, out _));
+        }
     }
 }

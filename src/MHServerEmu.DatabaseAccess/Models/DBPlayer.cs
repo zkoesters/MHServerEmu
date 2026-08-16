@@ -1,4 +1,6 @@
-﻿namespace MHServerEmu.DatabaseAccess.Models
+﻿using System.Text.Json.Serialization;
+
+namespace MHServerEmu.DatabaseAccess.Models
 {
     public class DBPlayer
     {
@@ -8,6 +10,19 @@
         public int AOIVolume { get; set; }
         public long GazillioniteBalance { get; set; } = -1;     // -1 indicates that Gs need to be restored to the default value for new accounts when the player logs in
         public long LastLogoutTime { get; set; }
+
+        [JsonIgnore]
+        public long PersistenceRevision { get; set; } = 0;
+        [JsonIgnore]
+        public PersistenceState PersistenceState { get; set; } = PersistenceState.Clean;
+        [JsonIgnore]
+        public DateTime? CreatedAtUtc { get; set; }
+        [JsonIgnore]
+        public DateTime? UpdatedAtUtc { get; set; }
+        [JsonIgnore]
+        public int? ArchiveVersion { get; set; }
+        [JsonIgnore]
+        public int? GameBuildNumber { get; set; }
 
         public DBPlayer() { }
 
