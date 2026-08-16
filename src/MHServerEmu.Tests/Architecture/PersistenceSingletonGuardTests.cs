@@ -12,11 +12,13 @@ namespace MHServerEmu.Tests.Architecture
         [InlineData("IDBManager\n.Instance")]
         [InlineData("IDBManager/* legacy */.Instance")]
         [InlineData("IDBManager// legacy\n.Instance")]
+        [InlineData("MHServerEmu.DatabaseAccess.IDBManager.Instance")]
         [InlineData("PlayerNameCache .Instance")]
         [InlineData("PlayerNameCache\t.Instance")]
         [InlineData("PlayerNameCache\n.Instance")]
         [InlineData("PlayerNameCache/* legacy */.Instance")]
         [InlineData("PlayerNameCache// legacy\n.Instance")]
+        [InlineData("MHServerEmu.PlayerManagement.PlayerNameCache.Instance")]
         public void ContainsPersistenceSingleton_DetectsWhitespaceSeparatedSingletonReferences(string source)
         {
             string fixture = $"class Test {{ void Method() {{ {source}.Initialize(); }} }}";
@@ -59,7 +61,19 @@ namespace MHServerEmu.Tests.Architecture
             return CSharpSyntaxTree.ParseText(source).GetRoot().DescendantNodes()
                 .OfType<MemberAccessExpressionSyntax>()
                 .Any(memberAccess => memberAccess.Name.Identifier.ValueText == "Instance"
-                    && memberAccess.Expression.WithoutTrivia().NormalizeWhitespace().ToFullString() is "IDBManager" or "PlayerNameCache");
+                    && GetTerminalReceiverIdentifier(memberAccess.Expression) is "IDBManager" or "PlayerNameCache");
+        }
+
+        private static string GetTerminalReceiverIdentifier(SyntaxNode receiver)
+        {
+            return receiver switch
+            {
+                IdentifierNameSyntax identifier => identifier.Identifier.ValueText,
+                MemberAccessExpressionSyntax member => member.Name.Identifier.ValueText,
+                AliasQualifiedNameSyntax aliasQualifiedName => aliasQualifiedName.Name.Identifier.ValueText,
+                QualifiedNameSyntax qualifiedName => qualifiedName.Right.Identifier.ValueText,
+                _ => null
+            };
         }
     }
 
