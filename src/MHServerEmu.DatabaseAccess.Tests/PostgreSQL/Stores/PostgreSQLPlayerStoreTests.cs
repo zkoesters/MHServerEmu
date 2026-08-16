@@ -183,6 +183,34 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
         }
 
         [PostgreSQLIntegrationFact]
+        public async Task Save_ProfileCasNoRow_ReturnsStaleRevisionWithoutChangingEntities()
+        {
+            await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
+            DBAccount account = fixture.CreateNestedAggregate(1);
+            Assert.Equal(AccountStoreResult.Success, fixture.AccountStore.InsertAccount(account));
+            Assert.Equal(PlayerStoreResult.Success, fixture.Players.SavePlayerData(account));
+            DBAccount stale = fixture.CreateEmptyAccount(account.Id);
+            Assert.Equal(PlayerStoreResult.Success, fixture.Players.LoadPlayerData(stale));
+            stale.ClearEntities();
+            await CreateProfileCasNoRowTriggerAsync(fixture.Provider.DataSource);
+            try
+            {
+                Assert.Equal(PlayerStoreResult.StaleRevision, fixture.Players.SavePlayerData(stale));
+            }
+            finally
+            {
+                await DropProfileCasNoRowTriggerAsync(fixture.Provider.DataSource);
+            }
+
+            DBAccount loaded = fixture.CreateEmptyAccount(account.Id);
+            Assert.Equal(PlayerStoreResult.Success, fixture.Players.LoadPlayerData(loaded));
+            Assert.Equal(account.Avatars.Count, loaded.Avatars.Count);
+            Assert.Equal(account.TeamUps.Count, loaded.TeamUps.Count);
+            Assert.Equal(account.Items.Count, loaded.Items.Count);
+            Assert.Equal(account.ControlledEntities.Count, loaded.ControlledEntities.Count);
+        }
+
+        [PostgreSQLIntegrationFact]
         public async Task Save_CommitTermination_MarksAggregateUncertainAndRejectsRetry()
         {
             await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
@@ -209,6 +237,20 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
         {
             await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync();
             await using NpgsqlCommand command = new("CREATE FUNCTION mhserveremu.player_store_test_backend_termination() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_terminate_backend(pg_backend_pid()); RETURN NULL; END; $$; CREATE CONSTRAINT TRIGGER player_store_test_backend_termination AFTER UPDATE ON mhserveremu.player_profile DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION mhserveremu.player_store_test_backend_termination();", connection);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        private static async Task CreateProfileCasNoRowTriggerAsync(NpgsqlDataSource dataSource)
+        {
+            await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync();
+            await using NpgsqlCommand command = new("CREATE FUNCTION mhserveremu.player_store_test_skip_profile_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END; $$; CREATE TRIGGER player_store_test_skip_profile_update BEFORE UPDATE ON mhserveremu.player_profile FOR EACH ROW EXECUTE FUNCTION mhserveremu.player_store_test_skip_profile_update();", connection);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        private static async Task DropProfileCasNoRowTriggerAsync(NpgsqlDataSource dataSource)
+        {
+            await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync();
+            await using NpgsqlCommand command = new("DROP TRIGGER IF EXISTS player_store_test_skip_profile_update ON mhserveremu.player_profile; DROP FUNCTION IF EXISTS mhserveremu.player_store_test_skip_profile_update();", connection);
             await command.ExecuteNonQueryAsync();
         }
 
