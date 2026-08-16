@@ -11,6 +11,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "MHServerEmu.Core", "src\MHS
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "MHServerEmu.DatabaseAccess", "src\MHServerEmu.DatabaseAccess\MHServerEmu.DatabaseAccess.csproj", "{061FEB4A-A747-4BEF-B6DC-9C72523E2857}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "MHServerEmu.DatabaseAccess.PostgreSQL", "src\MHServerEmu.DatabaseAccess.PostgreSQL\MHServerEmu.DatabaseAccess.PostgreSQL.csproj", "{2ECAD70F-8B78-422A-A891-932FAD1CF96E}"
+EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "MHServerEmu.Frontend", "src\MHServerEmu.Frontend\MHServerEmu.Frontend.csproj", "{3BEDD9D8-9E21-4515-A7EC-F23CE177C453}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "MHServerEmu.Games", "src\MHServerEmu.Games\MHServerEmu.Games.csproj", "{A4C4E89A-D54B-4C48-B200-23B88589A140}"
@@ -57,6 +59,10 @@ Global
 		{061FEB4A-A747-4BEF-B6DC-9C72523E2857}.Debug|x64.Build.0 = Debug|x64
 		{061FEB4A-A747-4BEF-B6DC-9C72523E2857}.Release|x64.ActiveCfg = Release|x64
 		{061FEB4A-A747-4BEF-B6DC-9C72523E2857}.Release|x64.Build.0 = Release|x64
+		{2ECAD70F-8B78-422A-A891-932FAD1CF96E}.Debug|x64.ActiveCfg = Debug|x64
+		{2ECAD70F-8B78-422A-A891-932FAD1CF96E}.Debug|x64.Build.0 = Debug|x64
+		{2ECAD70F-8B78-422A-A891-932FAD1CF96E}.Release|x64.ActiveCfg = Release|x64
+		{2ECAD70F-8B78-422A-A891-932FAD1CF96E}.Release|x64.Build.0 = Release|x64
 		{3BEDD9D8-9E21-4515-A7EC-F23CE177C453}.Debug|x64.ActiveCfg = Debug|x64
 		{3BEDD9D8-9E21-4515-A7EC-F23CE177C453}.Debug|x64.Build.0 = Debug|x64
 		{3BEDD9D8-9E21-4515-A7EC-F23CE177C453}.Release|x64.ActiveCfg = Release|x64
