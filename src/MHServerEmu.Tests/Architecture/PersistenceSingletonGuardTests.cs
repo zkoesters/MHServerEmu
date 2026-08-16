@@ -1,15 +1,11 @@
-using System.Text.RegularExpressions;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace MHServerEmu.Tests.Architecture
 {
     public class PersistenceSingletonGuardTests
     {
-        private static readonly Regex[] SingletonReferencePatterns =
-        {
-            new(@"IDBManager\s*\.Instance"),
-            new(@"PlayerNameCache\s*\.Instance")
-        };
-
         [Theory]
         [InlineData("IDBManager .Instance")]
         [InlineData("IDBManager\t.Instance")]
@@ -23,7 +19,25 @@ namespace MHServerEmu.Tests.Architecture
         [InlineData("PlayerNameCache// legacy\n.Instance")]
         public void ContainsPersistenceSingleton_DetectsWhitespaceSeparatedSingletonReferences(string source)
         {
-            Assert.True(ContainsPersistenceSingleton(source));
+            string fixture = $"class Test {{ void Method() {{ {source}.Initialize(); }} }}";
+
+            Assert.True(ContainsPersistenceSingleton(fixture));
+        }
+
+        [Fact]
+        public void ContainsPersistenceSingleton_DetectsAccessAfterUrlString()
+        {
+            const string Source = "class Test { void Method() { var url = \"https://x\"; IDBManager.Instance.Initialize(); } }";
+
+            Assert.True(ContainsPersistenceSingleton(Source));
+        }
+
+        [Fact]
+        public void ContainsPersistenceSingleton_IgnoresStringLiteral()
+        {
+            const string Source = "class Test { void Method() { var singleton = \"IDBManager.Instance\"; } }";
+
+            Assert.False(ContainsPersistenceSingleton(Source));
         }
 
         [Fact]
@@ -42,9 +56,10 @@ namespace MHServerEmu.Tests.Architecture
 
         private static bool ContainsPersistenceSingleton(string source)
         {
-            source = Regex.Replace(source, @"/\*.*?\*/", "", RegexOptions.Singleline);
-            source = Regex.Replace(source, @"//[^\r\n]*", "");
-            return SingletonReferencePatterns.Any(pattern => pattern.IsMatch(source));
+            return CSharpSyntaxTree.ParseText(source).GetRoot().DescendantNodes()
+                .OfType<MemberAccessExpressionSyntax>()
+                .Any(memberAccess => memberAccess.Name.Identifier.ValueText == "Instance"
+                    && memberAccess.Expression.WithoutTrivia().NormalizeWhitespace().ToFullString() is "IDBManager" or "PlayerNameCache");
         }
     }
 
