@@ -38,15 +38,18 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
 
             try
             {
-                using NpgsqlConnection connection = _dataSource.OpenConnection();
-                using NpgsqlCommand command = new($"SELECT id, email, player_name, password_hash, password_salt, password_algorithm, password_format_version, password_iterations, password_key_size, credential_version, game_security_version, user_level, flags, email_verified_at_utc, revision, created_at_utc, updated_at_utc FROM {AccountTable} WHERE normalized_email = @normalizedEmail", connection);
-                command.Parameters.AddWithValue("normalizedEmail", NpgsqlDbType.Text, normalizedEmail);
-                using NpgsqlDataReader reader = command.ExecuteReader();
-                if (reader.Read() == false)
-                    return false;
-
-                account = ReadAccount(reader);
-                return true;
+                PostgreSQLReadResult<DBAccount> read = _executor.ExecuteReadAsync("AccountQueryByEmail", async (connection, deadline, cancellationToken) =>
+                {
+                    await using NpgsqlCommand command = new($"SELECT id, email, player_name, password_hash, password_salt, password_algorithm, password_format_version, password_iterations, password_key_size, credential_version, game_security_version, user_level, flags, email_verified_at_utc, revision, created_at_utc, updated_at_utc FROM {AccountTable} WHERE normalized_email = @normalizedEmail", connection)
+                    {
+                        CommandTimeout = deadline.RemainingCommandTimeoutSeconds,
+                    };
+                    command.Parameters.AddWithValue("normalizedEmail", NpgsqlDbType.Text, normalizedEmail);
+                    await using NpgsqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
+                    return await reader.ReadAsync(cancellationToken) ? ReadAccount(reader) : null;
+                }).GetAwaiter().GetResult();
+                account = read.Value;
+                return read.Succeeded && account != null;
             }
             catch
             {

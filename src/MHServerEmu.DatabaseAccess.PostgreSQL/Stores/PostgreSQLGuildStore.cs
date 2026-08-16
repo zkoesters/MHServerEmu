@@ -27,40 +27,51 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
             ArgumentNullException.ThrowIfNull(guilds);
             try
             {
-                using NpgsqlConnection connection = _dataSource.OpenConnection();
-                Dictionary<long, DBGuild> loaded = new();
-                using (NpgsqlCommand command = new($"SELECT id, name, motd, creator_account_id, creation_time, revision, created_at_utc, updated_at_utc FROM {GuildTable}", connection))
-                using (NpgsqlDataReader reader = command.ExecuteReader())
+                PostgreSQLReadResult<bool> read = _executor.ExecuteReadAsync("GuildLoad", async (connection, deadline, cancellationToken) =>
                 {
-                    while (reader.Read())
+                    Dictionary<long, DBGuild> loaded = new();
+                    await using (NpgsqlCommand command = new($"SELECT id, name, motd, creator_account_id, creation_time, revision, created_at_utc, updated_at_utc FROM {GuildTable}", connection)
                     {
-                        DBGuild guild = new(reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetInt64(3), reader.GetInt64(4))
+                        CommandTimeout = deadline.RemainingCommandTimeoutSeconds,
+                    })
+                    await using (NpgsqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken))
+                    {
+                        while (await reader.ReadAsync(cancellationToken))
                         {
-                            PersistenceRevision = reader.GetInt64(5),
-                            CreatedAtUtc = reader.GetDateTime(6),
-                            UpdatedAtUtc = reader.GetDateTime(7),
-                            PersistenceState = PersistenceState.Clean,
-                        };
-                        guilds.Add(guild);
-                        loaded.Add(guild.Id, guild);
+                            DBGuild guild = new(reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetInt64(3), reader.GetInt64(4))
+                            {
+                                PersistenceRevision = reader.GetInt64(5),
+                                CreatedAtUtc = reader.GetDateTime(6),
+                                UpdatedAtUtc = reader.GetDateTime(7),
+                                PersistenceState = PersistenceState.Clean,
+                            };
+                            guilds.Add(guild);
+                            loaded.Add(guild.Id, guild);
+                        }
                     }
-                }
 
-                using NpgsqlCommand memberCommand = new($"SELECT member.player_account_id, member.guild_id, member.membership FROM {GuildMemberTable} member INNER JOIN {GuildTable} guild ON guild.id = member.guild_id", connection);
-                using NpgsqlDataReader memberReader = memberCommand.ExecuteReader();
-                while (memberReader.Read())
-                {
-                    long guildId = memberReader.GetInt64(1);
-                    if (loaded.TryGetValue(guildId, out DBGuild guild))
-                        guild.Members.Add(new DBGuildMember(memberReader.GetInt64(0), guildId, memberReader.GetInt32(2)));
-                }
-                return true;
+                    await using NpgsqlCommand memberCommand = new($"SELECT member.player_account_id, member.guild_id, member.membership FROM {GuildMemberTable} member INNER JOIN {GuildTable} guild ON guild.id = member.guild_id", connection)
+                    {
+                        CommandTimeout = deadline.RemainingCommandTimeoutSeconds,
+                    };
+                    await using NpgsqlDataReader memberReader = await memberCommand.ExecuteReaderAsync(cancellationToken);
+                    while (await memberReader.ReadAsync(cancellationToken))
+                    {
+                        long guildId = memberReader.GetInt64(1);
+                        if (loaded.TryGetValue(guildId, out DBGuild guild))
+                            guild.Members.Add(new DBGuildMember(memberReader.GetInt64(0), guildId, memberReader.GetInt32(2)));
+                    }
+                    return true;
+                }).GetAwaiter().GetResult();
+                if (read.Succeeded)
+                    return read.Value;
             }
             catch
             {
-                guilds.Clear();
-                return false;
             }
+
+            guilds.Clear();
+            return false;
         }
 
         public GuildStoreResult CreateGuild(DBGuild guild, DBGuildMember leader)

@@ -36,15 +36,23 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
 
             try
             {
-                using NpgsqlConnection connection = _dataSource.OpenConnection();
-                using NpgsqlCommand command = new($"SELECT id, player_name FROM {AccountTable} WHERE normalized_player_name = @playerName", connection);
-                command.Parameters.AddWithValue("playerName", NpgsqlDbType.Text, normalizedName);
-                using NpgsqlDataReader reader = command.ExecuteReader();
-                if (reader.Read() == false)
+                PostgreSQLReadResult<(ulong Id, string Name)?> read = _executor.ExecuteReadAsync<(ulong Id, string Name)?>("PlayerGetIdByName", async (connection, deadline, cancellationToken) =>
+                {
+                    await using NpgsqlCommand command = new($"SELECT id, player_name FROM {AccountTable} WHERE normalized_player_name = @playerName", connection)
+                    {
+                        CommandTimeout = deadline.RemainingCommandTimeoutSeconds,
+                    };
+                    command.Parameters.AddWithValue("playerName", NpgsqlDbType.Text, normalizedName);
+                    await using NpgsqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
+                    return await reader.ReadAsync(cancellationToken)
+                        ? (unchecked((ulong)reader.GetInt64(0)), reader.GetString(1))
+                        : null;
+                }).GetAwaiter().GetResult();
+                if (read.Succeeded == false || read.Value.HasValue == false)
                     return false;
 
-                playerDbId = unchecked((ulong)reader.GetInt64(0));
-                playerNameOut = reader.GetString(1);
+                playerDbId = read.Value.Value.Id;
+                playerNameOut = read.Value.Value.Name;
                 return true;
             }
             catch
@@ -58,11 +66,17 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
             playerName = null;
             try
             {
-                using NpgsqlConnection connection = _dataSource.OpenConnection();
-                using NpgsqlCommand command = new($"SELECT player_name FROM {AccountTable} WHERE id = @id", connection);
-                command.Parameters.AddWithValue("id", NpgsqlDbType.Bigint, unchecked((long)playerDbId));
-                playerName = command.ExecuteScalar() as string;
-                return string.IsNullOrWhiteSpace(playerName) == false;
+                PostgreSQLReadResult<string> read = _executor.ExecuteReadAsync("PlayerGetName", async (connection, deadline, cancellationToken) =>
+                {
+                    await using NpgsqlCommand command = new($"SELECT player_name FROM {AccountTable} WHERE id = @id", connection)
+                    {
+                        CommandTimeout = deadline.RemainingCommandTimeoutSeconds,
+                    };
+                    command.Parameters.AddWithValue("id", NpgsqlDbType.Bigint, unchecked((long)playerDbId));
+                    return await command.ExecuteScalarAsync(cancellationToken) as string;
+                }).GetAwaiter().GetResult();
+                playerName = read.Value;
+                return read.Succeeded && string.IsNullOrWhiteSpace(playerName) == false;
             }
             catch
             {
@@ -76,12 +90,18 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
             ArgumentNullException.ThrowIfNull(playerNames);
             try
             {
-                using NpgsqlConnection connection = _dataSource.OpenConnection();
-                using NpgsqlCommand command = new($"SELECT id, player_name FROM {AccountTable}", connection);
-                using NpgsqlDataReader reader = command.ExecuteReader();
-                while (reader.Read())
-                    playerNames[unchecked((ulong)reader.GetInt64(0))] = reader.GetString(1);
-                return playerNames.Count > 0;
+                PostgreSQLReadResult<bool> read = _executor.ExecuteReadAsync("PlayerGetNames", async (connection, deadline, cancellationToken) =>
+                {
+                    await using NpgsqlCommand command = new($"SELECT id, player_name FROM {AccountTable}", connection)
+                    {
+                        CommandTimeout = deadline.RemainingCommandTimeoutSeconds,
+                    };
+                    await using NpgsqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
+                    while (await reader.ReadAsync(cancellationToken))
+                        playerNames[unchecked((ulong)reader.GetInt64(0))] = reader.GetString(1);
+                    return playerNames.Count > 0;
+                }).GetAwaiter().GetResult();
+                return read.Succeeded && read.Value;
             }
             catch
             {
@@ -94,13 +114,19 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
             lastLogoutTime = 0;
             try
             {
-                using NpgsqlConnection connection = _dataSource.OpenConnection();
-                using NpgsqlCommand command = new($"SELECT last_logout_time FROM {ProfileTable} WHERE account_id = @id", connection);
-                command.Parameters.AddWithValue("id", NpgsqlDbType.Bigint, unchecked((long)playerDbId));
-                object value = command.ExecuteScalar();
-                if (value == null)
+                PostgreSQLReadResult<long?> read = _executor.ExecuteReadAsync<long?>("PlayerGetLastLogoutTime", async (connection, deadline, cancellationToken) =>
+                {
+                    await using NpgsqlCommand command = new($"SELECT last_logout_time FROM {ProfileTable} WHERE account_id = @id", connection)
+                    {
+                        CommandTimeout = deadline.RemainingCommandTimeoutSeconds,
+                    };
+                    command.Parameters.AddWithValue("id", NpgsqlDbType.Bigint, unchecked((long)playerDbId));
+                    object value = await command.ExecuteScalarAsync(cancellationToken);
+                    return value == null ? null : (long)value;
+                }).GetAwaiter().GetResult();
+                if (read.Succeeded == false || read.Value.HasValue == false)
                     return false;
-                lastLogoutTime = (long)value;
+                lastLogoutTime = read.Value.Value;
                 return lastLogoutTime > 0;
             }
             catch
@@ -114,24 +140,26 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
             if (account == null)
                 return PlayerStoreResult.Failed;
 
-            try
+            PostgreSQLReadResult<PlayerStoreResult> read = _executor.ExecuteReadAsync("PlayerLoad", async (connection, deadline, cancellationToken) =>
             {
-                using NpgsqlConnection connection = _dataSource.OpenConnection();
-                if (AccountExists(connection, null, account.Id) == false)
+                if (await AccountExistsAsync(connection, null, account.Id, deadline, cancellationToken) == false)
                     return PlayerStoreResult.AccountNotFound;
 
                 DBAccount loaded = new() { Id = account.Id };
-                using NpgsqlCommand command = new($"SELECT archive_data, archive_version, game_build_number, start_target, aoi_volume, gazillionite_balance, last_logout_time, revision, created_at_utc, updated_at_utc FROM {ProfileTable} WHERE account_id = @id; SELECT id, kind, parent_entity_id, inventory_proto_id, slot, entity_proto_id, archive_data FROM {EntityTable} WHERE owner_account_id = @id", connection);
+                await using NpgsqlCommand command = new($"SELECT archive_data, archive_version, game_build_number, start_target, aoi_volume, gazillionite_balance, last_logout_time, revision, created_at_utc, updated_at_utc FROM {ProfileTable} WHERE account_id = @id; SELECT id, kind, parent_entity_id, inventory_proto_id, slot, entity_proto_id, archive_data FROM {EntityTable} WHERE owner_account_id = @id", connection)
+                {
+                    CommandTimeout = deadline.RemainingCommandTimeoutSeconds,
+                };
                 command.Parameters.AddWithValue("id", NpgsqlDbType.Bigint, account.Id);
-                using NpgsqlDataReader reader = command.ExecuteReader();
-                if (reader.Read())
+                await using NpgsqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
+                if (await reader.ReadAsync(cancellationToken))
                     loaded.Player = ReadPlayer(reader, account.Id);
                 else
                     loaded.Player = new DBPlayer(account.Id);
 
-                if (reader.NextResult() == false)
+                if (await reader.NextResultAsync(cancellationToken) == false)
                     return PlayerStoreResult.Failed;
-                while (reader.Read())
+                while (await reader.ReadAsync(cancellationToken))
                 {
                     DBEntityCategory category = (DBEntityCategory)reader.GetInt32(1);
                     DBEntity entity = new()
@@ -157,11 +185,8 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
                 account.Items.AddRange(loaded.Items.Entries);
                 account.ControlledEntities.AddRange(loaded.ControlledEntities.Entries);
                 return PlayerStoreResult.Success;
-            }
-            catch
-            {
-                return PlayerStoreResult.Failed;
-            }
+            }).GetAwaiter().GetResult();
+            return read.Succeeded ? read.Value : PlayerStoreResult.Failed;
         }
 
         public PlayerStoreResult SavePlayerData(DBAccount account)
@@ -220,16 +245,16 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
             return PlayerStoreResult.Success;
         }
 
-        private static bool AccountExists(NpgsqlConnection connection, NpgsqlTransaction transaction, long accountId)
-        {
-            using NpgsqlCommand command = new($"SELECT 1 FROM {AccountTable} WHERE id = @id", connection, transaction);
-            command.Parameters.AddWithValue("id", NpgsqlDbType.Bigint, accountId);
-            return command.ExecuteScalar() != null;
-        }
-
         private static async Task<bool> AccountExistsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long accountId, CancellationToken cancellationToken)
         {
+            return await AccountExistsAsync(connection, transaction, accountId, null, cancellationToken);
+        }
+
+        private static async Task<bool> AccountExistsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long accountId, PostgreSQLOperationDeadline deadline, CancellationToken cancellationToken)
+        {
             await using NpgsqlCommand command = new($"SELECT 1 FROM {AccountTable} WHERE id = @id", connection, transaction);
+            if (deadline != null)
+                command.CommandTimeout = deadline.RemainingCommandTimeoutSeconds;
             command.Parameters.AddWithValue("id", NpgsqlDbType.Bigint, accountId);
             return await command.ExecuteScalarAsync(cancellationToken) != null;
         }
