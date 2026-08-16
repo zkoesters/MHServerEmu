@@ -58,12 +58,24 @@ namespace MHServerEmu.Core.Tests.Config
             Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(files.OverridePath));
         }
 
+        [Fact]
+        public void Constructor_OverrideAllowsConcurrentReaders_InitializesWithoutThrow()
+        {
+            using TemporaryConfigFiles files = new();
+            files.WriteOverride(string.Empty);
+
+            using FileStream overrideFile = new(files.OverridePath, FileMode.Open, FileAccess.Write, FileShare.Read);
+            ConfigManager manager = new(files.ConfigPath, files.OverridePath);
+
+            Assert.NotNull(manager);
+        }
+
         [Theory]
         [InlineData((int)UnixFileMode.GroupRead)]
         [InlineData((int)UnixFileMode.GroupWrite)]
         [InlineData((int)UnixFileMode.OtherRead)]
         [InlineData((int)UnixFileMode.OtherWrite)]
-        public void HasUnsafeOverrideFilePermissions_ExistingOverrideAllowsGroupOrOtherReadWrite_ReturnsTrue(int unsafeMode)
+        public void HasUnsafeUnixOverrideFilePermissions_ExistingOverrideAllowsGroupOrOtherReadWrite_ReturnsTrue(int unsafeMode)
         {
             if (OperatingSystem.IsWindows())
                 return;
@@ -73,13 +85,13 @@ namespace MHServerEmu.Core.Tests.Config
             File.SetUnixFileMode(files.OverridePath, UnixFileMode.UserRead | UnixFileMode.UserWrite | (UnixFileMode)unsafeMode);
             ConfigManager manager = new(files.ConfigPath, files.OverridePath);
 
-            Assert.True(manager.HasUnsafeOverrideFilePermissions());
+            Assert.True(manager.HasUnsafeUnixOverrideFilePermissions());
         }
 
         [Theory]
         [InlineData((int)UnixFileMode.GroupExecute)]
         [InlineData((int)UnixFileMode.OtherExecute)]
-        public void HasUnsafeOverrideFilePermissions_ExistingOverrideAllowsOnlyGroupOrOtherExecute_ReturnsFalse(int executeMode)
+        public void HasUnsafeUnixOverrideFilePermissions_ExistingOverrideAllowsOnlyGroupOrOtherExecute_ReturnsFalse(int executeMode)
         {
             if (OperatingSystem.IsWindows())
                 return;
@@ -89,11 +101,11 @@ namespace MHServerEmu.Core.Tests.Config
             File.SetUnixFileMode(files.OverridePath, UnixFileMode.UserRead | UnixFileMode.UserWrite | (UnixFileMode)executeMode);
             ConfigManager manager = new(files.ConfigPath, files.OverridePath);
 
-            Assert.False(manager.HasUnsafeOverrideFilePermissions());
+            Assert.False(manager.HasUnsafeUnixOverrideFilePermissions());
         }
 
         [Fact]
-        public void HasUnsafeOverrideFilePermissions_OnWindows_ReturnsFalse()
+        public void HasUnsafeUnixOverrideFilePermissions_OnWindows_ReturnsFalse()
         {
             if (!OperatingSystem.IsWindows())
                 return;
@@ -102,7 +114,7 @@ namespace MHServerEmu.Core.Tests.Config
             files.WriteOverride(string.Empty);
             ConfigManager manager = new(files.ConfigPath, files.OverridePath);
 
-            Assert.False(manager.HasUnsafeOverrideFilePermissions());
+            Assert.False(manager.HasUnsafeUnixOverrideFilePermissions());
         }
 
         private sealed class TestConfig : ConfigContainer

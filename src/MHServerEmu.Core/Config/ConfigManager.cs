@@ -39,7 +39,7 @@ namespace MHServerEmu.Core.Config
                         {
                             Mode = FileMode.CreateNew,
                             Access = FileAccess.Write,
-                            Share = FileShare.None,
+                            Share = FileShare.Read,
                             UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
                         }))
                         {
@@ -71,9 +71,10 @@ namespace MHServerEmu.Core.Config
         public string GetOverrideString(string section, string key) => _overrideFile.GetString(section, key);
 
         /// <summary>
-        /// Checks whether the override configuration file can be read or written by group or other users.
+        /// Checks Unix mode bits to determine whether the override configuration file can be read or written by group or other users.
+        /// Always returns false on Windows because ACL inspection is deliberately unsupported in Phase 1.
         /// </summary>
-        public bool HasUnsafeOverrideFilePermissions()
+        public bool HasUnsafeUnixOverrideFilePermissions()
         {
             if (OperatingSystem.IsWindows())
                 return false;
