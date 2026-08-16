@@ -14,6 +14,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
         private readonly Action<PostgreSQLPersistenceFailure> _fatalCallback;
         private NpgsqlDataSource _dataSource;
         private PostgreSQLWriterOwner _writerOwner;
+        private PostgreSQLStoreExecutor _storeExecutor;
         private PostgreSQLWriterLockMonitor _monitor;
         private int _started;
 
@@ -28,6 +29,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
         }
 
         internal NpgsqlDataSource DataSource => _dataSource;
+        internal PostgreSQLStoreExecutor StoreExecutor => _storeExecutor ?? throw new InvalidOperationException("Provider has not started.");
         internal PostgreSQLWriterFenceToken WriterFenceToken => _writerOwner?.FenceToken;
         internal int WriterBackendProcessId => _writerOwner?.BackendProcessId ?? 0;
         internal bool IsFenced => _writerOwner?.IsFenced ?? true;
@@ -53,6 +55,11 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
                     RunMigrationsAsync,
                     cancellationToken);
                 writerConnection = null;
+                _storeExecutor = new PostgreSQLStoreExecutor(
+                    _dataSource,
+                    _writerOwner,
+                    TimeSpan.FromSeconds(_settings.OperationTimeoutSeconds),
+                    new NpgsqlTransactionCommitter());
                 _monitor = new PostgreSQLWriterLockMonitor(_writerOwner.Connection, Fence);
                 return PostgreSQLProviderStartResult.Success();
             }
@@ -74,9 +81,10 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
         internal async Task ValidateWriterAsync(PostgreSQLWriterFenceToken token, CancellationToken cancellationToken = default)
         {
             PostgreSQLWriterOwner owner = _writerOwner ?? throw new PostgreSQLWriterFencedException();
+            PostgreSQLOperationDeadline deadline = new(TimeSpan.FromSeconds(_settings.OperationTimeoutSeconds));
             await using NpgsqlConnection connection = await _dataSource.OpenConnectionAsync(cancellationToken);
             await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
-            await owner.ValidateTransactionAsync(connection, transaction, token, cancellationToken);
+            await owner.ValidateTransactionAsync(connection, transaction, token, deadline, cancellationToken);
             await transaction.RollbackAsync(cancellationToken);
         }
 
@@ -84,9 +92,10 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
         {
             ArgumentNullException.ThrowIfNull(writeAsync);
             PostgreSQLWriterOwner owner = _writerOwner ?? throw new PostgreSQLWriterFencedException();
+            PostgreSQLOperationDeadline deadline = new(TimeSpan.FromSeconds(_settings.OperationTimeoutSeconds));
             await using NpgsqlConnection connection = await _dataSource.OpenConnectionAsync(cancellationToken);
             await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
-            await owner.ValidateTransactionAsync(connection, transaction, owner.FenceToken, cancellationToken);
+            await owner.ValidateTransactionAsync(connection, transaction, owner.FenceToken, deadline, cancellationToken);
             await writeAsync(connection, transaction, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
         }
@@ -100,6 +109,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
             if (_dataSource != null)
                 await _dataSource.DisposeAsync();
             _monitor = null;
+            _storeExecutor = null;
             _writerOwner = null;
             _dataSource = null;
         }
@@ -157,6 +167,11 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
         {
             _writerOwner.Fence();
             _fatalCallback(new PostgreSQLPersistenceFailure("WriterLockLost", "WriterMonitor"));
+        }
+
+        internal void FenceForTest()
+        {
+            (_writerOwner ?? throw new InvalidOperationException("Provider has not started.")).Fence();
         }
     }
 }
