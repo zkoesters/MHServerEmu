@@ -71,5 +71,207 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
             Assert.True(manager.Initialize(databasePath, 0, TimeSpan.FromHours(1)));
             Assert.Equal(AccountStoreResult.AccountNotFound, manager.ChangePlayerName(account, "PlayerTwo"));
         }
+
+        [Fact]
+        public void InsertAccount_FinalEmailUniqueConstraint_ReturnsEmailConflict()
+        {
+            using TemporaryDirectory temporaryDirectory = new();
+            SQLiteDBManager manager = InitializeManager(temporaryDirectory);
+
+            Assert.Equal(AccountStoreResult.Success, manager.InsertAccount(CreateAccount(1, "account@example.com", "PlayerOne")));
+
+            Assert.Equal(AccountStoreResult.EmailConflict, manager.InsertAccount(CreateAccount(2, "account@example.com", "PlayerTwo")));
+        }
+
+        [Fact]
+        public void InsertAccount_FinalPlayerNameUniqueConstraint_ReturnsPlayerNameConflict()
+        {
+            using TemporaryDirectory temporaryDirectory = new();
+            SQLiteDBManager manager = InitializeManager(temporaryDirectory);
+
+            Assert.Equal(AccountStoreResult.Success, manager.InsertAccount(CreateAccount(1, "account@example.com", "PlayerOne")));
+
+            Assert.Equal(AccountStoreResult.PlayerNameConflict, manager.InsertAccount(CreateAccount(2, "other@example.com", "PlayerOne")));
+        }
+
+        [Fact]
+        public void ChangePassword_UpdatesOnlyCredentialsAndSynthesizesMetadataAfterSuccess()
+        {
+            using TemporaryDirectory temporaryDirectory = new();
+            SQLiteDBManager manager = InitializeManager(temporaryDirectory);
+            DBAccount account = CreateAccount(1, "account@example.com", "PlayerOne");
+            account.Flags = AccountFlags.BypassLoginQueue;
+            Assert.Equal(AccountStoreResult.Success, manager.InsertAccount(account));
+
+            account.Flags = AccountFlags.None;
+            account.PersistenceRevision = 42;
+            account.PersistenceState = PersistenceState.OutcomeUncertain;
+
+            Assert.Equal(AccountStoreResult.Success, manager.ChangePassword(account, [0x01], [0x02]));
+            Assert.Equal(0, account.PersistenceRevision);
+            Assert.Equal(PersistenceState.Clean, account.PersistenceState);
+            Assert.True(manager.TryQueryAccountByEmail(account.Email, out DBAccount stored));
+            Assert.Equal(AccountFlags.BypassLoginQueue, stored.Flags);
+        }
+
+        [Fact]
+        public void GetPlayerNames_AppendsToSuppliedDictionary()
+        {
+            using TemporaryDirectory temporaryDirectory = new();
+            SQLiteDBManager manager = InitializeManager(temporaryDirectory);
+            Assert.Equal(AccountStoreResult.Success, manager.InsertAccount(CreateAccount(1, "account@example.com", "PlayerOne")));
+            Dictionary<ulong, string> names = new() { [99] = "Existing" };
+
+            Assert.True(manager.GetPlayerNames(names));
+
+            Assert.Equal("Existing", names[99]);
+            Assert.Equal("PlayerOne", names[1]);
+        }
+
+        [Fact]
+        public void CreateGuild_CreatorAlreadyInAnotherGuild_RollsBackAndReturnsMembershipConflict()
+        {
+            using TemporaryDirectory temporaryDirectory = new();
+            string databasePath = Path.Combine(temporaryDirectory.Path, "Account.db");
+            SQLiteDBManager manager = new();
+            Assert.True(manager.Initialize(databasePath, 0, TimeSpan.FromHours(1)));
+            InsertGuild(databasePath, 1, "Existing");
+            InsertGuildMember(databasePath, 1, 1, 3);
+            DBGuild guild = new(2, "New", string.Empty, 1, 0);
+
+            Assert.Equal(GuildStoreResult.MembershipConflict, manager.CreateGuild(guild, new DBGuildMember(1, 2, 3)));
+            Assert.False(GuildExists(databasePath, 2));
+        }
+
+        [Fact]
+        public void DeleteGuild_MissingGuild_ReturnsGuildNotFound()
+        {
+            using TemporaryDirectory temporaryDirectory = new();
+            SQLiteDBManager manager = InitializeManager(temporaryDirectory);
+
+            Assert.Equal(GuildStoreResult.GuildNotFound, manager.DeleteGuild(new DBGuild(1, "Missing", string.Empty, 1, 0)));
+        }
+
+        [Fact]
+        public void ApplyMembershipTransition_NonLegacyRevision_ReturnsStaleRevision()
+        {
+            using TemporaryDirectory temporaryDirectory = new();
+            string databasePath = Path.Combine(temporaryDirectory.Path, "Account.db");
+            SQLiteDBManager manager = new();
+            Assert.True(manager.Initialize(databasePath, 0, TimeSpan.FromHours(1)));
+            InsertGuild(databasePath, 1, "Guild");
+            InsertGuildMember(databasePath, 1, 1, 3);
+            DBGuild guild = new(1, "Guild", string.Empty, 1, 0) { PersistenceRevision = 1 };
+            GuildMemberTransition transition = new(1, 0, new GuildMemberChange(1, 3, 2));
+
+            Assert.Equal(GuildStoreResult.StaleRevision, manager.ApplyMembershipTransition(guild, transition));
+        }
+
+        [Fact]
+        public void ApplyMembershipTransition_MemberInAnotherGuild_ReturnsMembershipConflict()
+        {
+            using TemporaryDirectory temporaryDirectory = new();
+            string databasePath = Path.Combine(temporaryDirectory.Path, "Account.db");
+            SQLiteDBManager manager = new();
+            Assert.True(manager.Initialize(databasePath, 0, TimeSpan.FromHours(1)));
+            InsertGuild(databasePath, 1, "Guild");
+            InsertGuild(databasePath, 2, "Other");
+            InsertGuildMember(databasePath, 1, 1, 3);
+            InsertGuildMember(databasePath, 2, 2, 1);
+            DBGuild guild = new(1, "Guild", string.Empty, 1, 0);
+            GuildMemberTransition transition = new(1, 0, new GuildMemberChange(2, null, 1));
+
+            Assert.Equal(GuildStoreResult.MembershipConflict, manager.ApplyMembershipTransition(guild, transition));
+        }
+
+        [Fact]
+        public void ApplyMembershipTransition_LeavingGuildWithoutLeader_ReturnsInvalidData()
+        {
+            using TemporaryDirectory temporaryDirectory = new();
+            string databasePath = Path.Combine(temporaryDirectory.Path, "Account.db");
+            SQLiteDBManager manager = new();
+            Assert.True(manager.Initialize(databasePath, 0, TimeSpan.FromHours(1)));
+            InsertGuild(databasePath, 1, "Guild");
+            InsertGuildMember(databasePath, 1, 1, 3);
+            DBGuild guild = new(1, "Guild", string.Empty, 1, 0);
+            GuildMemberTransition transition = new(1, 0, new GuildMemberChange(1, 3, 2));
+
+            Assert.Equal(GuildStoreResult.InvalidData, manager.ApplyMembershipTransition(guild, transition));
+            Assert.Equal(3L, GetGuildMembership(databasePath, 1));
+        }
+
+        [Fact]
+        public void ApplyMembershipTransition_LeaderTransfer_PersistsExactlyOneLeader()
+        {
+            using TemporaryDirectory temporaryDirectory = new();
+            string databasePath = Path.Combine(temporaryDirectory.Path, "Account.db");
+            SQLiteDBManager manager = new();
+            Assert.True(manager.Initialize(databasePath, 0, TimeSpan.FromHours(1)));
+            InsertGuild(databasePath, 1, "Guild");
+            InsertGuildMember(databasePath, 1, 1, 3);
+            InsertGuildMember(databasePath, 2, 1, 1);
+            DBGuild guild = new(1, "Guild", string.Empty, 1, 0);
+            GuildMemberTransition transition = new(1, 0,
+                new GuildMemberChange(1, 3, 2),
+                new GuildMemberChange(2, 1, 3));
+
+            Assert.Equal(GuildStoreResult.Success, manager.ApplyMembershipTransition(guild, transition));
+            Assert.Equal(2L, GetGuildMembership(databasePath, 1));
+            Assert.Equal(3L, GetGuildMembership(databasePath, 2));
+        }
+
+        private static SQLiteDBManager InitializeManager(TemporaryDirectory temporaryDirectory)
+        {
+            SQLiteDBManager manager = new();
+            Assert.True(manager.Initialize(Path.Combine(temporaryDirectory.Path, "Account.db"), 0, TimeSpan.FromHours(1)));
+            return manager;
+        }
+
+        private static DBAccount CreateAccount(long id, string email, string playerName)
+        {
+            return new DBAccount(email, playerName, "twelve-chars") { Id = id };
+        }
+
+        private static void InsertGuild(string databasePath, long id, string name)
+        {
+            using SQLiteConnection connection = OpenConnection(databasePath);
+            using SQLiteCommand command = new("INSERT INTO Guild (Id, Name, Motd, CreatorDbGuid, CreationTime) VALUES (@id, @name, '', 0, 0)", connection);
+            command.Parameters.AddWithValue("@id", id);
+            command.Parameters.AddWithValue("@name", name);
+            command.ExecuteNonQuery();
+        }
+
+        private static void InsertGuildMember(string databasePath, long playerDbGuid, long guildId, long membership)
+        {
+            using SQLiteConnection connection = OpenConnection(databasePath);
+            using SQLiteCommand command = new("INSERT INTO GuildMember (PlayerDbGuid, GuildId, Membership) VALUES (@playerDbGuid, @guildId, @membership)", connection);
+            command.Parameters.AddWithValue("@playerDbGuid", playerDbGuid);
+            command.Parameters.AddWithValue("@guildId", guildId);
+            command.Parameters.AddWithValue("@membership", membership);
+            command.ExecuteNonQuery();
+        }
+
+        private static bool GuildExists(string databasePath, long id)
+        {
+            using SQLiteConnection connection = OpenConnection(databasePath);
+            using SQLiteCommand command = new("SELECT COUNT(*) FROM Guild WHERE Id = @id", connection);
+            command.Parameters.AddWithValue("@id", id);
+            return Convert.ToInt64(command.ExecuteScalar()) == 1;
+        }
+
+        private static long GetGuildMembership(string databasePath, long playerDbGuid)
+        {
+            using SQLiteConnection connection = OpenConnection(databasePath);
+            using SQLiteCommand command = new("SELECT Membership FROM GuildMember WHERE PlayerDbGuid = @playerDbGuid", connection);
+            command.Parameters.AddWithValue("@playerDbGuid", playerDbGuid);
+            return Convert.ToInt64(command.ExecuteScalar());
+        }
+
+        private static SQLiteConnection OpenConnection(string databasePath)
+        {
+            SQLiteConnection connection = new($"Data Source={databasePath}");
+            connection.Open();
+            return connection;
+        }
     }
 }

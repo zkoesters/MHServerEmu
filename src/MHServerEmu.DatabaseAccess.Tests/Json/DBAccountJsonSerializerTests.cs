@@ -57,6 +57,29 @@ namespace MHServerEmu.DatabaseAccess.Tests.Json
             Assert.Equal(64, account.PasswordKeySize);
         }
 
+        [Fact]
+        public void JsonStore_UsesCheckedNoOpResultsForUnsupportedAccountAndGuildIntents()
+        {
+            JsonDBManager store = JsonDBManager.Instance;
+            DBAccount account = new("account@example.com", "PlayerOne", "password");
+            DBGuild guild = new(1, "Guild", string.Empty, account.Id, 0);
+            DBGuildMember creator = new(account.Id, guild.Id, 3);
+            GuildMemberTransition transition = new(guild.Id, 0, new GuildMemberChange(account.Id, null, 3));
+
+            Assert.Equal(AccountStoreResult.Failed, store.InsertAccount(account));
+            Assert.Equal(AccountStoreResult.Failed, store.ChangePlayerName(account, "PlayerTwo"));
+            Assert.Equal(AccountStoreResult.Failed, store.ChangePassword(account, [0x01], [0x02]));
+            Assert.Equal(AccountStoreResult.Failed, store.ChangeUserLevel(account, AccountUserLevel.Admin));
+            Assert.Equal(AccountStoreResult.Failed, store.ChangeFlags(account, AccountFlags.IsBanned));
+            Assert.Equal(PlayerStoreResult.Success, store.LoadPlayerData(account));
+            Assert.Equal(PlayerStoreResult.Failed, store.SavePlayerData(new DBAccount("other@example.com", "PlayerTwo", "password")));
+            Assert.Equal(GuildStoreResult.Success, store.CreateGuild(guild, creator));
+            Assert.Equal(GuildStoreResult.Success, store.ChangeGuildName(guild, "Renamed"));
+            Assert.Equal(GuildStoreResult.Success, store.ChangeGuildMotd(guild, "Motd"));
+            Assert.Equal(GuildStoreResult.Success, store.ApplyMembershipTransition(guild, transition));
+            Assert.Equal(GuildStoreResult.Success, store.DeleteGuild(guild));
+        }
+
         private static void AssertMetadataIsExcluded(string json, params string[] propertyNames)
         {
             using JsonDocument document = JsonDocument.Parse(json);

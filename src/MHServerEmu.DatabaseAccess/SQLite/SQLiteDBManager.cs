@@ -139,11 +139,19 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                 {
                     connection.Execute(@"INSERT INTO Account (Id, Email, PlayerName, PasswordHash, Salt, UserLevel, Flags)
                         VALUES (@Id, @Email, @PlayerName, @PasswordHash, @Salt, @UserLevel, @Flags)", account);
+                    SetPersistenceMetadata(account);
                     return AccountStoreResult.Success;
                 }
                 catch (Exception e)
                 {
                     Logger.ErrorException(e, nameof(InsertAccount));
+
+                    if (connection.QueryFirstOrDefault<long?>("SELECT Id FROM Account WHERE Email = @Email COLLATE NOCASE", new { account.Email }).HasValue)
+                        return AccountStoreResult.EmailConflict;
+
+                    if (connection.QueryFirstOrDefault<long?>("SELECT Id FROM Account WHERE PlayerName = @PlayerName COLLATE NOCASE", new { account.PlayerName }).HasValue)
+                        return AccountStoreResult.PlayerNameConflict;
+
                     return AccountStoreResult.Failed;
                 }
             }
@@ -157,7 +165,11 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                 {
                     using SQLiteConnection connection = GetConnection();
                     int updated = connection.Execute("UPDATE Account SET PlayerName=@PlayerName WHERE Id=@Id", new { PlayerName = playerName, account.Id });
-                    return updated == 1 ? AccountStoreResult.Success : AccountStoreResult.AccountNotFound;
+                    if (updated != 1)
+                        return AccountStoreResult.AccountNotFound;
+
+                    SetPersistenceMetadata(account);
+                    return AccountStoreResult.Success;
                 }
                 catch (Exception e)
                 {
@@ -174,9 +186,13 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                 try
                 {
                     using SQLiteConnection connection = GetConnection();
-                    int updated = connection.Execute("UPDATE Account SET PasswordHash=@PasswordHash, Salt=@Salt, Flags=@Flags WHERE Id=@Id",
-                        new { PasswordHash = passwordHash, Salt = salt, account.Flags, account.Id });
-                    return updated == 1 ? AccountStoreResult.Success : AccountStoreResult.AccountNotFound;
+                    int updated = connection.Execute("UPDATE Account SET PasswordHash=@PasswordHash, Salt=@Salt WHERE Id=@Id",
+                        new { PasswordHash = passwordHash, Salt = salt, account.Id });
+                    if (updated != 1)
+                        return AccountStoreResult.AccountNotFound;
+
+                    SetPersistenceMetadata(account);
+                    return AccountStoreResult.Success;
                 }
                 catch (Exception e)
                 {
@@ -194,7 +210,11 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                 {
                     using SQLiteConnection connection = GetConnection();
                     int updated = connection.Execute("UPDATE Account SET UserLevel=@UserLevel WHERE Id=@Id", new { UserLevel = userLevel, account.Id });
-                    return updated == 1 ? AccountStoreResult.Success : AccountStoreResult.AccountNotFound;
+                    if (updated != 1)
+                        return AccountStoreResult.AccountNotFound;
+
+                    SetPersistenceMetadata(account);
+                    return AccountStoreResult.Success;
                 }
                 catch (Exception e)
                 {
@@ -212,7 +232,11 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                 {
                     using SQLiteConnection connection = GetConnection();
                     int updated = connection.Execute("UPDATE Account SET Flags=@Flags WHERE Id=@Id", new { Flags = flags, account.Id });
-                    return updated == 1 ? AccountStoreResult.Success : AccountStoreResult.AccountNotFound;
+                    if (updated != 1)
+                        return AccountStoreResult.AccountNotFound;
+
+                    SetPersistenceMetadata(account);
+                    return AccountStoreResult.Success;
                 }
                 catch (Exception e)
                 {
@@ -314,27 +338,34 @@ namespace MHServerEmu.DatabaseAccess.SQLite
 
         public GuildStoreResult CreateGuild(DBGuild guild, DBGuildMember creator)
         {
-            try
+            lock (_writeLock)
             {
-                using SQLiteConnection connection = GetConnection();
-                using SQLiteTransaction transaction = connection.BeginTransaction();
+                if (creator.GuildId != guild.Id || creator.Membership != 3)
+                    return GuildStoreResult.InvalidData;
 
-                int guildInserted = connection.Execute("INSERT OR IGNORE INTO Guild (Id, Name, Motd, CreatorDbGuid, CreationTime) VALUES (@Id, @Name, @Motd, @CreatorDbGuid, @CreationTime)", guild, transaction);
-                if (guildInserted == 0)
-                    connection.Execute("UPDATE Guild SET Name=@Name, Motd=@Motd WHERE Id=@Id", guild, transaction);
+                try
+                {
+                    using SQLiteConnection connection = GetConnection();
+                    using SQLiteTransaction transaction = connection.BeginTransaction();
 
-                int memberInserted = connection.Execute("INSERT OR IGNORE INTO GuildMember (PlayerDbGuid, GuildId, Membership) VALUES (@PlayerDbGuid, @GuildId, @Membership)", creator, transaction);
-                if (memberInserted == 0)
-                    connection.Execute("UPDATE GuildMember SET Membership=@Membership WHERE PlayerDbGuid=@PlayerDbGuid", creator, transaction);
+                    if (connection.QueryFirstOrDefault<long?>("SELECT GuildId FROM GuildMember WHERE PlayerDbGuid=@PlayerDbGuid", new { creator.PlayerDbGuid }, transaction).HasValue)
+                    {
+                        transaction.Rollback();
+                        return GuildStoreResult.MembershipConflict;
+                    }
 
-                transaction.Commit();
-                Logger.Trace($"CreateGuild(): {guild}");
-                return GuildStoreResult.Success;
-            }
-            catch (Exception e)
-            {
-                Logger.ErrorException(e, nameof(CreateGuild));
-                return GuildStoreResult.Failed;
+                    connection.Execute("INSERT INTO Guild (Id, Name, Motd, CreatorDbGuid, CreationTime) VALUES (@Id, @Name, @Motd, @CreatorDbGuid, @CreationTime)", guild, transaction);
+                    connection.Execute("INSERT INTO GuildMember (PlayerDbGuid, GuildId, Membership) VALUES (@PlayerDbGuid, @GuildId, @Membership)", creator, transaction);
+                    transaction.Commit();
+                    SetPersistenceMetadata(guild);
+                    Logger.Trace($"CreateGuild(): {guild}");
+                    return GuildStoreResult.Success;
+                }
+                catch (Exception e)
+                {
+                    Logger.ErrorException(e, nameof(CreateGuild));
+                    return GuildStoreResult.Failed;
+                }
             }
         }
 
@@ -344,7 +375,11 @@ namespace MHServerEmu.DatabaseAccess.SQLite
             {
                 using SQLiteConnection connection = GetConnection();
                 int updated = connection.Execute("UPDATE Guild SET Name=@Name WHERE Id=@Id", new { Name = name, guild.Id });
-                return updated == 1 ? GuildStoreResult.Success : GuildStoreResult.GuildNotFound;
+                if (updated != 1)
+                    return GuildStoreResult.GuildNotFound;
+
+                SetPersistenceMetadata(guild);
+                return GuildStoreResult.Success;
             }
             catch (Exception e)
             {
@@ -359,7 +394,11 @@ namespace MHServerEmu.DatabaseAccess.SQLite
             {
                 using SQLiteConnection connection = GetConnection();
                 int updated = connection.Execute("UPDATE Guild SET Motd=@Motd WHERE Id=@Id", new { Motd = motd, guild.Id });
-                return updated == 1 ? GuildStoreResult.Success : GuildStoreResult.GuildNotFound;
+                if (updated != 1)
+                    return GuildStoreResult.GuildNotFound;
+
+                SetPersistenceMetadata(guild);
+                return GuildStoreResult.Success;
             }
             catch (Exception e)
             {
@@ -370,56 +409,144 @@ namespace MHServerEmu.DatabaseAccess.SQLite
 
         public GuildStoreResult ApplyMembershipTransition(DBGuild guild, GuildMemberTransition transition)
         {
-            try
+            lock (_writeLock)
             {
-                using SQLiteConnection connection = GetConnection();
-                using SQLiteTransaction transaction = connection.BeginTransaction();
+                if (transition.GuildId != guild.Id)
+                    return GuildStoreResult.InvalidData;
 
-                foreach (GuildMemberChange change in transition.Changes)
+                if (guild.PersistenceRevision != 0 || transition.ExpectedRevision != 0)
+                    return GuildStoreResult.StaleRevision;
+
+                try
                 {
-                    if (change.NewMembership == null)
-                        connection.Execute("DELETE FROM GuildMember WHERE PlayerDbGuid=@PlayerDbGuid", new { change.PlayerDbGuid }, transaction);
-                    else
-                    {
-                        var member = new { change.PlayerDbGuid, GuildId = guild.Id, Membership = change.NewMembership.Value };
-                        int inserted = connection.Execute("INSERT OR IGNORE INTO GuildMember (PlayerDbGuid, GuildId, Membership) VALUES (@PlayerDbGuid, @GuildId, @Membership)", member, transaction);
-                        if (inserted == 0)
-                            connection.Execute("UPDATE GuildMember SET Membership=@Membership WHERE PlayerDbGuid=@PlayerDbGuid", member, transaction);
-                    }
-                }
+                    using SQLiteConnection connection = GetConnection();
+                    using SQLiteTransaction transaction = connection.BeginTransaction();
 
-                transaction.Commit();
-                return GuildStoreResult.Success;
-            }
-            catch (Exception e)
-            {
-                Logger.ErrorException(e, nameof(ApplyMembershipTransition));
-                return GuildStoreResult.Failed;
+                    if (connection.QueryFirstOrDefault<long?>("SELECT Id FROM Guild WHERE Id=@Id", new { guild.Id }, transaction).HasValue == false)
+                    {
+                        transaction.Rollback();
+                        return GuildStoreResult.GuildNotFound;
+                    }
+
+                    Dictionary<long, DBGuildMember> members = connection.Query<DBGuildMember>("SELECT * FROM GuildMember WHERE GuildId=@Id", new { guild.Id }, transaction)
+                        .ToDictionary(member => member.PlayerDbGuid);
+
+                    foreach (GuildMemberChange change in transition.Changes)
+                    {
+                        DBGuildMember currentMember = connection.QueryFirstOrDefault<DBGuildMember>("SELECT * FROM GuildMember WHERE PlayerDbGuid=@PlayerDbGuid", new { change.PlayerDbGuid }, transaction);
+                        if (change.ExpectedMembership == null)
+                        {
+                            if (currentMember != null)
+                            {
+                                transaction.Rollback();
+                                return GuildStoreResult.MembershipConflict;
+                            }
+                        }
+                        else if (currentMember == null || currentMember.GuildId != guild.Id || currentMember.Membership != change.ExpectedMembership.Value)
+                        {
+                            transaction.Rollback();
+                            return GuildStoreResult.MembershipConflict;
+                        }
+
+                        if (change.NewMembership == null)
+                            members.Remove(change.PlayerDbGuid);
+                        else
+                            members[change.PlayerDbGuid] = new(change.PlayerDbGuid, guild.Id, change.NewMembership.Value);
+                    }
+
+                    if (members.Values.Count(member => member.Membership == 3) != 1)
+                    {
+                        transaction.Rollback();
+                        return GuildStoreResult.InvalidData;
+                    }
+
+                    foreach (GuildMemberChange change in transition.Changes.Where(change => change.NewMembership == null || (change.ExpectedMembership == 3 && change.NewMembership != 3)))
+                    {
+                        if (ApplyMembershipChange(connection, transaction, guild.Id, change) != 1)
+                        {
+                            transaction.Rollback();
+                            return GuildStoreResult.MembershipConflict;
+                        }
+                    }
+
+                    foreach (GuildMemberChange change in transition.Changes.Where(change => change.NewMembership != null && (change.ExpectedMembership != 3 || change.NewMembership == 3)))
+                    {
+                        if (ApplyMembershipChange(connection, transaction, guild.Id, change) != 1)
+                        {
+                            transaction.Rollback();
+                            return GuildStoreResult.MembershipConflict;
+                        }
+                    }
+
+                    transaction.Commit();
+                    SetPersistenceMetadata(guild);
+                    return GuildStoreResult.Success;
+                }
+                catch (Exception e)
+                {
+                    Logger.ErrorException(e, nameof(ApplyMembershipTransition));
+                    return GuildStoreResult.Failed;
+                }
             }
         }
 
         public GuildStoreResult DeleteGuild(DBGuild guild)
         {
-            using SQLiteConnection connection = GetConnection();
-            using SQLiteTransaction transaction = connection.BeginTransaction();
-
-            try
+            lock (_writeLock)
             {
-                // TODO: Enable foreign key constraints in the connection string and just delete the row from the parent table when we fix the Item table.
-                connection.Execute("DELETE FROM GuildMember WHERE GuildId = @Id", guild, transaction);
-                connection.Execute("DELETE FROM Guild WHERE Id = @Id", guild, transaction);
+                using SQLiteConnection connection = GetConnection();
+                using SQLiteTransaction transaction = connection.BeginTransaction();
 
-                transaction.Commit();
+                try
+                {
+                    // TODO: Enable foreign key constraints in the connection string and just delete the row from the parent table when we fix the Item table.
+                    int deleted = connection.Execute("DELETE FROM Guild WHERE Id = @Id", guild, transaction);
+                    if (deleted != 1)
+                    {
+                        transaction.Rollback();
+                        return GuildStoreResult.GuildNotFound;
+                    }
 
-                Logger.Trace($"DeleteGuild(): {guild}");
-                return GuildStoreResult.Success;
+                    connection.Execute("DELETE FROM GuildMember WHERE GuildId = @Id", guild, transaction);
+                    transaction.Commit();
+
+                    SetPersistenceMetadata(guild);
+                    Logger.Trace($"DeleteGuild(): {guild}");
+                    return GuildStoreResult.Success;
+                }
+                catch (Exception e)
+                {
+                    transaction.Rollback();
+                    Logger.ErrorException(e, nameof(DeleteGuild));
+                    return GuildStoreResult.Failed;
+                }
             }
-            catch (Exception e)
-            {
-                transaction.Rollback();
-                Logger.ErrorException(e, nameof(DeleteGuild));
-                return GuildStoreResult.Failed;
-            }
+        }
+
+        private static int ApplyMembershipChange(SQLiteConnection connection, SQLiteTransaction transaction, long guildId, GuildMemberChange change)
+        {
+            if (change.NewMembership == null)
+                return connection.Execute("DELETE FROM GuildMember WHERE PlayerDbGuid=@PlayerDbGuid AND GuildId=@GuildId AND Membership=@ExpectedMembership",
+                    new { change.PlayerDbGuid, GuildId = guildId, change.ExpectedMembership }, transaction);
+
+            if (change.ExpectedMembership == null)
+                return connection.Execute("INSERT INTO GuildMember (PlayerDbGuid, GuildId, Membership) VALUES (@PlayerDbGuid, @GuildId, @Membership)",
+                    new { change.PlayerDbGuid, GuildId = guildId, Membership = change.NewMembership.Value }, transaction);
+
+            return connection.Execute("UPDATE GuildMember SET Membership=@Membership WHERE PlayerDbGuid=@PlayerDbGuid AND GuildId=@GuildId AND Membership=@ExpectedMembership",
+                new { change.PlayerDbGuid, GuildId = guildId, Membership = change.NewMembership.Value, change.ExpectedMembership }, transaction);
+        }
+
+        private static void SetPersistenceMetadata(DBAccount account)
+        {
+            account.PersistenceRevision = 0;
+            account.PersistenceState = PersistenceState.Clean;
+        }
+
+        private static void SetPersistenceMetadata(DBGuild guild)
+        {
+            guild.PersistenceRevision = 0;
+            guild.PersistenceState = PersistenceState.Clean;
         }
 
         /// <summary>
