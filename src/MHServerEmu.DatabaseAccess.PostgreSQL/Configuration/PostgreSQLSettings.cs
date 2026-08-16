@@ -70,6 +70,8 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Configuration
                 builder.CancellationTimeout = config.CancellationTimeoutMilliseconds;
                 builder.IncludeErrorDetail = false;
                 builder.PersistSecurityInfo = false;
+                builder.LogParameters = false;
+                builder.IncludeFailedBatchedCommand = false;
                 settings = new(builder, config, false);
                 return true;
             }
@@ -98,7 +100,19 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Configuration
                 && config.CancellationTimeoutMilliseconds > 0
                 && config.MigrationTimeoutSeconds > 0
                 && config.StartupRetryCount > 0
-                && config.StartupRetryDelayMilliseconds > 0;
+                && HasValidStartupBackoff(config);
+        }
+
+        private static bool HasValidStartupBackoff(PostgreSQLConfig config)
+        {
+            if (config.StartupRetryDelayMilliseconds <= 0)
+                return false;
+
+            if (config.StartupRetryCount == 1)
+                return true;
+
+            return config.StartupRetryCount <= 32
+                && (long)config.StartupRetryDelayMilliseconds * (1L << (config.StartupRetryCount - 2)) <= int.MaxValue;
         }
 
         private static bool ContainsRejectedSetting(NpgsqlConnectionStringBuilder builder)
@@ -110,7 +124,9 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Configuration
                 || builder.ShouldSerialize("Command Timeout")
                 || builder.ShouldSerialize("Cancellation Timeout")
                 || builder.ShouldSerialize("Include Error Detail")
-                || builder.ShouldSerialize("Persist Security Info");
+                || builder.ShouldSerialize("Persist Security Info")
+                || builder.ShouldSerialize("Log Parameters")
+                || builder.ShouldSerialize("Include Failed Batched Command");
         }
     }
 }

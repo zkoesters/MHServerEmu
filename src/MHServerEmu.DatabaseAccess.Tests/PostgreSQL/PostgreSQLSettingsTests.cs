@@ -1,6 +1,7 @@
 using MHServerEmu.Core.Config;
 using MHServerEmu.DatabaseAccess.PostgreSQL;
 using MHServerEmu.DatabaseAccess.PostgreSQL.Configuration;
+using Npgsql;
 
 namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL
 {
@@ -58,6 +59,50 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL
             bool result = PostgreSQLSettings.TryCreate($"Host=localhost;Password=secret;{key}={value}", new PostgreSQLConfig(), false, out PostgreSQLSettings settings, out PostgreSQLPersistenceFailure failure);
 
             Assert.False(result);
+            Assert.Null(settings);
+            Assert.Equal("InvalidSettings", failure.Code);
+            Assert.DoesNotContain("secret", failure.ToString(), StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Theory]
+        [InlineData("Log Parameters", "false")]
+        [InlineData("Log Parameters", "true")]
+        [InlineData("Include Failed Batched Command", "false")]
+        [InlineData("Include Failed Batched Command", "true")]
+        public void TryCreate_ExplicitDiagnosticFlags_ReturnsSanitizedFailure(string key, string value)
+        {
+            bool result = PostgreSQLSettings.TryCreate($"Host=localhost;Password=secret;{key}={value}", new PostgreSQLConfig(), false, out PostgreSQLSettings settings, out PostgreSQLPersistenceFailure failure);
+
+            Assert.False(result);
+            Assert.Null(settings);
+            Assert.Equal("InvalidSettings", failure.Code);
+            Assert.DoesNotContain("secret", failure.ToString(), StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void TryCreate_ValidConnection_DisablesDiagnosticFlags()
+        {
+            Assert.True(PostgreSQLSettings.TryCreate("Host=localhost", new PostgreSQLConfig(), false, out PostgreSQLSettings settings, out _));
+
+            NpgsqlConnectionStringBuilder builder = new(settings.ConnectionString);
+
+            Assert.False(builder.LogParameters);
+            Assert.False(builder.IncludeFailedBatchedCommand);
+        }
+
+        [Fact]
+        public void TryCreate_OverflowingStartupBackoff_ReturnsSanitizedFailure()
+        {
+            PostgreSQLConfig config = new()
+            {
+                StartupRetryCount = 3,
+                StartupRetryDelayMilliseconds = 1073741824,
+            };
+
+            Exception exception = Record.Exception(() => PostgreSQLSettings.TryCreate("Host=localhost;Password=secret", config, false, out _, out PostgreSQLPersistenceFailure failure));
+
+            Assert.Null(exception);
+            Assert.True(PostgreSQLSettings.TryCreate("Host=localhost;Password=secret", config, false, out PostgreSQLSettings settings, out PostgreSQLPersistenceFailure failure) == false);
             Assert.Null(settings);
             Assert.Equal("InvalidSettings", failure.Code);
             Assert.DoesNotContain("secret", failure.ToString(), StringComparison.OrdinalIgnoreCase);
