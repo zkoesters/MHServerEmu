@@ -186,14 +186,16 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
                     return;
                 }
 
-                long? currentRevision = await GetProfileRevisionAsync(connection, transaction, account.Id, cancellationToken);
-                if (currentRevision.HasValue && currentRevision.Value != player.PersistenceRevision)
+                bool profileExists = (await GetProfileRevisionAsync(connection, transaction, account.Id, cancellationToken)).HasValue;
+                metadata = await WriteProfileAsync(connection, transaction, account.Id, player, profileExists, cancellationToken);
+                if (metadata.HasValue == false)
                 {
-                    result = PlayerStoreResult.StaleRevision;
-                    return;
+                    result = await AccountExistsAsync(connection, transaction, account.Id, cancellationToken)
+                        ? PlayerStoreResult.StaleRevision
+                        : PlayerStoreResult.AccountNotFound;
+                    throw new PlayerStoreWriteAbortedException();
                 }
 
-                metadata = await WriteProfileAsync(connection, transaction, account.Id, player, currentRevision.HasValue, cancellationToken);
                 List<(DBEntity Entity, DBEntityCategory Category)> entities = GetEntities(account);
                 await UpsertEntitiesAsync(connection, transaction, account.Id, entities.Where(entry => entry.Entity.ContainerDbGuid == account.Id), cancellationToken);
                 await UpsertEntitiesAsync(connection, transaction, account.Id, entities.Where(entry => entry.Entity.ContainerDbGuid != account.Id), cancellationToken);
@@ -206,7 +208,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
                 return PlayerStoreResult.OutcomeUncertain;
             }
             if (write.Outcome == PostgreSQLWriteOutcome.Failed)
-                return PlayerStoreResult.Failed;
+                return result == PlayerStoreResult.Success ? PlayerStoreResult.Failed : result;
             if (result != PlayerStoreResult.Success || metadata.HasValue == false)
                 return result == PlayerStoreResult.Success ? PlayerStoreResult.Failed : result;
 
@@ -342,5 +344,9 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
         }
 
         private readonly record struct ProfileMetadata(long Revision, DateTime CreatedAtUtc, DateTime UpdatedAtUtc);
+
+        private sealed class PlayerStoreWriteAbortedException : Exception
+        {
+        }
     }
 }
