@@ -1,6 +1,7 @@
 using System.Data.SQLite;
 using MHServerEmu.DatabaseAccess.Models;
 using MHServerEmu.DatabaseAccess.SQLite;
+using MHServerEmu.DatabaseAccess.Tests.Conformance;
 
 namespace MHServerEmu.DatabaseAccess.Tests.SQLite
 {
@@ -70,6 +71,19 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
 
             Assert.True(manager.Initialize(databasePath, 0, TimeSpan.FromHours(1)));
             Assert.Equal(AccountStoreResult.AccountNotFound, manager.ChangePlayerName(account, "PlayerTwo"));
+        }
+
+        [Fact]
+        public void AccountStoreConformance_IdentityRoundTripAndConflicts()
+        {
+            using TemporaryDirectory temporaryDirectory = new();
+            SQLiteDBManager manager = InitializeManager(temporaryDirectory);
+
+            AccountStoreConformanceTests.AssertIdentityRoundTripAndConflicts(
+                manager,
+                CreateAccount(1, "account@example.com", "PlayerOne"),
+                CreateAccount(2, "ACCOUNT@example.com", "PlayerTwo"),
+                CreateAccount(3, "other@example.com", "playerone"));
         }
 
         [Fact]

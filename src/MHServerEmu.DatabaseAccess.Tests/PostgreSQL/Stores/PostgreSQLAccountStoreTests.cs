@@ -1,6 +1,7 @@
 using MHServerEmu.DatabaseAccess.Models;
 using MHServerEmu.DatabaseAccess.Tests.Conformance;
 using MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations;
+using Npgsql;
 
 namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
 {
@@ -25,6 +26,8 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
             account.UserLevel = AccountUserLevel.Admin;
             account.Flags = AccountFlags.IsBanned | AccountFlags.BypassLoginQueue;
             account.EmailVerifiedAtUtc = new DateTime(2025, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+            account.CredentialVersion = 0;
+            account.GameSecurityVersion = 43;
 
             Assert.Equal(AccountStoreResult.Success, fixture.AccountStore.InsertAccount(account));
             Assert.True(fixture.AccountStore.TryQueryAccountByEmail("user@example.test", out DBAccount stored));
@@ -40,6 +43,8 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
             Assert.Equal(account.PasswordFormatVersion, stored.PasswordFormatVersion);
             Assert.Equal(account.PasswordIterations, stored.PasswordIterations);
             Assert.Equal(account.PasswordKeySize, stored.PasswordKeySize);
+            Assert.Equal(1, account.CredentialVersion);
+            Assert.Equal(1, account.GameSecurityVersion);
             Assert.Equal(1, stored.CredentialVersion);
             Assert.Equal(1, stored.GameSecurityVersion);
             Assert.Equal(0, stored.PersistenceRevision);
@@ -65,6 +70,18 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
             Assert.Contains(AccountStoreResult.Success, results);
             Assert.Contains(AccountStoreResult.EmailConflict, results);
             Assert.Equal(AccountStoreResult.PlayerNameConflict, fixture.AccountStore.InsertAccount(duplicatePlayerName));
+        }
+
+        [PostgreSQLIntegrationFact]
+        public async Task AccountStoreConformance_IdentityRoundTripAndConflicts()
+        {
+            await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
+
+            AccountStoreConformanceTests.AssertIdentityRoundTripAndConflicts(
+                fixture.AccountStore,
+                fixture.CreateAccount(1, "account@example.test", "PlayerOne"),
+                fixture.CreateAccount(2, "ACCOUNT@example.test", "PlayerTwo"),
+                fixture.CreateAccount(3, "other@example.test", "playerone"));
         }
 
         [PostgreSQLIntegrationFact]
@@ -124,18 +141,42 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
             await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
             DBAccount account = fixture.CreateAccount(1, "account@example.test", "PlayerOne");
             Assert.Equal(AccountStoreResult.Success, fixture.AccountStore.InsertAccount(account));
-            DBAccount uninserted = fixture.CreateAccount(2, "uninserted@example.test", "Uninserted");
-            uninserted.PersistenceState = PersistenceState.OutcomeUncertain;
+            DateTime? updatedAtUtc = account.UpdatedAtUtc;
 
-            Assert.Equal(AccountStoreResult.OutcomeUncertain, fixture.AccountStore.InsertAccount(uninserted));
-            Assert.False(fixture.AccountStore.TryQueryAccountByEmail(uninserted.Email, out _));
-            AccountStoreConformanceCases.AssertOutcomeUncertain(fixture.AccountStore, account);
+            await CreateDeferredCommitFailureAsync(fixture.Provider.DataSource);
+            try
+            {
+                Assert.Equal(AccountStoreResult.OutcomeUncertain, fixture.AccountStore.ChangeFlags(account, AccountFlags.IsBanned));
+                Assert.Equal(PersistenceState.OutcomeUncertain, account.PersistenceState);
+                Assert.Equal(AccountFlags.None, account.Flags);
+                Assert.Equal(0, account.PersistenceRevision);
+                Assert.Equal(1, account.GameSecurityVersion);
+                Assert.Equal(updatedAtUtc, account.UpdatedAtUtc);
+            }
+            finally
+            {
+                await DropDeferredCommitFailureAsync(fixture.Provider.DataSource);
+            }
 
+            Assert.Equal(AccountStoreResult.OutcomeUncertain, fixture.AccountStore.ChangeUserLevel(account, AccountUserLevel.Admin));
             Assert.True(fixture.AccountStore.TryQueryAccountByEmail(account.Email, out DBAccount stored));
-            Assert.Equal("PlayerOne", stored.PlayerName);
             Assert.Equal(AccountUserLevel.User, stored.UserLevel);
             Assert.Equal(AccountFlags.None, stored.Flags);
             Assert.Equal(0, stored.PersistenceRevision);
+        }
+
+        private static async Task CreateDeferredCommitFailureAsync(NpgsqlDataSource dataSource)
+        {
+            await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync();
+            await using NpgsqlCommand command = new("CREATE FUNCTION mhserveremu.account_store_test_commit_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test commit ambiguity'; END; $$; CREATE CONSTRAINT TRIGGER account_store_test_commit_failure AFTER UPDATE ON mhserveremu.account DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION mhserveremu.account_store_test_commit_failure();", connection);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        private static async Task DropDeferredCommitFailureAsync(NpgsqlDataSource dataSource)
+        {
+            await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync();
+            await using NpgsqlCommand command = new("DROP TRIGGER IF EXISTS account_store_test_commit_failure ON mhserveremu.account; DROP FUNCTION IF EXISTS mhserveremu.account_store_test_commit_failure();", connection);
+            await command.ExecuteNonQueryAsync();
         }
     }
 }

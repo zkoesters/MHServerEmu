@@ -11,6 +11,8 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
         private const string EmailConstraint = "account_normalized_email_unique";
         private const string PlayerNameConstraint = "account_normalized_player_name_unique";
         private const int PasswordAlgorithm = 1;
+        private const int InitialCredentialVersion = 1;
+        private const int InitialGameSecurityVersion = 1;
 
         private readonly NpgsqlDataSource _dataSource;
         private readonly PostgreSQLStoreExecutor _executor;
@@ -228,9 +230,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
                 && account.PasswordAlgorithm == Core.Helpers.CryptographyHelper.PasswordAlgorithm
                 && account.PasswordFormatVersion == Core.Helpers.CryptographyHelper.PasswordFormatVersion
                 && account.PasswordIterations == Core.Helpers.CryptographyHelper.PasswordIterationCount
-                && account.PasswordKeySize == Core.Helpers.CryptographyHelper.PasswordKeySize
-                && account.CredentialVersion >= 1
-                && account.GameSecurityVersion >= 1;
+                && account.PasswordKeySize == Core.Helpers.CryptographyHelper.PasswordKeySize;
         }
 
         private static void AddInsertParameters(NpgsqlCommand command, DBAccount account, string normalizedEmail, string normalizedPlayerName)
@@ -246,8 +246,8 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
             command.Parameters.AddWithValue("passwordFormatVersion", NpgsqlDbType.Integer, account.PasswordFormatVersion);
             command.Parameters.AddWithValue("passwordIterations", NpgsqlDbType.Integer, account.PasswordIterations);
             command.Parameters.AddWithValue("passwordKeySize", NpgsqlDbType.Integer, account.PasswordKeySize);
-            command.Parameters.AddWithValue("credentialVersion", NpgsqlDbType.Integer, account.CredentialVersion);
-            command.Parameters.AddWithValue("gameSecurityVersion", NpgsqlDbType.Integer, account.GameSecurityVersion);
+            command.Parameters.AddWithValue("credentialVersion", NpgsqlDbType.Integer, InitialCredentialVersion);
+            command.Parameters.AddWithValue("gameSecurityVersion", NpgsqlDbType.Integer, InitialGameSecurityVersion);
             command.Parameters.AddWithValue("userLevel", NpgsqlDbType.Integer, (int)account.UserLevel);
             command.Parameters.AddWithValue("flags", NpgsqlDbType.Integer, (int)account.Flags);
             command.Parameters.AddWithValue("emailVerifiedAtUtc", NpgsqlDbType.TimestampTz, account.EmailVerifiedAtUtc ?? (object)DBNull.Value);
