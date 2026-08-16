@@ -166,7 +166,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Migrations
 
         private async Task<IReadOnlyList<AppliedMigration>> ReadHistoryAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, PostgreSQLOperationDeadline deadline, CancellationToken cancellationToken)
         {
-            object relation = await ExecuteScalarAsync(connection, transaction, "SELECT to_regclass('mhserveremu.schema_migrations')", deadline, cancellationToken);
+            object relation = await ExecuteScalarAsync(connection, transaction, "SELECT to_regclass('mhserveremu.schema_migrations')::text", deadline, cancellationToken);
             if (relation == null || relation is DBNull)
                 return Array.Empty<AppliedMigration>();
 

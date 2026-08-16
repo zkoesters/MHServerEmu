@@ -136,9 +136,8 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Locking
 
         private async Task<PostgreSQLSettings> CreateSettingsAsync()
         {
-            await using NpgsqlDataSource dataSource = await _database.CreateDataSourceAsync();
-            NpgsqlConnectionStringBuilder builder = new(dataSource.ConnectionString);
-            Assert.True(PostgreSQLSettings.TryCreate(builder.ConnectionString, new PostgreSQLConfig(), false, out PostgreSQLSettings settings, out _));
+            string connectionString = await _database.CreateSettingsConnectionStringAsync();
+            Assert.True(PostgreSQLSettings.TryCreate(connectionString, new PostgreSQLConfig(), false, out PostgreSQLSettings settings, out _));
             return settings;
         }
 
