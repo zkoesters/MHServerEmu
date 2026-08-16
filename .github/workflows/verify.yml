@@ -19,3 +19,36 @@ jobs:
       - run: dotnet restore MHServerEmu.sln
       - run: dotnet build MHServerEmu.sln --configuration Release --no-restore
       - run: dotnet test MHServerEmu.sln --configuration Release --no-build
+
+  postgresql:
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [16, 17]
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:${{ matrix.version }}
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      MHSERVEREMU_POSTGRESQL_TEST_ADMIN_CONNECTION_STRING: Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - run: dotnet restore MHServerEmu.sln
+      - run: dotnet build MHServerEmu.sln --configuration Release --no-restore
+      - name: Assert PostgreSQL integration connection string
+        run: test -n "$MHSERVEREMU_POSTGRESQL_TEST_ADMIN_CONNECTION_STRING"
+      - run: dotnet test MHServerEmu.sln --configuration Release --no-build --filter Category=PostgreSQLIntegration
