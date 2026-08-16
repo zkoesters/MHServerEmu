@@ -14,6 +14,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Configuration
             OperationTimeoutSeconds = config.OperationTimeoutSeconds;
             CancellationTimeoutMilliseconds = config.CancellationTimeoutMilliseconds;
             MigrationTimeoutSeconds = config.MigrationTimeoutSeconds;
+            MigrationLockTimeoutMilliseconds = config.MigrationLockTimeoutMilliseconds;
             StartupRetryCount = config.StartupRetryCount;
             StartupRetryDelayMilliseconds = config.StartupRetryDelayMilliseconds;
             HasUnsafeUnixOverrideFilePermissions = hasUnsafeUnixOverrideFilePermissions;
@@ -26,6 +27,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Configuration
         internal int OperationTimeoutSeconds { get; }
         internal int CancellationTimeoutMilliseconds { get; }
         internal int MigrationTimeoutSeconds { get; }
+        internal int MigrationLockTimeoutMilliseconds { get; }
         internal int StartupRetryCount { get; }
         internal int StartupRetryDelayMilliseconds { get; }
         internal bool HasUnsafeUnixOverrideFilePermissions { get; }
@@ -99,6 +101,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Configuration
                 && config.OperationTimeoutSeconds > 0
                 && config.CancellationTimeoutMilliseconds > 0
                 && config.MigrationTimeoutSeconds > 0
+                && config.MigrationLockTimeoutMilliseconds > 0
                 && config.StartupRetryCount > 0
                 && HasValidStartupBackoff(config);
         }
