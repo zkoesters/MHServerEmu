@@ -43,6 +43,22 @@ namespace MHServerEmu.Tests.Architecture
         }
 
         [Fact]
+        public void ContainsPersistenceSingleton_DetectsAliasedSingletonAccess()
+        {
+            const string Source = "using Db = MHServerEmu.DatabaseAccess.IDBManager; class Test { void Method() { Db.Instance.Initialize(); } }";
+
+            Assert.True(ContainsPersistenceSingleton(Source));
+        }
+
+        [Fact]
+        public void ContainsPersistenceSingleton_IgnoresUnrelatedAlias()
+        {
+            const string Source = "using Db = OtherDatabase; class Test { void Method() { Db.Instance.Initialize(); } }";
+
+            Assert.False(ContainsPersistenceSingleton(Source));
+        }
+
+        [Fact]
         public void ProductionCode_DoesNotUsePersistenceSingletons()
         {
             string repositoryRoot = RepositoryRoot.Find();
@@ -58,10 +74,25 @@ namespace MHServerEmu.Tests.Architecture
 
         private static bool ContainsPersistenceSingleton(string source)
         {
-            return CSharpSyntaxTree.ParseText(source).GetRoot().DescendantNodes()
+            CompilationUnitSyntax compilationUnit = CSharpSyntaxTree.ParseText(source).GetCompilationUnitRoot();
+            HashSet<string> singletonAliases = compilationUnit.Usings
+                .Where(usingDirective => usingDirective.Alias != null
+                    && GetTerminalReceiverIdentifier(usingDirective.Name) is "IDBManager" or "PlayerNameCache")
+                .Select(usingDirective => usingDirective.Alias.Name.Identifier.ValueText)
+                .ToHashSet(StringComparer.Ordinal);
+
+            return compilationUnit.DescendantNodes()
                 .OfType<MemberAccessExpressionSyntax>()
-                .Any(memberAccess => memberAccess.Name.Identifier.ValueText == "Instance"
-                    && GetTerminalReceiverIdentifier(memberAccess.Expression) is "IDBManager" or "PlayerNameCache");
+                .Any(memberAccess => IsSingletonInstanceAccess(memberAccess, singletonAliases));
+        }
+
+        private static bool IsSingletonInstanceAccess(MemberAccessExpressionSyntax memberAccess, HashSet<string> singletonAliases)
+        {
+            if (memberAccess.Name.Identifier.ValueText != "Instance")
+                return false;
+
+            string receiverIdentifier = GetTerminalReceiverIdentifier(memberAccess.Expression);
+            return receiverIdentifier is "IDBManager" or "PlayerNameCache" || singletonAliases.Contains(receiverIdentifier);
         }
 
         private static string GetTerminalReceiverIdentifier(SyntaxNode receiver)
