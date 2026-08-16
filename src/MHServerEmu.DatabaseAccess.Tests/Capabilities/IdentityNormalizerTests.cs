@@ -36,6 +36,22 @@ namespace MHServerEmu.DatabaseAccess.Tests.Capabilities
             Assert.Throws<ArgumentException>(() => IdentityNormalizer.NormalizeEmail(email));
         }
 
+        [Theory]
+        [InlineData("\nname@example.com")]
+        [InlineData("name@example.com\t")]
+        public void NormalizeEmail_RejectsLeadingAndTrailingControlCharacters(string email)
+        {
+            Assert.Throws<ArgumentException>(() => IdentityNormalizer.NormalizeEmail(email));
+        }
+
+        [Theory]
+        [InlineData("\nguild")]
+        [InlineData("guild\t")]
+        public void NormalizeGuildName_RejectsLeadingAndTrailingControlCharacters(string guildName)
+        {
+            Assert.Throws<ArgumentException>(() => IdentityNormalizer.NormalizeGuildName(guildName));
+        }
+
         [Fact]
         public void NormalizeGuildName_RejectsValuesOver320CharactersAfterNormalization()
         {
