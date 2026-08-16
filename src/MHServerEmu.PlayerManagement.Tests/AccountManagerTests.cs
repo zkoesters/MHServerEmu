@@ -1,4 +1,5 @@
 using Gazillion;
+using MHServerEmu.Core.Helpers;
 using MHServerEmu.Core.Network;
 using MHServerEmu.DatabaseAccess;
 using MHServerEmu.DatabaseAccess.Models;
@@ -216,6 +217,74 @@ namespace MHServerEmu.PlayerManagement.Tests
             Assert.Null(authenticatedAccount);
         }
 
+        [Fact]
+        public void DefaultPasswordHashMetadata_DescribesCurrentPasswordFormat()
+        {
+            var metadata = CryptographyHelper.DefaultPasswordHashMetadata;
+
+            Assert.Equal("PBKDF2-HMAC-SHA512", metadata.Algorithm);
+            Assert.Equal(1, metadata.FormatVersion);
+            Assert.Equal(210000, metadata.Iterations);
+            Assert.Equal(64, metadata.KeySize);
+        }
+
+        [Theory]
+        [InlineData(AccountStoreResult.EmailConflict, AccountOperationResult.EmailAlreadyUsed)]
+        [InlineData(AccountStoreResult.PlayerNameConflict, AccountOperationResult.PlayerNameAlreadyUsed)]
+        public void CreateAccount_StoreConflict_ReturnsSpecificConflict(AccountStoreResult storeResult, AccountOperationResult expectedResult)
+        {
+            _dbManager.InsertAccountStoreResult = storeResult;
+
+            AccountOperationResult result = _accountManager.CreateAccount("account@example.com", "PlayerOne", "password12345");
+
+            Assert.Equal(expectedResult, result);
+        }
+
+        [Theory]
+        [InlineData(AccountStoreResult.StaleRevision)]
+        [InlineData(AccountStoreResult.InvalidData)]
+        [InlineData(AccountStoreResult.Failed)]
+        [InlineData(AccountStoreResult.OutcomeUncertain)]
+        public void ChangeAccountPassword_NonSuccess_LeavesAccountAndNotifierUnchanged(AccountStoreResult storeResult)
+        {
+            DBAccount account = new("account@example.com", "PlayerOne", "old-password")
+            {
+                Flags = AccountFlags.IsPasswordExpired | AccountFlags.IsBanned
+            };
+            byte[] oldHash = account.PasswordHash.ToArray();
+            byte[] oldSalt = account.Salt.ToArray();
+            AccountFlags oldFlags = account.Flags;
+            _dbManager.Accounts.Add(account.Email, account);
+            _dbManager.AccountChangeStoreResult = storeResult;
+
+            AccountOperationResult result = _accountManager.ChangeAccountPassword(account.Email, "new-password1");
+
+            Assert.Equal(AccountOperationResult.DatabaseError, result);
+            Assert.Equal(oldHash, account.PasswordHash);
+            Assert.Equal(oldSalt, account.Salt);
+            Assert.Equal(oldFlags, account.Flags);
+            Assert.False(_notifier.Notified);
+        }
+
+        [Fact]
+        public void ChangeAccountPassword_Success_UsesStoreUpdatedAccount()
+        {
+            DBAccount account = new("account@example.com", "PlayerOne", "old-password")
+            {
+                Flags = AccountFlags.IsPasswordExpired
+            };
+            PasswordIntentAccountStore accounts = new(account);
+            AccountManager accountManager = new(accounts, new StubDBManager(), PersistenceCapabilities.SQLite, _notifier);
+
+            AccountOperationResult result = accountManager.ChangeAccountPassword(account.Email, "new-password1");
+
+            Assert.Equal(AccountOperationResult.Success, result);
+            Assert.True(accounts.PasswordWasUnchangedAtStoreInvocation);
+            Assert.True(CryptographyHelper.VerifyPassword("new-password1", account.PasswordHash, account.Salt));
+            Assert.False(account.Flags.HasFlag(AccountFlags.IsPasswordExpired));
+            Assert.True(_notifier.Notified);
+        }
+
         public enum AccountMutation
         {
             PlayerName,
@@ -244,6 +313,43 @@ namespace MHServerEmu.PlayerManagement.Tests
                 ChangeType = changeType;
                 NotifiedAfterCommit = wasCommitted?.Invoke() ?? true;
             }
+        }
+
+        private sealed class PasswordIntentAccountStore : IAccountStore
+        {
+            private readonly DBAccount _account;
+            private readonly byte[] _originalPasswordHash;
+            private readonly byte[] _originalSalt;
+
+            public bool PasswordWasUnchangedAtStoreInvocation { get; private set; }
+
+            public PasswordIntentAccountStore(DBAccount account)
+            {
+                _account = account;
+                _originalPasswordHash = account.PasswordHash.ToArray();
+                _originalSalt = account.Salt.ToArray();
+            }
+
+            public bool TryQueryAccountByEmail(string email, out DBAccount account)
+            {
+                account = string.Equals(email, _account.Email, StringComparison.OrdinalIgnoreCase) ? _account : null;
+                return account != null;
+            }
+
+            public AccountStoreResult InsertAccount(DBAccount account) => AccountStoreResult.Failed;
+            public AccountStoreResult ChangePlayerName(DBAccount account, string playerName) => AccountStoreResult.Failed;
+
+            public AccountStoreResult ChangePassword(DBAccount account, byte[] passwordHash, byte[] salt)
+            {
+                PasswordWasUnchangedAtStoreInvocation = account.PasswordHash.SequenceEqual(_originalPasswordHash) && account.Salt.SequenceEqual(_originalSalt);
+                account.PasswordHash = passwordHash;
+                account.Salt = salt;
+                account.Flags &= ~AccountFlags.IsPasswordExpired;
+                return AccountStoreResult.Success;
+            }
+
+            public AccountStoreResult ChangeUserLevel(DBAccount account, AccountUserLevel userLevel) => AccountStoreResult.Failed;
+            public AccountStoreResult ChangeFlags(DBAccount account, AccountFlags flags) => AccountStoreResult.Failed;
         }
     }
 }

@@ -273,6 +273,8 @@ namespace MHServerEmu.Games.Network
                     dbPlayer.ArchiveData = newArchiveData.ToArray();
             }
 
+            SetArchiveMetadata(_dbAccount.Player);
+
             // Save last town as a separate database field to be able to access it without deserializing the player entity
             PrototypeId lastTownProtoRef = Player.Properties[PropertyEnum.LastTownRegionForAccount];
             if (lastTownProtoRef != PrototypeId.Invalid)
@@ -315,6 +317,12 @@ namespace MHServerEmu.Games.Network
             TimeSpan elapsed = Clock.UnixTime - startTime;
             Logger.Trace($"Saved player data for {_dbAccount} in {(long)elapsed.TotalMilliseconds} ms");
             return true;
+        }
+
+        private static void SetArchiveMetadata(DBPlayer player)
+        {
+            player.ArchiveVersion = (int)ArchiveVersion.Current;
+            player.GameBuildNumber = (int)GameBuildNumber.Current;
         }
 
         #endregion

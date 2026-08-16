@@ -119,8 +119,9 @@ namespace MHServerEmu.PlayerManagement.Players
             // Create a new account and insert it into the database
             DBAccount account = new(email, playerName, password);
 
-            if (_accounts.InsertAccount(account) != AccountStoreResult.Success)
-                return AccountOperationResult.DatabaseError;
+            AccountStoreResult storeResult = TryStoreAccountChange(() => _accounts.InsertAccount(account));
+            if (storeResult != AccountStoreResult.Success)
+                return MapStoreResult(storeResult);
 
             Logger.Info($"CreateAccount(): account=[{account}]");
             return AccountOperationResult.Success;
@@ -143,16 +144,12 @@ namespace MHServerEmu.PlayerManagement.Players
             if (_players.TryGetPlayerDbIdByName(newPlayerName, out _, out _))
                 return AccountOperationResult.PlayerNameAlreadyUsed;
 
-            // Write the new name to the database
             string oldPlayerName = account.PlayerName;
-            account.PlayerName = newPlayerName;
-            if (TryStoreAccountChange(() => _accounts.ChangePlayerName(account, newPlayerName)) == false)
-            {
-                account.PlayerName = oldPlayerName;
-                return AccountOperationResult.DatabaseError;
-            }
+            AccountStoreResult storeResult = TryStoreAccountChange(() => _accounts.ChangePlayerName(account, newPlayerName));
+            if (storeResult != AccountStoreResult.Success)
+                return MapStoreResult(storeResult);
 
-            ServiceMessage.PlayerNameChanged playerNameChanged = new((ulong)account.Id, oldPlayerName, newPlayerName);
+            ServiceMessage.PlayerNameChanged playerNameChanged = new((ulong)account.Id, oldPlayerName, account.PlayerName);
             ServerManager.Instance.SendMessageToService(GameServiceType.PlayerManager, playerNameChanged);
             ServerManager.Instance.SendMessageToService(GameServiceType.GroupingManager, playerNameChanged);
 
@@ -172,20 +169,10 @@ namespace MHServerEmu.PlayerManagement.Players
             if (_accounts.TryQueryAccountByEmail(email, out DBAccount account) == false)
                 return AccountOperationResult.EmailNotFound;
 
-            byte[] oldPasswordHash = account.PasswordHash;
-            byte[] oldSalt = account.Salt;
-            AccountFlags oldFlags = account.Flags;
-
-            account.PasswordHash = CryptographyHelper.HashPassword(newPassword, out byte[] salt);
-            account.Salt = salt;
-            account.Flags &= ~AccountFlags.IsPasswordExpired;
-            if (TryStoreAccountChange(() => _accounts.ChangePassword(account, account.PasswordHash, account.Salt)) == false)
-            {
-                account.PasswordHash = oldPasswordHash;
-                account.Salt = oldSalt;
-                account.Flags = oldFlags;
-                return AccountOperationResult.DatabaseError;
-            }
+            byte[] passwordHash = CryptographyHelper.HashPassword(newPassword, out byte[] salt);
+            AccountStoreResult storeResult = TryStoreAccountChange(() => _accounts.ChangePassword(account, passwordHash, salt));
+            if (storeResult != AccountStoreResult.Success)
+                return MapStoreResult(storeResult);
 
             _securityNotifier.Notify((ulong)account.Id, AccountSecurityChangeType.CredentialChanged);
             Logger.Info($"ChangeAccountPassword(): account=[{account}]");
@@ -201,13 +188,9 @@ namespace MHServerEmu.PlayerManagement.Players
             if (_accounts.TryQueryAccountByEmail(email, out DBAccount account) == false)
                 return AccountOperationResult.EmailNotFound;
 
-            AccountUserLevel oldUserLevel = account.UserLevel;
-            account.UserLevel = userLevel;
-            if (TryStoreAccountChange(() => _accounts.ChangeUserLevel(account, userLevel)) == false)
-            {
-                account.UserLevel = oldUserLevel;
-                return AccountOperationResult.DatabaseError;
-            }
+            AccountStoreResult storeResult = TryStoreAccountChange(() => _accounts.ChangeUserLevel(account, userLevel));
+            if (storeResult != AccountStoreResult.Success)
+                return MapStoreResult(storeResult);
 
             _securityNotifier.Notify((ulong)account.Id, AccountSecurityChangeType.AuthorizationChanged);
             Logger.Info($"SetAccountUserLevel(): account=[{account}], userLevel=[{userLevel}]");
@@ -233,13 +216,10 @@ namespace MHServerEmu.PlayerManagement.Players
             if (account.Flags.HasFlag(flag))
                 return AccountOperationResult.FlagAlreadySet;
 
-            AccountFlags oldFlags = account.Flags;
-            account.Flags |= flag;
-            if (TryStoreAccountChange(() => _accounts.ChangeFlags(account, account.Flags)) == false)
-            {
-                account.Flags = oldFlags;
-                return AccountOperationResult.DatabaseError;
-            }
+            AccountFlags flags = account.Flags | flag;
+            AccountStoreResult storeResult = TryStoreAccountChange(() => _accounts.ChangeFlags(account, flags));
+            if (storeResult != AccountStoreResult.Success)
+                return MapStoreResult(storeResult);
 
             _securityNotifier.Notify((ulong)account.Id, AccountSecurityChangeType.AccountStatusChanged);
             Logger.Info($"SetFlag(): account=[{account}], flag=[{flag}]");
@@ -265,13 +245,10 @@ namespace MHServerEmu.PlayerManagement.Players
             if (account.Flags.HasFlag(flag) == false)
                 return AccountOperationResult.FlagNotSet;
 
-            AccountFlags oldFlags = account.Flags;
-            account.Flags &= ~flag;
-            if (TryStoreAccountChange(() => _accounts.ChangeFlags(account, account.Flags)) == false)
-            {
-                account.Flags = oldFlags;
-                return AccountOperationResult.DatabaseError;
-            }
+            AccountFlags flags = account.Flags & ~flag;
+            AccountStoreResult storeResult = TryStoreAccountChange(() => _accounts.ChangeFlags(account, flags));
+            if (storeResult != AccountStoreResult.Success)
+                return MapStoreResult(storeResult);
 
             _securityNotifier.Notify((ulong)account.Id, AccountSecurityChangeType.AccountStatusChanged);
             Logger.Info($"ClearFlag(): account=[{account}], flag=[{flag}]");
@@ -348,21 +325,26 @@ namespace MHServerEmu.PlayerManagement.Players
             return password != null && password.Length >= PasswordMinLength && password.Length <= PasswordMaxLength;
         }
 
-        private static bool IsSuccess(AccountStoreResult result)
+        private static AccountOperationResult MapStoreResult(AccountStoreResult result)
         {
-            return result == AccountStoreResult.Success;
+            return result switch
+            {
+                AccountStoreResult.EmailConflict => AccountOperationResult.EmailAlreadyUsed,
+                AccountStoreResult.PlayerNameConflict => AccountOperationResult.PlayerNameAlreadyUsed,
+                _ => AccountOperationResult.DatabaseError
+            };
         }
 
-        private bool TryStoreAccountChange(Func<AccountStoreResult> change)
+        private AccountStoreResult TryStoreAccountChange(Func<AccountStoreResult> change)
         {
             try
             {
-                return IsSuccess(change());
+                return change();
             }
             catch (Exception e)
             {
                 Logger.ErrorException(e, nameof(TryStoreAccountChange));
-                return false;
+                return AccountStoreResult.Failed;
             }
         }
     }

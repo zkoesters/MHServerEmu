@@ -2,20 +2,21 @@
 
 namespace MHServerEmu.Core.Helpers
 {
+    public readonly record struct PasswordHashMetadata(string Algorithm, int FormatVersion, int Iterations, int KeySize);
+
     public static class CryptographyHelper
     {
-        private const int PasswordKeySize = 64;
-        private const int PasswordIterationCount = 210000;  // Appropriate iteration count for PBKDF2-HMAC-SHA512 according to 2023 OWASP recommendations
+        public static PasswordHashMetadata DefaultPasswordHashMetadata { get; } = new("PBKDF2-HMAC-SHA512", 1, 210000, 64);
 
         public static byte[] HashPassword(string password, out byte[] salt)
         {
-            salt = RandomNumberGenerator.GetBytes(PasswordKeySize);
-            return Rfc2898DeriveBytes.Pbkdf2(password, salt, PasswordIterationCount, HashAlgorithmName.SHA512, PasswordKeySize);
+            salt = RandomNumberGenerator.GetBytes(DefaultPasswordHashMetadata.KeySize);
+            return Rfc2898DeriveBytes.Pbkdf2(password, salt, DefaultPasswordHashMetadata.Iterations, HashAlgorithmName.SHA512, DefaultPasswordHashMetadata.KeySize);
         }
 
         public static bool VerifyPassword(string password, byte[] hash, byte[] salt)
         {
-            byte[] hashToCompare = Rfc2898DeriveBytes.Pbkdf2(password, salt, PasswordIterationCount, HashAlgorithmName.SHA512, PasswordKeySize);
+            byte[] hashToCompare = Rfc2898DeriveBytes.Pbkdf2(password, salt, DefaultPasswordHashMetadata.Iterations, HashAlgorithmName.SHA512, DefaultPasswordHashMetadata.KeySize);
             return CryptographicOperations.FixedTimeEquals(hashToCompare, hash);
         }
 
