@@ -5,8 +5,6 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Migrations
 {
     internal sealed class PostgreSQLMigrationRunner
     {
-        private const int AdvisoryLockNamespace = 0x4D485345;
-        private const int AdvisoryLockId = 2;
         private const string MigrationTimeoutCode = "migration_timeout";
         private const string MigrationLockTimeoutCode = "migration_lock_timeout";
         private readonly NpgsqlDataSource _dataSource;
@@ -34,6 +32,25 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Migrations
             try
             {
                 await using NpgsqlConnection connection = await OpenConnectionAsync(deadline, cancellationToken);
+                return await RunAsync(connection, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception)
+            {
+                return PostgreSQLMigrationResult.Failed(new PostgreSQLPersistenceFailure("MigrationFailed", "MigrationRun", migrationIdentity: MigrationIdentity(currentMigration)));
+            }
+        }
+
+        internal async Task<PostgreSQLMigrationResult> RunAsync(NpgsqlConnection connection, CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(connection);
+            PostgreSQLOperationDeadline deadline = new(_migrationTimeout);
+            PostgreSQLMigration currentMigration = null;
+            try
+            {
                 await using NpgsqlTransaction transaction = await BeginTransactionAsync(connection, deadline, cancellationToken);
                 await ConfigureTimeoutsAsync(connection, transaction, deadline, cancellationToken);
                 await WaitForAdvisoryLockAsync(connection, transaction, deadline, cancellationToken);
@@ -114,8 +131,8 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Migrations
                     {
                         CommandTimeout = activeDeadline.RemainingCommandTimeoutSeconds,
                     };
-                    command.Parameters.AddWithValue("namespace", AdvisoryLockNamespace);
-                    command.Parameters.AddWithValue("id", AdvisoryLockId);
+                    command.Parameters.AddWithValue("namespace", Locking.PostgreSQLAdvisoryKeys.Namespace);
+                    command.Parameters.AddWithValue("id", Locking.PostgreSQLAdvisoryKeys.MigrationResource);
                     using CancellationTokenSource source = activeDeadline.CreateCancellationSource(cancellationToken);
                     if ((bool)await command.ExecuteScalarAsync(source.Token))
                         return;
