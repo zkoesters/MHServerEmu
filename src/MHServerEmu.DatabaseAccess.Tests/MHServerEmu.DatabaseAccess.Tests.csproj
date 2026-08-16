@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\MHServerEmu.DatabaseAccess\MHServerEmu.DatabaseAccess.csproj" />
+    <ProjectReference Include="..\MHServerEmu.DatabaseAccess.PostgreSQL\MHServerEmu.DatabaseAccess.PostgreSQL.csproj" />
   </ItemGroup>
 
   <ItemGroup>

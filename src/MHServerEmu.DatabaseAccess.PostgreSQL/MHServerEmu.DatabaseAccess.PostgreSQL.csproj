@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <Platforms>x64</Platforms>
+    <AssemblyVersion>1.0.1.0</AssemblyVersion>
+    <FileVersion>$(AssemblyVersion)</FileVersion>
+    <InformationalVersion>$(AssemblyVersion)</InformationalVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Npgsql" Version="10.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MHServerEmu.Core\MHServerEmu.Core.csproj" />
+    <ProjectReference Include="..\MHServerEmu.DatabaseAccess\MHServerEmu.DatabaseAccess.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="Dapper">
+      <HintPath>..\..\dep\Dapper\Dapper.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>
