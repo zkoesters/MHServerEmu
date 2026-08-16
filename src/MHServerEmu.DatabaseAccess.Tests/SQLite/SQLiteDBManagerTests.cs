@@ -83,7 +83,8 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
                 manager,
                 CreateAccount(1, "account@example.com", "PlayerOne"),
                 CreateAccount(2, "ACCOUNT@example.com", "PlayerTwo"),
-                CreateAccount(3, "other@example.com", "playerone"));
+                CreateAccount(3, "other@example.com", "playerone"),
+                "PlayerRenamed");
         }
 
         [Fact]

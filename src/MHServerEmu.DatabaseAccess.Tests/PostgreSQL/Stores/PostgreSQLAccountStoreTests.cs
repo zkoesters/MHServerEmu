@@ -81,7 +81,8 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
                 fixture.AccountStore,
                 fixture.CreateAccount(1, "account@example.test", "PlayerOne"),
                 fixture.CreateAccount(2, "ACCOUNT@example.test", "PlayerTwo"),
-                fixture.CreateAccount(3, "other@example.test", "playerone"));
+                fixture.CreateAccount(3, "other@example.test", "playerone"),
+                "PlayerRenamed");
         }
 
         [PostgreSQLIntegrationFact]
