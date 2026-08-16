@@ -51,4 +51,4 @@ jobs:
       - run: dotnet build MHServerEmu.sln --configuration Release --no-restore
       - name: Assert PostgreSQL integration connection string
         run: test -n "$MHSERVEREMU_POSTGRESQL_TEST_ADMIN_CONNECTION_STRING"
-      - run: dotnet test MHServerEmu.sln --configuration Release --no-build --filter Category=PostgreSQLIntegration
+      - run: dotnet test MHServerEmu.sln --configuration Release --no-build -p:Platform=x64 --filter Category=PostgreSQLIntegration
