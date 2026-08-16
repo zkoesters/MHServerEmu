@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using MHServerEmu.DatabaseAccess.PostgreSQL.Migrations;
 using Npgsql;
@@ -19,7 +20,7 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
         public async Task RunAsync_BootstrapsOnlyThePersistenceFoundation()
         {
             NpgsqlDataSource dataSource = await _database.CreateDataSourceAsync();
-            PostgreSQLMigrationResult result = await new PostgreSQLMigrationRunner(dataSource, PostgreSQLMigrationCatalog.LoadEmbedded(), TimeSpan.FromSeconds(10)).RunAsync();
+            PostgreSQLMigrationResult result = await new PostgreSQLMigrationRunner(dataSource, PostgreSQLMigrationCatalog.LoadEmbedded(), TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(5)).RunAsync();
 
             Assert.True(result.Succeeded);
             Assert.Equal(1, result.AppliedMigrationCount);
@@ -34,7 +35,7 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
         public async Task RunAsync_AlreadyAppliedCatalog_IsIdempotent()
         {
             NpgsqlDataSource dataSource = await _database.CreateDataSourceAsync();
-            PostgreSQLMigrationRunner runner = new(dataSource, PostgreSQLMigrationCatalog.LoadEmbedded(), TimeSpan.FromSeconds(10));
+            PostgreSQLMigrationRunner runner = new(dataSource, PostgreSQLMigrationCatalog.LoadEmbedded(), TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(5));
             Assert.True((await runner.RunAsync()).Succeeded);
 
             PostgreSQLMigrationResult result = await runner.RunAsync();
@@ -50,10 +51,10 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
         {
             NpgsqlDataSource dataSource = await _database.CreateDataSourceAsync();
             PostgreSQLMigrationCatalog catalog = PostgreSQLMigrationCatalog.LoadEmbedded();
-            Assert.True((await new PostgreSQLMigrationRunner(dataSource, catalog, TimeSpan.FromSeconds(10)).RunAsync()).Succeeded);
+            Assert.True((await new PostgreSQLMigrationRunner(dataSource, catalog, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(5)).RunAsync()).Succeeded);
             await ExecuteAsync(dataSource, $"UPDATE mhserveremu.schema_migrations SET {column} = 'mismatch' WHERE version = 1");
 
-            PostgreSQLMigrationResult result = await new PostgreSQLMigrationRunner(dataSource, catalog, TimeSpan.FromSeconds(10)).RunAsync();
+            PostgreSQLMigrationResult result = await new PostgreSQLMigrationRunner(dataSource, catalog, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(5)).RunAsync();
 
             Assert.False(result.Succeeded);
             Assert.Equal("MigrationHistoryMismatch", result.Failure.Code);
@@ -64,10 +65,10 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
         {
             NpgsqlDataSource dataSource = await _database.CreateDataSourceAsync();
             PostgreSQLMigrationCatalog catalog = PostgreSQLMigrationCatalog.LoadEmbedded();
-            Assert.True((await new PostgreSQLMigrationRunner(dataSource, catalog, TimeSpan.FromSeconds(10)).RunAsync()).Succeeded);
+            Assert.True((await new PostgreSQLMigrationRunner(dataSource, catalog, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(5)).RunAsync()).Succeeded);
             await ExecuteAsync(dataSource, "INSERT INTO mhserveremu.schema_migrations VALUES (9999, 'Future', 'checksum', 'test', now(), 0)");
 
-            PostgreSQLMigrationResult result = await new PostgreSQLMigrationRunner(dataSource, catalog, TimeSpan.FromSeconds(10)).RunAsync();
+            PostgreSQLMigrationResult result = await new PostgreSQLMigrationRunner(dataSource, catalog, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(5)).RunAsync();
 
             Assert.False(result.Succeeded);
             Assert.Equal("FutureMigration", result.Failure.Code);
@@ -79,7 +80,7 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
             NpgsqlDataSource dataSource = await _database.CreateDataSourceAsync();
             PostgreSQLMigrationCatalog catalog = ExtendCatalog("SELECT * FROM missing_relation;");
 
-            PostgreSQLMigrationResult result = await new PostgreSQLMigrationRunner(dataSource, catalog, TimeSpan.FromSeconds(10)).RunAsync();
+            PostgreSQLMigrationResult result = await new PostgreSQLMigrationRunner(dataSource, catalog, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(5)).RunAsync();
 
             Assert.False(result.Succeeded);
             Assert.Null(await ScalarAsync<string>(dataSource, "SELECT to_regclass('mhserveremu.schema_migrations')::text"));
@@ -90,8 +91,8 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
         {
             NpgsqlDataSource dataSource = await _database.CreateDataSourceAsync();
             PostgreSQLMigrationCatalog catalog = ExtendCatalog("SELECT pg_sleep(0.2);");
-            PostgreSQLMigrationRunner first = new(dataSource, catalog, TimeSpan.FromSeconds(10));
-            PostgreSQLMigrationRunner second = new(dataSource, catalog, TimeSpan.FromSeconds(10));
+            PostgreSQLMigrationRunner first = new(dataSource, catalog, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(5));
+            PostgreSQLMigrationRunner second = new(dataSource, catalog, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(5));
 
             PostgreSQLMigrationResult[] results = await Task.WhenAll(first.RunAsync(), second.RunAsync());
 
@@ -100,11 +101,31 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
         }
 
         [PostgreSQLIntegrationFact]
+        public async Task RunAsync_CompetingRunner_UsesTheMigrationLockDeadline()
+        {
+            NpgsqlDataSource dataSource = await _database.CreateDataSourceAsync();
+            PostgreSQLMigrationCatalog catalog = ExtendCatalog("SELECT pg_sleep(1);");
+            PostgreSQLMigrationRunner first = new(dataSource, catalog, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(2));
+            Task<PostgreSQLMigrationResult> firstRun = first.RunAsync();
+            await WaitForAdvisoryLockAsync(dataSource);
+            PostgreSQLMigrationRunner second = new(dataSource, catalog, TimeSpan.FromSeconds(5), TimeSpan.FromMilliseconds(100));
+            Stopwatch stopwatch = Stopwatch.StartNew();
+
+            PostgreSQLMigrationResult secondResult = await second.RunAsync();
+            stopwatch.Stop();
+
+            Assert.False(secondResult.Succeeded);
+            Assert.Equal("migration_lock_timeout", secondResult.Failure.Code);
+            Assert.InRange(stopwatch.Elapsed, TimeSpan.FromMilliseconds(50), TimeSpan.FromSeconds(1));
+            Assert.True((await firstRun).Succeeded);
+        }
+
+        [PostgreSQLIntegrationFact]
         public async Task RunAsync_LockedHistoryTable_ReturnsFailureAtTheLockDeadline()
         {
             NpgsqlDataSource dataSource = await _database.CreateDataSourceAsync();
             PostgreSQLMigrationCatalog baseCatalog = PostgreSQLMigrationCatalog.LoadEmbedded();
-            Assert.True((await new PostgreSQLMigrationRunner(dataSource, baseCatalog, TimeSpan.FromSeconds(10)).RunAsync()).Succeeded);
+            Assert.True((await new PostgreSQLMigrationRunner(dataSource, baseCatalog, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(5)).RunAsync()).Succeeded);
             await using NpgsqlConnection lockConnection = await dataSource.OpenConnectionAsync();
             await using NpgsqlTransaction transaction = await lockConnection.BeginTransactionAsync();
             await using (NpgsqlCommand lockCommand = new("LOCK TABLE mhserveremu.schema_migrations IN ACCESS EXCLUSIVE MODE", lockConnection, transaction))
@@ -128,6 +149,22 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
         {
             await using NpgsqlCommand command = dataSource.CreateCommand(sql);
             await command.ExecuteNonQueryAsync();
+        }
+
+        private static async Task WaitForAdvisoryLockAsync(NpgsqlDataSource dataSource)
+        {
+            using CancellationTokenSource cancellationSource = new(TimeSpan.FromSeconds(2));
+            await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync(cancellationSource.Token);
+            while (true)
+            {
+                await using NpgsqlCommand command = new("SELECT pg_try_advisory_lock(0x4D485345, 2)", connection);
+                if ((bool)await command.ExecuteScalarAsync(cancellationSource.Token) == false)
+                    return;
+
+                await using NpgsqlCommand unlockCommand = new("SELECT pg_advisory_unlock(0x4D485345, 2)", connection);
+                await unlockCommand.ExecuteNonQueryAsync(cancellationSource.Token);
+                await Task.Delay(10, cancellationSource.Token);
+            }
         }
 
         private static async Task<T> ScalarAsync<T>(NpgsqlDataSource dataSource, string sql)

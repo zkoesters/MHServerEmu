@@ -20,6 +20,7 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL
             Assert.Equal(5, settings.ConnectTimeoutSeconds);
             Assert.Equal(30, settings.CommandTimeoutSeconds);
             Assert.Equal(2000, settings.CancellationTimeoutMilliseconds);
+            Assert.Equal(5000, settings.MigrationLockTimeoutMilliseconds);
             Assert.Contains("Pooling=True", settings.ConnectionString);
             Assert.Contains("Minimum Pool Size=0", settings.ConnectionString);
             Assert.Contains("Maximum Pool Size=20", settings.ConnectionString);
@@ -112,6 +113,20 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL
         public void TryCreate_InvalidTypedSettings_ReturnsSanitizedFailure()
         {
             PostgreSQLConfig config = new() { MaxPoolSize = 3 };
+
+            bool result = PostgreSQLSettings.TryCreate("Host=localhost", config, false, out PostgreSQLSettings settings, out PostgreSQLPersistenceFailure failure);
+
+            Assert.False(result);
+            Assert.Null(settings);
+            Assert.Equal("InvalidSettings", failure.Code);
+        }
+
+        [Theory]
+        [InlineData(0)]
+        [InlineData(-1)]
+        public void TryCreate_NonPositiveMigrationLockTimeout_ReturnsSanitizedFailure(int timeoutMilliseconds)
+        {
+            PostgreSQLConfig config = new() { MigrationLockTimeoutMilliseconds = timeoutMilliseconds };
 
             bool result = PostgreSQLSettings.TryCreate("Host=localhost", config, false, out PostgreSQLSettings settings, out PostgreSQLPersistenceFailure failure);
 

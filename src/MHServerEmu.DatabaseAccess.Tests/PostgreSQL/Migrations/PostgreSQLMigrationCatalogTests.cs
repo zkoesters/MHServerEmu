@@ -120,6 +120,50 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
             Assert.Single(catalog.Migrations);
         }
 
+        [Theory]
+        [InlineData("CREATE FUNCTION f() RETURNS void AS $$ BEGIN PERFORM 1; END; $$ LANGUAGE plpgsql;")]
+        [InlineData("CREATE PROCEDURE p() LANGUAGE plpgsql AS $$ BEGIN PERFORM 1; END; $$;")]
+        public void Create_DollarQuotedFunctionOrProcedureBody_IsAllowed(string sql)
+        {
+            PostgreSQLMigrationCatalog catalog = PostgreSQLMigrationCatalog.Create(new[]
+            {
+                new PostgreSQLMigrationResource("Migrations.0001_Initialize.sql", Encoding.UTF8.GetBytes(sql)),
+            });
+
+            Assert.Single(catalog.Migrations);
+        }
+
+        [Fact]
+        public void Create_NamedDollarQuotedBody_IsAllowed()
+        {
+            PostgreSQLMigrationCatalog catalog = PostgreSQLMigrationCatalog.Create(new[]
+            {
+                new PostgreSQLMigrationResource("Migrations.0001_Initialize.sql", "CREATE FUNCTION f() RETURNS void AS $body$ BEGIN PERFORM 1; END; $body$ LANGUAGE plpgsql;"u8.ToArray()),
+            });
+
+            Assert.Single(catalog.Migrations);
+        }
+
+        [Fact]
+        public void Create_EndOutsideDollarQuotedBody_Throws()
+        {
+            Assert.Throws<InvalidOperationException>(() => PostgreSQLMigrationCatalog.Create(new[]
+            {
+                new PostgreSQLMigrationResource("Migrations.0001_Initialize.sql", "CREATE FUNCTION f() RETURNS void AS $$ BEGIN PERFORM 1; END; $$ LANGUAGE plpgsql; END;"u8.ToArray()),
+            }));
+        }
+
+        [Fact]
+        public void Create_UnterminatedDollarQuotedBody_Throws()
+        {
+            InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() => PostgreSQLMigrationCatalog.Create(new[]
+            {
+                new PostgreSQLMigrationResource("Migrations.0001_Initialize.sql", "CREATE FUNCTION f() RETURNS void AS $body$ BEGIN PERFORM 1;"u8.ToArray()),
+            }));
+
+            Assert.Contains("unterminated dollar quote", exception.Message, StringComparison.OrdinalIgnoreCase);
+        }
+
         [Fact]
         public void Create_UnterminatedNestedBlockComment_Throws()
         {

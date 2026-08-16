@@ -78,11 +78,22 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Migrations
             int blockCommentDepth = 0;
             bool inSingleQuote = false;
             bool inDoubleQuote = false;
+            string dollarQuoteTag = null;
 
             for (int index = 0; index < sql.Length; index++)
             {
                 char current = sql[index];
                 char next = index + 1 < sql.Length ? sql[index + 1] : '\0';
+
+                if (dollarQuoteTag != null)
+                {
+                    if (current == '$' && sql.AsSpan(index).StartsWith(dollarQuoteTag, StringComparison.Ordinal))
+                    {
+                        index += dollarQuoteTag.Length - 1;
+                        dollarQuoteTag = null;
+                    }
+                    continue;
+                }
 
                 if (inLineComment)
                 {
@@ -157,6 +168,13 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Migrations
                     continue;
                 }
 
+                if (current == '$' && TryGetDollarQuoteTag(sql, index, out string tag))
+                {
+                    dollarQuoteTag = tag;
+                    index += tag.Length - 1;
+                    continue;
+                }
+
                 if (current == ';')
                 {
                     if (IsTransactionControl(statement.ToString()))
@@ -171,7 +189,47 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Migrations
             if (blockCommentDepth > 0)
                 throw new InvalidOperationException("Migration SQL contains an unterminated block comment.");
 
+            if (dollarQuoteTag != null)
+                throw new InvalidOperationException("Migration SQL contains an unterminated dollar quote.");
+
             return IsTransactionControl(statement.ToString());
+        }
+
+        private static bool TryGetDollarQuoteTag(string sql, int index, out string tag)
+        {
+            tag = null;
+            int tagEnd = index + 1;
+            if (tagEnd >= sql.Length)
+                return false;
+
+            if (sql[tagEnd] == '$')
+            {
+                tag = "$$";
+                return true;
+            }
+
+            if (IsDollarQuoteTagStart(sql[tagEnd]) == false)
+                return false;
+
+            tagEnd++;
+            while (tagEnd < sql.Length && IsDollarQuoteTagCharacter(sql[tagEnd]))
+                tagEnd++;
+
+            if (tagEnd >= sql.Length || sql[tagEnd] != '$')
+                return false;
+
+            tag = sql[index..(tagEnd + 1)];
+            return true;
+        }
+
+        private static bool IsDollarQuoteTagStart(char value)
+        {
+            return value is >= 'A' and <= 'Z' or >= 'a' and <= 'z' or '_';
+        }
+
+        private static bool IsDollarQuoteTagCharacter(char value)
+        {
+            return IsDollarQuoteTagStart(value) || value is >= '0' and <= '9';
         }
 
         private static bool IsTransactionControl(string statement)

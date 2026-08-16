@@ -25,7 +25,7 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
     {
         private const string AdminConnectionStringVariable = "MHSERVEREMU_POSTGRESQL_TEST_ADMIN_CONNECTION_STRING";
         private static readonly Regex DatabaseNamePattern = new("^mhserveremu_test_[a-f0-9]{32}$", RegexOptions.CultureInvariant);
-        private readonly List<(string Name, NpgsqlDataSource DataSource)> _databases = new();
+        private readonly List<Func<Task>> _cleanupActions = new();
         private readonly string _adminConnectionString;
 
         public PostgreSQLTestDatabase()
@@ -36,6 +36,12 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
 
             NpgsqlConnectionStringBuilder builder = new(_adminConnectionString);
             IsAvailable = string.IsNullOrWhiteSpace(builder.Host) == false && string.IsNullOrWhiteSpace(builder.Username) == false;
+        }
+
+        internal PostgreSQLTestDatabase(IEnumerable<Func<Task>> cleanupActions)
+        {
+            ArgumentNullException.ThrowIfNull(cleanupActions);
+            _cleanupActions.AddRange(cleanupActions);
         }
 
         public bool IsAvailable { get; }
@@ -66,17 +72,28 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
                 PersistSecurityInfo = false,
             };
             NpgsqlDataSource dataSource = new NpgsqlDataSourceBuilder(databaseBuilder.ConnectionString).Build();
-            _databases.Add((databaseName, dataSource));
+            _cleanupActions.Add(() => dataSource.DisposeAsync().AsTask());
+            _cleanupActions.Add(() => DropDatabaseAsync(databaseName));
             return dataSource;
         }
 
         public async Task DisposeAsync()
         {
-            foreach ((string name, NpgsqlDataSource dataSource) in _databases)
+            List<Exception> exceptions = new();
+            foreach (Func<Task> cleanupAction in _cleanupActions)
             {
-                await dataSource.DisposeAsync();
-                await DropDatabaseAsync(name);
+                try
+                {
+                    await cleanupAction();
+                }
+                catch (Exception exception)
+                {
+                    exceptions.Add(exception);
+                }
             }
+
+            if (exceptions.Count > 0)
+                throw new AggregateException(exceptions);
         }
 
         private async Task DropDatabaseAsync(string databaseName)
