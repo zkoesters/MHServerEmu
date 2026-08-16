@@ -80,35 +80,55 @@ namespace MHServerEmu.PlayerManagement.Tests
             return false;
         }
 
-        public bool InsertAccount(DBAccount account)
+        public AccountStoreResult InsertAccount(DBAccount account)
         {
             if (InsertAccountResult == false)
-                return false;
+                return AccountStoreResult.Failed;
 
             Accounts[account.Email] = account;
-            return true;
+            return AccountStoreResult.Success;
         }
 
-        public bool UpdateAccount(DBAccount account)
+        public AccountStoreResult ChangePlayerName(DBAccount account, string playerName)
+        {
+            return StoreAccountChange();
+        }
+
+        public AccountStoreResult ChangePassword(DBAccount account, byte[] passwordHash, byte[] salt)
+        {
+            return StoreAccountChange();
+        }
+
+        public AccountStoreResult ChangeUserLevel(DBAccount account, AccountUserLevel userLevel)
+        {
+            return StoreAccountChange();
+        }
+
+        public AccountStoreResult ChangeFlags(DBAccount account, AccountFlags flags)
+        {
+            return StoreAccountChange();
+        }
+
+        private AccountStoreResult StoreAccountChange()
         {
             UpdateAccountCallCount++;
 
             if (ThrowOnUpdateAccount)
                 throw new InvalidOperationException("Configured account update failure.");
 
-            return UpdateAccountResult;
+            return UpdateAccountResult ? AccountStoreResult.Success : AccountStoreResult.Failed;
         }
 
-        public bool LoadPlayerData(DBAccount account)
+        public PlayerStoreResult LoadPlayerData(DBAccount account)
         {
             LoadPlayerDataCallCount++;
-            return LoadPlayerDataResult;
+            return LoadPlayerDataResult ? PlayerStoreResult.Success : PlayerStoreResult.Failed;
         }
 
-        public bool SavePlayerData(DBAccount account)
+        public PlayerStoreResult SavePlayerData(DBAccount account)
         {
             SavePlayerDataCallCount++;
-            return SavePlayerDataResult;
+            return SavePlayerDataResult ? PlayerStoreResult.Success : PlayerStoreResult.Failed;
         }
 
         public bool LoadGuilds(List<DBGuild> guilds)
@@ -118,28 +138,34 @@ namespace MHServerEmu.PlayerManagement.Tests
             return true;
         }
 
-        public bool SaveGuild(DBGuild guild)
+        public GuildStoreResult CreateGuild(DBGuild guild, DBGuildMember creator)
         {
             SaveGuildCallCount++;
-            return true;
+            return GuildStoreResult.Success;
         }
 
-        public bool DeleteGuild(DBGuild guild)
+        public GuildStoreResult ChangeGuildName(DBGuild guild, string name)
+        {
+            SaveGuildCallCount++;
+            return GuildStoreResult.Success;
+        }
+
+        public GuildStoreResult ChangeGuildMotd(DBGuild guild, string motd)
+        {
+            SaveGuildCallCount++;
+            return GuildStoreResult.Success;
+        }
+
+        public GuildStoreResult ApplyMembershipTransition(DBGuild guild, GuildMemberTransition transition)
+        {
+            SaveGuildMemberCallCount += transition.Changes.Count;
+            return GuildStoreResult.Success;
+        }
+
+        public GuildStoreResult DeleteGuild(DBGuild guild)
         {
             DeleteGuildCallCount++;
-            return true;
-        }
-
-        public bool SaveGuildMember(DBGuildMember guildMember)
-        {
-            SaveGuildMemberCallCount++;
-            return true;
-        }
-
-        public bool DeleteGuildMember(DBGuildMember guildMember)
-        {
-            DeleteGuildMemberCallCount++;
-            return true;
+            return GuildStoreResult.Success;
         }
     }
 }

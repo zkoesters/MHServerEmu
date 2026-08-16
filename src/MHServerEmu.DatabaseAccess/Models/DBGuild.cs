@@ -1,4 +1,6 @@
-﻿namespace MHServerEmu.DatabaseAccess.Models
+﻿using System.Text.Json.Serialization;
+
+namespace MHServerEmu.DatabaseAccess.Models
 {
     public class DBGuild
     {
@@ -7,6 +9,15 @@
         public string Motd { get; set; }
         public long CreatorDbGuid { get; set; }
         public long CreationTime { get; set; }
+
+        [JsonIgnore]
+        public long PersistenceRevision { get; set; } = 0;
+        [JsonIgnore]
+        public PersistenceState PersistenceState { get; set; } = PersistenceState.Clean;
+        [JsonIgnore]
+        public DateTime? CreatedAtUtc { get; set; }
+        [JsonIgnore]
+        public DateTime? UpdatedAtUtc { get; set; }
 
         // CreatorDbGuid and CreationTime are just additional metadata for tracking/moderation.
 

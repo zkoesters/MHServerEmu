@@ -57,9 +57,9 @@ namespace MHServerEmu.Tests.Leaderboards
                 return false;
             }
 
-            public bool LoadPlayerData(DBAccount account) => false;
+            public PlayerStoreResult LoadPlayerData(DBAccount account) => PlayerStoreResult.Failed;
 
-            public bool SavePlayerData(DBAccount account) => false;
+            public PlayerStoreResult SavePlayerData(DBAccount account) => PlayerStoreResult.Failed;
         }
     }
 }

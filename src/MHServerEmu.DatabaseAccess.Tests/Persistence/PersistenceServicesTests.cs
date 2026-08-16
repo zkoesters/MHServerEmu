@@ -53,8 +53,11 @@ namespace MHServerEmu.DatabaseAccess.Tests.Persistence
                 return false;
             }
 
-            public bool InsertAccount(DBAccount account) => false;
-            public bool UpdateAccount(DBAccount account) => false;
+            public AccountStoreResult InsertAccount(DBAccount account) => AccountStoreResult.Failed;
+            public AccountStoreResult ChangePlayerName(DBAccount account, string playerName) => AccountStoreResult.Failed;
+            public AccountStoreResult ChangePassword(DBAccount account, byte[] passwordHash, byte[] salt) => AccountStoreResult.Failed;
+            public AccountStoreResult ChangeUserLevel(DBAccount account, AccountUserLevel userLevel) => AccountStoreResult.Failed;
+            public AccountStoreResult ChangeFlags(DBAccount account, AccountFlags flags) => AccountStoreResult.Failed;
         }
 
         private class PlayerStore : IPlayerStore
@@ -80,17 +83,18 @@ namespace MHServerEmu.DatabaseAccess.Tests.Persistence
                 return false;
             }
 
-            public bool LoadPlayerData(DBAccount account) => false;
-            public bool SavePlayerData(DBAccount account) => false;
+            public PlayerStoreResult LoadPlayerData(DBAccount account) => PlayerStoreResult.Failed;
+            public PlayerStoreResult SavePlayerData(DBAccount account) => PlayerStoreResult.Failed;
         }
 
         private class GuildStore : IGuildStore
         {
             public bool LoadGuilds(List<DBGuild> guilds) => false;
-            public bool SaveGuild(DBGuild guild) => false;
-            public bool DeleteGuild(DBGuild guild) => false;
-            public bool SaveGuildMember(DBGuildMember guildMember) => false;
-            public bool DeleteGuildMember(DBGuildMember guildMember) => false;
+            public GuildStoreResult CreateGuild(DBGuild guild, DBGuildMember creator) => GuildStoreResult.Failed;
+            public GuildStoreResult ChangeGuildName(DBGuild guild, string name) => GuildStoreResult.Failed;
+            public GuildStoreResult ChangeGuildMotd(DBGuild guild, string motd) => GuildStoreResult.Failed;
+            public GuildStoreResult ApplyMembershipTransition(DBGuild guild, GuildMemberTransition transition) => GuildStoreResult.Failed;
+            public GuildStoreResult DeleteGuild(DBGuild guild) => GuildStoreResult.Failed;
         }
     }
 }

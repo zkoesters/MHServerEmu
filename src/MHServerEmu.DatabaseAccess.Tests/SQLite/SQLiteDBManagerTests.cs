@@ -32,7 +32,7 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
             DBAccount account = new("Case@Test.com", "PlayerOne", "twelve-chars");
 
             Assert.True(manager.Initialize(databasePath, 0, TimeSpan.FromHours(1)));
-            Assert.True(manager.InsertAccount(account));
+            Assert.Equal(AccountStoreResult.Success, manager.InsertAccount(account));
             Assert.True(manager.TryQueryAccountByEmail("case@test.com", out DBAccount emailAccount));
             Assert.Equal(account.Id, emailAccount.Id);
             Assert.True(manager.TryGetPlayerDbIdByName("playerone", out ulong playerDbId, out string playerName));
@@ -49,19 +49,19 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
                 EntityProtoGuid = 200,
                 ArchiveData = [0x40, 0x50, 0x60]
             }));
-            Assert.True(manager.SavePlayerData(account));
+            Assert.Equal(PlayerStoreResult.Success, manager.SavePlayerData(account));
 
             account.Player = null;
             account.ClearEntities();
             Assert.True(manager.TryQueryAccountByEmail("case@test.com", out DBAccount loadedAccount));
-            Assert.True(manager.LoadPlayerData(loadedAccount));
+            Assert.Equal(PlayerStoreResult.Success, manager.LoadPlayerData(loadedAccount));
             Assert.Equal(new byte[] { 0x10, 0x20, 0x30 }, loadedAccount.Player.ArchiveData);
             DBEntity avatar = Assert.Single(loadedAccount.Avatars.Entries);
             Assert.Equal(new byte[] { 0x40, 0x50, 0x60 }, avatar.ArchiveData);
         }
 
         [Fact]
-        public void UpdateAccount_UninsertedAccount_ReturnsFalse()
+        public void ChangePlayerName_UninsertedAccount_ReturnsAccountNotFound()
         {
             using TemporaryDirectory temporaryDirectory = new();
             string databasePath = Path.Combine(temporaryDirectory.Path, "Account.db");
@@ -69,7 +69,7 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
             DBAccount account = new("account@example.com", "PlayerOne", "twelve-chars");
 
             Assert.True(manager.Initialize(databasePath, 0, TimeSpan.FromHours(1)));
-            Assert.False(manager.UpdateAccount(account));
+            Assert.Equal(AccountStoreResult.AccountNotFound, manager.ChangePlayerName(account, "PlayerTwo"));
         }
     }
 }

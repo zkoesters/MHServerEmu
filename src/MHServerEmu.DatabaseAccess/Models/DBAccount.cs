@@ -44,6 +44,29 @@ namespace MHServerEmu.DatabaseAccess.Models
         public AccountUserLevel UserLevel { get; set; }
         public AccountFlags Flags { get; set; }
 
+        [JsonIgnore]
+        public long PersistenceRevision { get; set; } = 0;
+        [JsonIgnore]
+        public PersistenceState PersistenceState { get; set; } = PersistenceState.Clean;
+        [JsonIgnore]
+        public DateTime? CreatedAtUtc { get; set; }
+        [JsonIgnore]
+        public DateTime? UpdatedAtUtc { get; set; }
+        [JsonIgnore]
+        public string PasswordAlgorithm { get; set; }
+        [JsonIgnore]
+        public int PasswordFormatVersion { get; set; }
+        [JsonIgnore]
+        public int PasswordIterations { get; set; }
+        [JsonIgnore]
+        public int PasswordKeySize { get; set; }
+        [JsonIgnore]
+        public int CredentialVersion { get; set; } = 1;
+        [JsonIgnore]
+        public int GameSecurityVersion { get; set; } = 1;
+        [JsonIgnore]
+        public DateTime? EmailVerifiedAtUtc { get; set; }
+
         public DBPlayer Player { get; set; }
 
         // NOTE: init is required for collection properties to be compatible with JSON serialization

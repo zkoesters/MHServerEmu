@@ -182,7 +182,7 @@ namespace MHServerEmu.PlayerManagement.Players
             if (lockScope.LockTaken == false)
                 return Logger.ErrorReturn(false, $"LoadPlayerData(): Timed out acquiring lock for [{account}]");
 
-            if (_players.LoadPlayerData(account) == false)
+            if (_players.LoadPlayerData(account) != PlayerStoreResult.Success)
                 return Logger.WarnReturn(false, $"LoadPlayerData(): Failed to load player data for account [{account}] from the database");
 
             Logger.Info($"Loaded player data for account [{account}] from the database");
@@ -216,7 +216,7 @@ namespace MHServerEmu.PlayerManagement.Players
             if (IsConnected == false)
                 account.Player.LastLogoutTime = (long)Clock.UnixTime.TotalMilliseconds;
 
-            if (_players.SavePlayerData(account) == false)
+            if (_players.SavePlayerData(account) != PlayerStoreResult.Success)
                 return Logger.WarnReturn(false, $"SavePlayerData(): Failed to save player data for account [{account}] to the database");
 
             Logger.Info($"Saved player data for account [{account}] to the database");

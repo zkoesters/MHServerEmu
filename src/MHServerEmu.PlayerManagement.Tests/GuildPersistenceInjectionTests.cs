@@ -52,7 +52,7 @@ namespace MHServerEmu.PlayerManagement.Tests
         }
 
         [Fact]
-        public void ChangeMember_SavesMemberThroughSuppliedStore()
+        public void ChangeMember_AppliesTransitionThroughSuppliedStore()
         {
             StubDBManager store = new();
             DBGuild guildData = new(1, "Guild", string.Empty, 1, 0);
@@ -66,7 +66,7 @@ namespace MHServerEmu.PlayerManagement.Tests
 
             Assert.Equal(GuildChangeMemberResultCode.eGCMRCSuccess, result);
             Assert.Equal(1, store.SaveGuildCallCount);
-            Assert.Equal(3, store.SaveGuildMemberCallCount);
+            Assert.Equal(1, store.SaveGuildMemberCallCount);
         }
 
         private static MasterGuildManager CreateGuildManager(StubDBManager store)

@@ -93,33 +93,48 @@ namespace MHServerEmu.DatabaseAccess.Json
             return false;
         }
 
-        public bool InsertAccount(DBAccount account)
+        public AccountStoreResult InsertAccount(DBAccount account)
         {
-            return Logger.WarnReturn(false, "InsertAccount(): Operation not supported");
+            return Logger.WarnReturn(AccountStoreResult.Failed, "InsertAccount(): Operation not supported");
         }
 
-        public bool UpdateAccount(DBAccount account)
+        public AccountStoreResult ChangePlayerName(DBAccount account, string playerName)
         {
-            return Logger.WarnReturn(false, "UpdateAccount(): Operation not supported");
+            return Logger.WarnReturn(AccountStoreResult.Failed, "ChangePlayerName(): Operation not supported");
         }
 
-        public bool LoadPlayerData(DBAccount account)
+        public AccountStoreResult ChangePassword(DBAccount account, byte[] passwordHash, byte[] salt)
+        {
+            return Logger.WarnReturn(AccountStoreResult.Failed, "ChangePassword(): Operation not supported");
+        }
+
+        public AccountStoreResult ChangeUserLevel(DBAccount account, AccountUserLevel userLevel)
+        {
+            return Logger.WarnReturn(AccountStoreResult.Failed, "ChangeUserLevel(): Operation not supported");
+        }
+
+        public AccountStoreResult ChangeFlags(DBAccount account, AccountFlags flags)
+        {
+            return Logger.WarnReturn(AccountStoreResult.Failed, "ChangeFlags(): Operation not supported");
+        }
+
+        public PlayerStoreResult LoadPlayerData(DBAccount account)
         {
             // All JSON data is loaded at once (FIXME)
-            return true;
+            return PlayerStoreResult.Success;
         }
 
-        public bool SavePlayerData(DBAccount account)
+        public PlayerStoreResult SavePlayerData(DBAccount account)
         {
             if (account != _account)
-                return Logger.WarnReturn(false, "UpdateAccountData(): Attempting to update non-default account when bypass auth is enabled");
+                return Logger.WarnReturn(PlayerStoreResult.Failed, "SavePlayerData(): Attempting to update non-default account when bypass auth is enabled");
 
             Logger.Info($"Updated account file {FileHelper.GetRelativePath(_accountFilePath)}");
             FileHelper.SerializeJson(_accountFilePath, _account, _jsonOptions);
 
             TryCreateBackup();
 
-            return true;
+            return PlayerStoreResult.Success;
         }
 
         #region Guilds
@@ -131,24 +146,29 @@ namespace MHServerEmu.DatabaseAccess.Json
             return true;
         }
 
-        public bool SaveGuild(DBGuild guild)
+        public GuildStoreResult CreateGuild(DBGuild guild, DBGuildMember creator)
         {
-            return true;
+            return GuildStoreResult.Success;
         }
 
-        public bool DeleteGuild(DBGuild guild)
+        public GuildStoreResult ChangeGuildName(DBGuild guild, string name)
         {
-            return true;
+            return GuildStoreResult.Success;
         }
 
-        public bool SaveGuildMember(DBGuildMember guildMember)
+        public GuildStoreResult ChangeGuildMotd(DBGuild guild, string motd)
         {
-            return true;
+            return GuildStoreResult.Success;
         }
 
-        public bool DeleteGuildMember(DBGuildMember guildMember)
+        public GuildStoreResult ApplyMembershipTransition(DBGuild guild, GuildMemberTransition transition)
         {
-            return true;
+            return GuildStoreResult.Success;
+        }
+
+        public GuildStoreResult DeleteGuild(DBGuild guild)
+        {
+            return GuildStoreResult.Success;
         }
 
         #endregion
