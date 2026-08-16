@@ -7,6 +7,8 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Migrations
     {
         private const int AdvisoryLockNamespace = 0x4D485345;
         private const int AdvisoryLockId = 2;
+        private const string MigrationTimeoutCode = "migration_timeout";
+        private const string MigrationLockTimeoutCode = "migration_lock_timeout";
         private readonly NpgsqlDataSource _dataSource;
         private readonly PostgreSQLMigrationCatalog _catalog;
         private readonly TimeSpan _migrationTimeout;
@@ -34,7 +36,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Migrations
                 await using NpgsqlConnection connection = await OpenConnectionAsync(deadline, cancellationToken);
                 await using NpgsqlTransaction transaction = await BeginTransactionAsync(connection, deadline, cancellationToken);
                 await ConfigureTimeoutsAsync(connection, transaction, deadline, cancellationToken);
-                await WaitForAdvisoryLockAsync(connection, transaction, cancellationToken);
+                await WaitForAdvisoryLockAsync(connection, transaction, deadline, cancellationToken);
 
                 IReadOnlyList<AppliedMigration> history = await ReadHistoryAsync(connection, transaction, deadline, cancellationToken);
                 PostgreSQLPersistenceFailure historyFailure = ValidateHistory(history);
@@ -100,37 +102,49 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Migrations
             await command.ExecuteNonQueryAsync(source.Token);
         }
 
-        private async Task WaitForAdvisoryLockAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken cancellationToken)
+        private async Task WaitForAdvisoryLockAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, PostgreSQLOperationDeadline migrationDeadline, CancellationToken cancellationToken)
         {
             PostgreSQLOperationDeadline lockDeadline = new(_migrationLockTimeout);
             while (true)
             {
+                PostgreSQLOperationDeadline activeDeadline = GetEarlierAdvisoryLockDeadline(migrationDeadline, lockDeadline, out string timeoutCode);
                 try
                 {
                     await using NpgsqlCommand command = new("SELECT pg_try_advisory_xact_lock(@namespace, @id)", connection, transaction)
                     {
-                        CommandTimeout = lockDeadline.RemainingCommandTimeoutSeconds,
+                        CommandTimeout = activeDeadline.RemainingCommandTimeoutSeconds,
                     };
                     command.Parameters.AddWithValue("namespace", AdvisoryLockNamespace);
                     command.Parameters.AddWithValue("id", AdvisoryLockId);
-                    using CancellationTokenSource source = lockDeadline.CreateCancellationSource(cancellationToken);
+                    using CancellationTokenSource source = activeDeadline.CreateCancellationSource(cancellationToken);
                     if ((bool)await command.ExecuteScalarAsync(source.Token))
                         return;
                 }
                 catch (TimeoutException)
                 {
-                    throw new MigrationRunnerException("migration_lock_timeout");
+                    throw new MigrationRunnerException(GetAdvisoryLockTimeoutCode(migrationDeadline.Remaining, lockDeadline.Remaining));
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested == false)
                 {
-                    throw new MigrationRunnerException("migration_lock_timeout");
+                    throw new MigrationRunnerException(GetAdvisoryLockTimeoutCode(migrationDeadline.Remaining, lockDeadline.Remaining));
                 }
 
-                if (lockDeadline.Remaining == TimeSpan.Zero)
-                    throw new MigrationRunnerException("migration_lock_timeout");
+                if (activeDeadline.Remaining == TimeSpan.Zero)
+                    throw new MigrationRunnerException(timeoutCode);
 
-                await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(50, lockDeadline.Remaining.TotalMilliseconds)), cancellationToken);
+                await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(50, activeDeadline.Remaining.TotalMilliseconds)), cancellationToken);
             }
+        }
+
+        internal static string GetAdvisoryLockTimeoutCode(TimeSpan migrationRemaining, TimeSpan migrationLockRemaining)
+        {
+            return migrationRemaining <= migrationLockRemaining ? MigrationTimeoutCode : MigrationLockTimeoutCode;
+        }
+
+        private static PostgreSQLOperationDeadline GetEarlierAdvisoryLockDeadline(PostgreSQLOperationDeadline migrationDeadline, PostgreSQLOperationDeadline lockDeadline, out string timeoutCode)
+        {
+            timeoutCode = GetAdvisoryLockTimeoutCode(migrationDeadline.Remaining, lockDeadline.Remaining);
+            return timeoutCode == MigrationTimeoutCode ? migrationDeadline : lockDeadline;
         }
 
         private async Task<IReadOnlyList<AppliedMigration>> ReadHistoryAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, PostgreSQLOperationDeadline deadline, CancellationToken cancellationToken)

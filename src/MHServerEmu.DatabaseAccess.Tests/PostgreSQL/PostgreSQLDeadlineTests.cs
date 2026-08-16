@@ -1,4 +1,5 @@
 using MHServerEmu.DatabaseAccess.PostgreSQL;
+using MHServerEmu.DatabaseAccess.PostgreSQL.Migrations;
 
 namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL
 {
@@ -50,6 +51,16 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL
             PostgreSQLOperationDeadline deadline = new(TimeSpan.FromMilliseconds(10));
 
             Assert.Equal(1, deadline.RemainingCommandTimeoutSeconds);
+        }
+
+        [Theory]
+        [InlineData(100, 200, "migration_timeout")]
+        [InlineData(200, 100, "migration_lock_timeout")]
+        public void GetAdvisoryLockTimeoutCode_UsesTheEarlierDeadline(int migrationMilliseconds, int migrationLockMilliseconds, string expectedCode)
+        {
+            string code = PostgreSQLMigrationRunner.GetAdvisoryLockTimeoutCode(TimeSpan.FromMilliseconds(migrationMilliseconds), TimeSpan.FromMilliseconds(migrationLockMilliseconds));
+
+            Assert.Equal(expectedCode, code);
         }
     }
 }

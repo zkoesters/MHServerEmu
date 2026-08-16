@@ -101,7 +101,7 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
         }
 
         [PostgreSQLIntegrationFact]
-        public async Task RunAsync_CompetingRunner_UsesTheMigrationLockDeadline()
+        public async Task RunAsync_CompetingRunner_UsesTheEarlierMigrationLockDeadline()
         {
             NpgsqlDataSource dataSource = await _database.CreateDataSourceAsync();
             PostgreSQLMigrationCatalog catalog = ExtendCatalog("SELECT pg_sleep(1);");
@@ -117,6 +117,26 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
             Assert.False(secondResult.Succeeded);
             Assert.Equal("migration_lock_timeout", secondResult.Failure.Code);
             Assert.InRange(stopwatch.Elapsed, TimeSpan.FromMilliseconds(50), TimeSpan.FromSeconds(1));
+            Assert.True((await firstRun).Succeeded);
+        }
+
+        [PostgreSQLIntegrationFact]
+        public async Task RunAsync_CompetingRunner_UsesTheEarlierMigrationDeadline()
+        {
+            NpgsqlDataSource dataSource = await _database.CreateDataSourceAsync();
+            PostgreSQLMigrationCatalog catalog = ExtendCatalog("SELECT pg_sleep(1);");
+            PostgreSQLMigrationRunner first = new(dataSource, catalog, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(2));
+            Task<PostgreSQLMigrationResult> firstRun = first.RunAsync();
+            await WaitForAdvisoryLockAsync(dataSource);
+            PostgreSQLMigrationRunner second = new(dataSource, catalog, TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(2));
+            Stopwatch stopwatch = Stopwatch.StartNew();
+
+            PostgreSQLMigrationResult secondResult = await second.RunAsync();
+            stopwatch.Stop();
+
+            Assert.False(secondResult.Succeeded);
+            Assert.Equal("migration_timeout", secondResult.Failure.Code);
+            Assert.InRange(stopwatch.Elapsed, TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(1));
             Assert.True((await firstRun).Succeeded);
         }
 
