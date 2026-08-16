@@ -1,3 +1,4 @@
+using System.Data;
 using MHServerEmu.DatabaseAccess.PostgreSQL.Configuration;
 using MHServerEmu.DatabaseAccess.PostgreSQL.Locking;
 using MHServerEmu.DatabaseAccess.PostgreSQL.Migrations;
@@ -74,7 +75,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
         {
             PostgreSQLWriterOwner owner = _writerOwner ?? throw new PostgreSQLWriterFencedException();
             await using NpgsqlConnection connection = await _dataSource.OpenConnectionAsync(cancellationToken);
-            await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
+            await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
             await owner.ValidateTransactionAsync(connection, transaction, token, cancellationToken);
             await transaction.RollbackAsync(cancellationToken);
         }
@@ -84,7 +85,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
             ArgumentNullException.ThrowIfNull(writeAsync);
             PostgreSQLWriterOwner owner = _writerOwner ?? throw new PostgreSQLWriterFencedException();
             await using NpgsqlConnection connection = await _dataSource.OpenConnectionAsync(cancellationToken);
-            await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
+            await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
             await owner.ValidateTransactionAsync(connection, transaction, owner.FenceToken, cancellationToken);
             await writeAsync(connection, transaction, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
