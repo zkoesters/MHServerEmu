@@ -31,7 +31,7 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
         }
 
         [Fact]
-        public void LoadEmbedded_UsesTheInitializePersistenceResourceBytes()
+        public void LoadEmbedded_ReturnsFoundationAndCoreMigrations()
         {
             PostgreSQLMigrationCatalog catalog = PostgreSQLMigrationCatalog.LoadEmbedded();
             Assembly assembly = typeof(PostgreSQLMigrationCatalog).Assembly;
@@ -39,10 +39,14 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
             using MemoryStream bytes = new();
             stream.CopyTo(bytes);
 
-            PostgreSQLMigration migration = Assert.Single(catalog.Migrations);
-            Assert.Equal(1, migration.Version);
-            Assert.Equal("InitializePersistence", migration.Name);
-            Assert.Equal(Convert.ToHexString(SHA256.HashData(bytes.ToArray())), migration.Checksum);
+            Assert.Collection(catalog.Migrations,
+                migration =>
+                {
+                    Assert.Equal(1, migration.Version);
+                    Assert.Equal("InitializePersistence", migration.Name);
+                    Assert.Equal(Convert.ToHexString(SHA256.HashData(bytes.ToArray())), migration.Checksum);
+                },
+                migration => Assert.Equal((2, "CorePersistence"), (migration.Version, migration.Name)));
         }
 
         [Theory]
