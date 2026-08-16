@@ -43,6 +43,17 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
         }
 
         [PostgreSQLIntegrationFact]
+        public async Task CreateGuild_ReturningReaderIsDisposedBeforeInsertingLeader()
+        {
+            await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
+            await CreateMemberAsync(fixture, 1);
+            DBGuild guild = new(10, "Founders", "", 1, 1);
+
+            Assert.Equal(GuildStoreResult.Success, fixture.Guilds.CreateGuild(guild, new DBGuildMember(1, guild.Id, 3)));
+            Assert.Equal(1, await CountAsync(fixture.Provider.DataSource, "SELECT COUNT(*) FROM mhserveremu.guild_member WHERE guild_id = 10"));
+        }
+
+        [PostgreSQLIntegrationFact]
         public async Task ApplyMembershipTransition_JoinLeaveAndLeadershipTransfer_CommitAtomically()
         {
             await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
@@ -96,6 +107,22 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
             Assert.Equal(GuildStoreResult.Success, fixture.Guilds.ChangeGuildMotd(guild, "Current"));
             Assert.Equal(GuildStoreResult.StaleRevision, fixture.Guilds.ChangeGuildName(stale, "Stale"));
             Assert.Equal("Founders", stale.Name);
+            Assert.Equal(GuildStoreResult.GuildNotFound, fixture.Guilds.ChangeGuildMotd(new DBGuild(99, "Missing", "Original", 1, 1), "Changed"));
+        }
+
+        [PostgreSQLIntegrationFact]
+        public async Task CheckedNameAndMotd_ZeroRowProbe_ReturnsStaleOrMissing()
+        {
+            await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
+            await CreateMemberAsync(fixture, 1);
+            DBGuild guild = new(10, "Founders", "Original", 1, 1);
+            Assert.Equal(GuildStoreResult.Success, fixture.Guilds.CreateGuild(guild, new DBGuildMember(1, guild.Id, 3)));
+            List<DBGuild> loaded = new();
+            Assert.True(fixture.Guilds.LoadGuilds(loaded));
+            DBGuild stale = Assert.Single(loaded);
+
+            Assert.Equal(GuildStoreResult.Success, fixture.Guilds.ChangeGuildMotd(guild, "Current"));
+            Assert.Equal(GuildStoreResult.StaleRevision, fixture.Guilds.ChangeGuildName(stale, "Stale"));
             Assert.Equal(GuildStoreResult.GuildNotFound, fixture.Guilds.ChangeGuildMotd(new DBGuild(99, "Missing", "Original", 1, 1), "Changed"));
         }
 
