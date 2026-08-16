@@ -224,12 +224,12 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Migrations
 
         private static bool IsDollarQuoteTagStart(char value)
         {
-            return value is >= 'A' and <= 'Z' or >= 'a' and <= 'z' or '_';
+            return char.IsLetter(value) || value == '_';
         }
 
         private static bool IsDollarQuoteTagCharacter(char value)
         {
-            return IsDollarQuoteTagStart(value) || value is >= '0' and <= '9';
+            return char.IsLetterOrDigit(value) || value == '_';
         }
 
         private static bool IsTransactionControl(string statement)

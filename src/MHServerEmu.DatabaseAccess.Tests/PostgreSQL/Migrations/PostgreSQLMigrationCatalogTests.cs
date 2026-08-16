@@ -145,6 +145,26 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
         }
 
         [Fact]
+        public void Create_UnicodeNamedDollarQuotedBody_IsAllowed()
+        {
+            PostgreSQLMigrationCatalog catalog = PostgreSQLMigrationCatalog.Create(new[]
+            {
+                new PostgreSQLMigrationResource("Migrations.0001_Initialize.sql", "CREATE FUNCTION f() RETURNS void AS $é$ BEGIN PERFORM 1; END; $é$ LANGUAGE plpgsql;"u8.ToArray()),
+            });
+
+            Assert.Single(catalog.Migrations);
+        }
+
+        [Fact]
+        public void Create_MalformedUnicodeDollarQuotedTag_Throws()
+        {
+            Assert.Throws<InvalidOperationException>(() => PostgreSQLMigrationCatalog.Create(new[]
+            {
+                new PostgreSQLMigrationResource("Migrations.0001_Initialize.sql", "CREATE FUNCTION f() RETURNS void AS $é-$ BEGIN PERFORM 1; END; $é-$ LANGUAGE plpgsql;"u8.ToArray()),
+            }));
+        }
+
+        [Fact]
         public void Create_EndOutsideDollarQuotedBody_Throws()
         {
             Assert.Throws<InvalidOperationException>(() => PostgreSQLMigrationCatalog.Create(new[]
