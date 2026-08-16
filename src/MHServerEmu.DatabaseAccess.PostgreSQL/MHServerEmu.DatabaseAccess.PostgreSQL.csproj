@@ -25,4 +25,8 @@
     </Reference>
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Migrations\0001_InitializePersistence.sql" LogicalName="Migrations.0001_InitializePersistence.sql" />
+  </ItemGroup>
+
 </Project>

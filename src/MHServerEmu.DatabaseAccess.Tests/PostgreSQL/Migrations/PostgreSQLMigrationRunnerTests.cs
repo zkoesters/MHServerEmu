@@ -1,0 +1,149 @@
+using System.Text;
+using MHServerEmu.DatabaseAccess.PostgreSQL.Migrations;
+using Npgsql;
+
+namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
+{
+    [Trait("Category", "PostgreSQLIntegration")]
+    [Collection("PostgreSQL migration integration")]
+    public class PostgreSQLMigrationRunnerTests
+    {
+        private readonly PostgreSQLTestDatabase _database;
+
+        public PostgreSQLMigrationRunnerTests(PostgreSQLTestDatabase database)
+        {
+            _database = database;
+        }
+
+        [PostgreSQLIntegrationFact]
+        public async Task RunAsync_BootstrapsOnlyThePersistenceFoundation()
+        {
+            NpgsqlDataSource dataSource = await _database.CreateDataSourceAsync();
+            PostgreSQLMigrationResult result = await new PostgreSQLMigrationRunner(dataSource, PostgreSQLMigrationCatalog.LoadEmbedded(), TimeSpan.FromSeconds(10)).RunAsync();
+
+            Assert.True(result.Succeeded);
+            Assert.Equal(1, result.AppliedMigrationCount);
+            Assert.Equal("mhserveremu.schema_migrations", await ScalarAsync<string>(dataSource, "SELECT to_regclass('mhserveremu.schema_migrations')::text"));
+            Assert.Equal(new[] { "application_metadata", "schema_migrations", "writer_fence" }, await TablesAsync(dataSource));
+            Assert.Equal(1, await ScalarAsync<int>(dataSource, "SELECT identity_normalization_version FROM mhserveremu.application_metadata"));
+            Assert.Equal(0L, await ScalarAsync<long>(dataSource, "SELECT generation FROM mhserveremu.writer_fence WHERE singleton = true"));
+            Assert.Equal(Guid.Empty, await ScalarAsync<Guid>(dataSource, "SELECT owner_id FROM mhserveremu.writer_fence WHERE singleton = true"));
+        }
+
+        [PostgreSQLIntegrationFact]
+        public async Task RunAsync_AlreadyAppliedCatalog_IsIdempotent()
+        {
+            NpgsqlDataSource dataSource = await _database.CreateDataSourceAsync();
+            PostgreSQLMigrationRunner runner = new(dataSource, PostgreSQLMigrationCatalog.LoadEmbedded(), TimeSpan.FromSeconds(10));
+            Assert.True((await runner.RunAsync()).Succeeded);
+
+            PostgreSQLMigrationResult result = await runner.RunAsync();
+
+            Assert.True(result.Succeeded);
+            Assert.Equal(0, result.AppliedMigrationCount);
+        }
+
+        [PostgreSQLIntegrationTheory]
+        [InlineData("checksum")]
+        [InlineData("name")]
+        public async Task RunAsync_HistoryDoesNotMatchCatalog_ReturnsFailure(string column)
+        {
+            NpgsqlDataSource dataSource = await _database.CreateDataSourceAsync();
+            PostgreSQLMigrationCatalog catalog = PostgreSQLMigrationCatalog.LoadEmbedded();
+            Assert.True((await new PostgreSQLMigrationRunner(dataSource, catalog, TimeSpan.FromSeconds(10)).RunAsync()).Succeeded);
+            await ExecuteAsync(dataSource, $"UPDATE mhserveremu.schema_migrations SET {column} = 'mismatch' WHERE version = 1");
+
+            PostgreSQLMigrationResult result = await new PostgreSQLMigrationRunner(dataSource, catalog, TimeSpan.FromSeconds(10)).RunAsync();
+
+            Assert.False(result.Succeeded);
+            Assert.Equal("MigrationHistoryMismatch", result.Failure.Code);
+        }
+
+        [PostgreSQLIntegrationFact]
+        public async Task RunAsync_FutureHistoryVersion_ReturnsFailure()
+        {
+            NpgsqlDataSource dataSource = await _database.CreateDataSourceAsync();
+            PostgreSQLMigrationCatalog catalog = PostgreSQLMigrationCatalog.LoadEmbedded();
+            Assert.True((await new PostgreSQLMigrationRunner(dataSource, catalog, TimeSpan.FromSeconds(10)).RunAsync()).Succeeded);
+            await ExecuteAsync(dataSource, "INSERT INTO mhserveremu.schema_migrations VALUES (9999, 'Future', 'checksum', 'test', now(), 0)");
+
+            PostgreSQLMigrationResult result = await new PostgreSQLMigrationRunner(dataSource, catalog, TimeSpan.FromSeconds(10)).RunAsync();
+
+            Assert.False(result.Succeeded);
+            Assert.Equal("FutureMigration", result.Failure.Code);
+        }
+
+        [PostgreSQLIntegrationFact]
+        public async Task RunAsync_FailedBatch_RollsBackAllMigrations()
+        {
+            NpgsqlDataSource dataSource = await _database.CreateDataSourceAsync();
+            PostgreSQLMigrationCatalog catalog = ExtendCatalog("SELECT * FROM missing_relation;");
+
+            PostgreSQLMigrationResult result = await new PostgreSQLMigrationRunner(dataSource, catalog, TimeSpan.FromSeconds(10)).RunAsync();
+
+            Assert.False(result.Succeeded);
+            Assert.Null(await ScalarAsync<string>(dataSource, "SELECT to_regclass('mhserveremu.schema_migrations')::text"));
+        }
+
+        [PostgreSQLIntegrationFact]
+        public async Task RunAsync_ConcurrentRunners_ApplyTheCatalogOnce()
+        {
+            NpgsqlDataSource dataSource = await _database.CreateDataSourceAsync();
+            PostgreSQLMigrationCatalog catalog = ExtendCatalog("SELECT pg_sleep(0.2);");
+            PostgreSQLMigrationRunner first = new(dataSource, catalog, TimeSpan.FromSeconds(10));
+            PostgreSQLMigrationRunner second = new(dataSource, catalog, TimeSpan.FromSeconds(10));
+
+            PostgreSQLMigrationResult[] results = await Task.WhenAll(first.RunAsync(), second.RunAsync());
+
+            Assert.All(results, result => Assert.True(result.Succeeded));
+            Assert.Equal(2, results.Sum(result => result.AppliedMigrationCount));
+        }
+
+        [PostgreSQLIntegrationFact]
+        public async Task RunAsync_LockedHistoryTable_ReturnsFailureAtTheLockDeadline()
+        {
+            NpgsqlDataSource dataSource = await _database.CreateDataSourceAsync();
+            PostgreSQLMigrationCatalog baseCatalog = PostgreSQLMigrationCatalog.LoadEmbedded();
+            Assert.True((await new PostgreSQLMigrationRunner(dataSource, baseCatalog, TimeSpan.FromSeconds(10)).RunAsync()).Succeeded);
+            await using NpgsqlConnection lockConnection = await dataSource.OpenConnectionAsync();
+            await using NpgsqlTransaction transaction = await lockConnection.BeginTransactionAsync();
+            await using (NpgsqlCommand lockCommand = new("LOCK TABLE mhserveremu.schema_migrations IN ACCESS EXCLUSIVE MODE", lockConnection, transaction))
+                await lockCommand.ExecuteNonQueryAsync();
+
+            PostgreSQLMigrationResult result = await new PostgreSQLMigrationRunner(dataSource, ExtendCatalog("SELECT 1;"), TimeSpan.FromSeconds(2), TimeSpan.FromMilliseconds(100)).RunAsync();
+
+            Assert.False(result.Succeeded);
+            Assert.Equal("MigrationFailed", result.Failure.Code);
+        }
+
+        private static PostgreSQLMigrationCatalog ExtendCatalog(string migrationSql)
+        {
+            PostgreSQLMigrationCatalog embedded = PostgreSQLMigrationCatalog.LoadEmbedded();
+            return PostgreSQLMigrationCatalog.Create(embedded.Migrations
+                .Select(migration => new PostgreSQLMigrationResource($"Migrations.{migration.Version:D4}_{migration.Name}.sql", Encoding.UTF8.GetBytes(migration.Sql)))
+                .Append(new PostgreSQLMigrationResource("Migrations.0002_Test.sql", Encoding.UTF8.GetBytes(migrationSql))));
+        }
+
+        private static async Task ExecuteAsync(NpgsqlDataSource dataSource, string sql)
+        {
+            await using NpgsqlCommand command = dataSource.CreateCommand(sql);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        private static async Task<T> ScalarAsync<T>(NpgsqlDataSource dataSource, string sql)
+        {
+            await using NpgsqlCommand command = dataSource.CreateCommand(sql);
+            return (T)await command.ExecuteScalarAsync();
+        }
+
+        private static async Task<string[]> TablesAsync(NpgsqlDataSource dataSource)
+        {
+            await using NpgsqlCommand command = dataSource.CreateCommand("SELECT tablename FROM pg_tables WHERE schemaname = 'mhserveremu' ORDER BY tablename");
+            await using NpgsqlDataReader reader = await command.ExecuteReaderAsync();
+            List<string> tables = new();
+            while (await reader.ReadAsync())
+                tables.Add(reader.GetString(0));
+            return tables.ToArray();
+        }
+    }
+}
