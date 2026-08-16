@@ -33,10 +33,24 @@ namespace MHServerEmu.Core.Config
             {
                 try
                 {
-                    using FileStream stream = new(OverrideFilePath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-
                     if (!OperatingSystem.IsWindows())
-                        File.SetUnixFileMode(OverrideFilePath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                    {
+                        using (FileStream stream = new FileStream(OverrideFilePath, new FileStreamOptions
+                        {
+                            Mode = FileMode.CreateNew,
+                            Access = FileAccess.Write,
+                            Share = FileShare.None,
+                            UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
+                        }))
+                        {
+                        }
+                    }
+                    else
+                    {
+                        using (FileStream stream = new FileStream(OverrideFilePath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                        {
+                        }
+                    }
                 }
                 catch (IOException) when (File.Exists(OverrideFilePath))
                 {
