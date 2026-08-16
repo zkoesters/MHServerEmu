@@ -11,9 +11,11 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
         private PostgreSQLStoreTestFixture(PostgreSQLProvider provider)
         {
             Provider = provider;
+            AccountStore = new PostgreSQLAccountStore(provider.DataSource, provider.StoreExecutor);
         }
 
         internal PostgreSQLProvider Provider { get; }
+        internal PostgreSQLAccountStore AccountStore { get; }
 
         internal static async Task<PostgreSQLStoreTestFixture> StartAsync(PostgreSQLTestDatabase database, PostgreSQLConfig config = null)
         {
