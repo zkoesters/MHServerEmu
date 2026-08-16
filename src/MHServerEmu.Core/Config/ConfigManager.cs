@@ -20,15 +20,60 @@ namespace MHServerEmu.Core.Config
         /// Constructs the <see cref="ConfigManager"/> instance.
         /// </summary>
         private ConfigManager()
+            : this(Path.Combine(FileHelper.ServerRoot, "Config.ini"), Path.Combine(FileHelper.ServerRoot, "ConfigOverride.ini"))
         {
-            string configPath = Path.Combine(FileHelper.ServerRoot, "Config.ini");
+        }
+
+        internal ConfigManager(string configPath, string overridePath)
+        {
             _iniFile = new(configPath);
 
-            string overridePath = Path.Combine(FileHelper.ServerRoot, "ConfigOverride.ini");
-            if (File.Exists(overridePath))
-                _overrideFile = new(overridePath);
-            else
-                File.WriteAllText(overridePath, null);
+            OverrideFilePath = overridePath;
+            if (File.Exists(OverrideFilePath) == false)
+            {
+                try
+                {
+                    using FileStream stream = new(OverrideFilePath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+
+                    if (!OperatingSystem.IsWindows())
+                        File.SetUnixFileMode(OverrideFilePath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                }
+                catch (IOException) when (File.Exists(OverrideFilePath))
+                {
+                }
+            }
+
+            _overrideFile = new(OverrideFilePath);
+        }
+
+        /// <summary>
+        /// Gets the path to the override configuration file.
+        /// </summary>
+        public string OverrideFilePath { get; }
+
+        /// <summary>
+        /// Gets a string from the override configuration file without falling back to the base configuration file.
+        /// </summary>
+        public string GetOverrideString(string section, string key) => _overrideFile.GetString(section, key);
+
+        /// <summary>
+        /// Checks whether the override configuration file can be read or written by group or other users.
+        /// </summary>
+        public bool HasUnsafeOverrideFilePermissions()
+        {
+            if (OperatingSystem.IsWindows())
+                return false;
+
+            try
+            {
+                UnixFileMode permissions = File.GetUnixFileMode(OverrideFilePath);
+                UnixFileMode unsafePermissions = UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.OtherRead | UnixFileMode.OtherWrite;
+                return (permissions & unsafePermissions) != 0;
+            }
+            catch (FileNotFoundException)
+            {
+                return false;
+            }
         }
 
         /// <summary>
