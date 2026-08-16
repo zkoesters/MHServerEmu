@@ -33,6 +33,8 @@ namespace MHServerEmu.PlayerManagement.Tests
         public int SaveGuildMemberCallCount { get; private set; }
         public int DeleteGuildMemberCallCount { get; private set; }
         public int GuildMemberTransitionCallCount { get; private set; }
+        public List<DBGuild> CreatedGuilds { get; } = new();
+        public List<DBGuildMember> GuildCreators { get; } = new();
         public List<GuildMemberTransition> GuildMemberTransitions { get; } = new();
 
         public bool TryQueryAccountByEmail(string email, out DBAccount account)
@@ -153,6 +155,8 @@ namespace MHServerEmu.PlayerManagement.Tests
         public GuildStoreResult CreateGuild(DBGuild guild, DBGuildMember creator)
         {
             SaveGuildCallCount++;
+            CreatedGuilds.Add(guild);
+            GuildCreators.Add(creator);
             return CreateGuildStoreResult;
         }
 

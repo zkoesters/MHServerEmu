@@ -62,9 +62,6 @@ namespace MHServerEmu.PlayerManagement.Social
                 }
             }
 
-            if (saveToDatabase)
-                CreateInDatabase(_data.Members[0]);
-
             _data.Members.Clear();  // we don't use this for anything but initialization, so just clear it
         }
 
@@ -99,6 +96,15 @@ namespace MHServerEmu.PlayerManagement.Social
             if (member.CanChangeName == false)
                 return GuildChangeNameResultCode.eGCNRCNoPermission;
 
+            GuildStoreResult storeResult = ChangeNameInDatabase(newName);
+            if (storeResult != GuildStoreResult.Success)
+                return storeResult switch
+                {
+                    GuildStoreResult.NameConflict => GuildChangeNameResultCode.eGCNRCDuplicateName,
+                    GuildStoreResult.GuildNotFound or GuildStoreResult.InvalidData => GuildChangeNameResultCode.eGCNRCInvalidGuild,
+                    _ => GuildChangeNameResultCode.eGCNRCGuildInErrorState,
+                };
+
             _data.Name = newName;
             InvalidateGuildCompleteInfoCache();
 
@@ -111,9 +117,6 @@ namespace MHServerEmu.PlayerManagement.Social
                 .Build();
 
             SendMessageToAllGames(serverMessage);
-
-            // Replicate to database
-            ChangeNameInDatabase(newName);
 
             return GuildChangeNameResultCode.eGCNRCSuccess;
         }
@@ -132,6 +135,12 @@ namespace MHServerEmu.PlayerManagement.Social
             if (member.CanChangeMotd == false)
                 return GuildChangeMotdResultCode.eGCMotdRCNoPermission;
 
+            GuildStoreResult storeResult = ChangeMotdInDatabase(newMotd);
+            if (storeResult != GuildStoreResult.Success)
+                return storeResult is GuildStoreResult.GuildNotFound or GuildStoreResult.InvalidData
+                    ? GuildChangeMotdResultCode.eGCMotdRCInvalidGuild
+                    : GuildChangeMotdResultCode.eGCMotdRCGuildInErrorState;
+
             _data.Motd = newMotd;
             InvalidateGuildCompleteInfoCache();
 
@@ -144,9 +153,6 @@ namespace MHServerEmu.PlayerManagement.Social
                 .Build();
 
             SendMessageToAllGames(serverMessage);
-
-            // Replicate to database
-            ChangeMotdInDatabase(newMotd);
 
             return GuildChangeMotdResultCode.eGCMotdRCSuccess;
         }
@@ -204,19 +210,24 @@ namespace MHServerEmu.PlayerManagement.Social
             if (player.Guild != null)
                 return GuildRespondToInviteResultCode.eGRIRAlreadyInOtherGuild;
 
-            if (_pendingInvites.Remove(player.PlayerDbId, out string invitedByPlayerName) == false)
+            if (_pendingInvites.TryGetValue(player.PlayerDbId, out string invitedByPlayerName) == false)
                 return GuildRespondToInviteResultCode.eGRIRCNotInvited;
 
             if (IsFull)
                 return GuildRespondToInviteResultCode.eGRIRCGuildFull;
 
             if (respondCode != GuildRespondToInviteCode.eGRICAccepted)
+            {
+                _pendingInvites.Remove(player.PlayerDbId);
                 return GuildRespondToInviteResultCode.eGRIRCRejected;
+            }
 
-            if (CreateNewMember(player, invitedByPlayerName) == false)
-                return GuildRespondToInviteResultCode.eGRIRCInternalError;
+            GuildRespondToInviteResultCode result = CreateNewMember(player, invitedByPlayerName);
+            if (result != GuildRespondToInviteResultCode.eGRIRCJoined)
+                return result;
 
-            return GuildRespondToInviteResultCode.eGRIRCJoined;
+            _pendingInvites.Remove(player.PlayerDbId);
+            return result;
         }
 
         public GuildChangeMemberResultCode ChangeMember(PlayerHandle sourcePlayer, ulong targetPlayerId, GuildMembership newMembership)
@@ -288,6 +299,22 @@ namespace MHServerEmu.PlayerManagement.Social
                 ? (long)secondaryMember.Membership
                 : null;
 
+            GuildMemberChange targetChange = new((long)targetPlayerId, targetExpectedMembership,
+                isRemovingTarget ? null : (long)newMembership);
+            GuildMemberChange? secondaryChange = secondaryTargetMember is MemberEntry secondaryMemberToSave
+                ? new GuildMemberChange((long)secondaryMemberToSave.PlayerDbId, secondaryExpectedMembership,
+                    secondaryMemberToSave.Equals(leaderMember) ? (long)GuildMembership.eGMOfficer : (long)GuildMembership.eGMLeader)
+                : null;
+
+            bool isDisbanding = isTargetingLeader && isRemovingTarget && nextLeader == null;
+            GuildStoreResult storeResult = isDisbanding
+                ? DeleteFromDatabase()
+                : ApplyMembershipTransition(targetChange, secondaryChange);
+            if (storeResult != GuildStoreResult.Success)
+                return storeResult == GuildStoreResult.InvalidData
+                    ? GuildChangeMemberResultCode.eGCMRCInternalError
+                    : GuildChangeMemberResultCode.eGCMRCGuildInErrorState;
+
             // Modify memberships
             if (nextLeader != null)
             {
@@ -297,10 +324,8 @@ namespace MHServerEmu.PlayerManagement.Social
             }
 
             // The guild will be disbanded if we don't have anyone to pass leadership to.
-            bool isDisbanding = false;
-            if (isTargetingLeader && isRemovingTarget && nextLeader == null)
+            if (isDisbanding)
             {
-                isDisbanding = true;
                 foreach (MemberEntry member in _members.Values)
                     member.SetMembership(GuildMembership.eGMNone);
             }
@@ -368,22 +393,7 @@ namespace MHServerEmu.PlayerManagement.Social
             if (MemberCount == 0)
             {
                 _guildManager.RemoveGuild(this);
-                DeleteFromDatabase();
                 return GuildChangeMemberResultCode.eGCMRCSuccessGuildDissolved;
-            }
-
-            long? targetNewMembership = targetMember.Membership == GuildMembership.eGMNone ? null : (long)targetMember.Membership;
-            GuildMemberChange targetChange = new((long)targetPlayerId, targetExpectedMembership, targetNewMembership);
-
-            if (secondaryTargetMember is MemberEntry secondaryMemberToSave)
-            {
-                GuildMemberChange secondaryChange = new((long)secondaryMemberToSave.PlayerDbId, secondaryExpectedMembership,
-                    (long)secondaryMemberToSave.Membership);
-                ApplyMembershipTransition(targetChange, secondaryChange);
-            }
-            else
-            {
-                ApplyMembershipTransition(targetChange);
             }
 
             return GuildChangeMemberResultCode.eGCMRCSuccess;
@@ -432,47 +442,39 @@ namespace MHServerEmu.PlayerManagement.Social
                 RemoveGame(prevRegion.Game);
         }
 
-        private bool CreateInDatabase(DBGuildMember creator)
+        private GuildStoreResult ChangeNameInDatabase(string name)
         {
             if (_persistenceEnabled == false)
-                return true;
+                return GuildStoreResult.Success;
 
-            return _guildStore.CreateGuild(_data, creator) == GuildStoreResult.Success;
+            return _guildStore.ChangeGuildName(_data, name);
         }
 
-        private bool ChangeNameInDatabase(string name)
+        private GuildStoreResult ChangeMotdInDatabase(string motd)
         {
             if (_persistenceEnabled == false)
-                return true;
+                return GuildStoreResult.Success;
 
-            return _guildStore.ChangeGuildName(_data, name) == GuildStoreResult.Success;
+            return _guildStore.ChangeGuildMotd(_data, motd);
         }
 
-        private bool ChangeMotdInDatabase(string motd)
+        private GuildStoreResult ApplyMembershipTransition(GuildMemberChange primaryChange, GuildMemberChange? secondaryChange = null)
         {
             if (_persistenceEnabled == false)
-                return true;
-
-            return _guildStore.ChangeGuildMotd(_data, motd) == GuildStoreResult.Success;
-        }
-
-        private bool ApplyMembershipTransition(GuildMemberChange primaryChange, GuildMemberChange? secondaryChange = null)
-        {
-            if (_persistenceEnabled == false)
-                return true;
+                return GuildStoreResult.Success;
 
             GuildMemberTransition transition = secondaryChange.HasValue
                 ? new(_data.Id, _data.PersistenceRevision, primaryChange, secondaryChange.Value)
                 : new(_data.Id, _data.PersistenceRevision, primaryChange);
-            return _guildStore.ApplyMembershipTransition(_data, transition) == GuildStoreResult.Success;
+            return _guildStore.ApplyMembershipTransition(_data, transition);
         }
 
-        private bool DeleteFromDatabase()
+        private GuildStoreResult DeleteFromDatabase()
         {
             if (_persistenceEnabled == false)
-                return true;
+                return GuildStoreResult.Success;
 
-            return _guildStore.DeleteGuild(_data) == GuildStoreResult.Success;
+            return _guildStore.DeleteGuild(_data);
         }
 
         private MemberEntry? AddMember(DBGuildMember data)
@@ -500,15 +502,23 @@ namespace MHServerEmu.PlayerManagement.Social
             return member;
         }
 
-        private bool CreateNewMember(PlayerHandle player, string initiatingMemberName)
+        private GuildRespondToInviteResultCode CreateNewMember(PlayerHandle player, string initiatingMemberName)
         {
             if (player == null || player.State != PlayerHandleState.InGame)
-                return false;
+                return GuildRespondToInviteResultCode.eGRIRCInternalError;
 
             DBGuildMember memberData = new((long)player.PlayerDbId, (long)Id, (long)GuildMembership.eGMMember);
+            GuildStoreResult storeResult = ApplyMembershipTransition(new(memberData.PlayerDbGuid, null, memberData.Membership));
+            if (storeResult != GuildStoreResult.Success)
+                return storeResult switch
+                {
+                    GuildStoreResult.MembershipConflict => GuildRespondToInviteResultCode.eGRIRAlreadyInOtherGuild,
+                    GuildStoreResult.StaleRevision or GuildStoreResult.Failed or GuildStoreResult.OutcomeUncertain => GuildRespondToInviteResultCode.eGRIRCGuildInErrorState,
+                    _ => GuildRespondToInviteResultCode.eGRIRCInternalError,
+                };
 
             if (AddMember(memberData) is not MemberEntry member)
-                return false;
+                return GuildRespondToInviteResultCode.eGRIRCInternalError;
 
             AddOnlineMember(player);
 
@@ -523,10 +533,7 @@ namespace MHServerEmu.PlayerManagement.Social
 
             SendMessageToAllGames(serverMessage);
 
-            // Replicate to database
-            ApplyMembershipTransition(new(memberData.PlayerDbGuid, null, memberData.Membership));
-
-            return true;
+            return GuildRespondToInviteResultCode.eGRIRCJoined;
         }
 
         private void RemoveMember(in MemberEntry member)

@@ -59,13 +59,12 @@ namespace MHServerEmu.PlayerManagement.Tests
             guildData.Members.Add(new DBGuildMember(1, 1, (long)GuildMembership.eGMLeader));
             guildData.Members.Add(new DBGuildMember(2, 1, (long)GuildMembership.eGMMember));
             MasterGuildManager guildManager = CreateGuildManager(store);
-            MasterGuild guild = new(guildData, true, store, new PlayerNameCache(store), guildManager, true);
+            MasterGuild guild = new(guildData, false, store, new PlayerNameCache(store), guildManager, true);
             PlayerHandle leader = new(new FakeFrontendClient(new DBAccount("leader@example.com", "Leader", "password") { Id = 1 }), store, () => true, PrototypeId.Invalid);
 
             GuildChangeMemberResultCode result = guild.ChangeMember(leader, 2, GuildMembership.eGMOfficer);
 
             Assert.Equal(GuildChangeMemberResultCode.eGCMRCSuccess, result);
-            Assert.Equal(1, store.SaveGuildCallCount);
             Assert.Equal(1, store.SaveGuildMemberCallCount);
             Assert.Equal(1, store.GuildMemberTransitionCallCount);
         }
@@ -78,7 +77,7 @@ namespace MHServerEmu.PlayerManagement.Tests
             guildData.Members.Add(new DBGuildMember(1, 1, (long)GuildMembership.eGMLeader));
             guildData.Members.Add(new DBGuildMember(2, 1, (long)GuildMembership.eGMOfficer));
             MasterGuildManager guildManager = CreateGuildManager(store);
-            MasterGuild guild = new(guildData, true, store, new PlayerNameCache(store), guildManager, true);
+            MasterGuild guild = new(guildData, false, store, new PlayerNameCache(store), guildManager, true);
             PlayerHandle leader = new(new FakeFrontendClient(new DBAccount("leader@example.com", "Leader", "password") { Id = 1 }), store, () => true, PrototypeId.Invalid);
 
             GuildChangeMemberResultCode result = guild.ChangeMember(leader, 2, GuildMembership.eGMLeader);
