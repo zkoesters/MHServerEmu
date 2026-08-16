@@ -87,7 +87,10 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Migrations
                 if (inLineComment)
                 {
                     if (current == '\n')
+                    {
                         inLineComment = false;
+                        statement.Append(' ');
+                    }
                     continue;
                 }
 
@@ -97,6 +100,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Migrations
                     {
                         inBlockComment = false;
                         index++;
+                        statement.Append(' ');
                     }
                     continue;
                 }
@@ -121,6 +125,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Migrations
                 {
                     inLineComment = true;
                     index++;
+                    statement.Append(' ');
                     continue;
                 }
 
@@ -128,6 +133,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Migrations
                 {
                     inBlockComment = true;
                     index++;
+                    statement.Append(' ');
                     continue;
                 }
 
@@ -159,10 +165,22 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Migrations
 
         private static bool IsTransactionControl(string statement)
         {
-            string command = statement.Trim().Split(new[] { ' ', '\t', '\r', '\n' }, 2, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
-            return string.Equals(command, "BEGIN", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(command, "COMMIT", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(command, "ROLLBACK", StringComparison.OrdinalIgnoreCase);
+            string[] tokens = statement.Trim().Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            if (tokens.Length == 0)
+                return false;
+
+            return tokens[0].ToUpperInvariant() switch
+            {
+                "BEGIN" or "COMMIT" or "END" or "ROLLBACK" or "ABORT" or "SAVEPOINT" or "RELEASE" => true,
+                "START" => HasSecondToken(tokens, "TRANSACTION"),
+                "PREPARE" => HasSecondToken(tokens, "TRANSACTION"),
+                _ => false,
+            };
+        }
+
+        private static bool HasSecondToken(string[] tokens, string expected)
+        {
+            return tokens.Length > 1 && string.Equals(tokens[1], expected, StringComparison.OrdinalIgnoreCase);
         }
     }
 }

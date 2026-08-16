@@ -80,8 +80,18 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
 
         [Theory]
         [InlineData("BEGIN;")]
-        [InlineData("COMMIT;")]
-        [InlineData("ROLLBACK;")]
+        [InlineData("start /* preserve separation */ transaction;")]
+        [InlineData("CoMmIt;")]
+        [InlineData("END;")]
+        [InlineData("ROLLBACK TO SAVEPOINT migration;")]
+        [InlineData("abort;")]
+        [InlineData("SAVEPOINT migration;")]
+        [InlineData("RELEASE SAVEPOINT migration;")]
+        [InlineData("PREPARE TRANSACTION 'migration';")]
+        [InlineData("COMMIT PREPARED 'migration';")]
+        [InlineData("ROLLBACK PREPARED 'migration';")]
+        [InlineData("-- leading comment\nBEGIN;")]
+        [InlineData("CREATE TABLE mhserveremu.safe_before (id integer); /* comment */ ROLLBACK;")]
         public void Create_TransactionControl_Throws(string sql)
         {
             Assert.Throws<InvalidOperationException>(() => PostgreSQLMigrationCatalog.Create(new[]
@@ -93,7 +103,11 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
         [Theory]
         [InlineData("-- BEGIN\nSELECT 1;")]
         [InlineData("SELECT 'COMMIT';")]
-        public void Create_TransactionControlTextOutsideAStatement_IsAllowed(string sql)
+        [InlineData("CREATE TABLE mhserveremu.safe_ddl (id integer NOT NULL);")]
+        [InlineData("ALTER TABLE mhserveremu.safe_ddl ADD COLUMN name text;")]
+        [InlineData("CREATE INDEX safe_ddl_name_idx ON mhserveremu.safe_ddl (name);")]
+        [InlineData("CREATE TABLE mhserveremu.first_safe_ddl (id integer);\nCREATE TABLE mhserveremu.second_safe_ddl (id integer);")]
+        public void Create_NonTransactionControlSql_IsAllowed(string sql)
         {
             PostgreSQLMigrationCatalog catalog = PostgreSQLMigrationCatalog.Create(new[]
             {
