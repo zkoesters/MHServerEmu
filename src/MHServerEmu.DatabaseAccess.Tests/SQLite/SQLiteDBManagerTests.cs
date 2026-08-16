@@ -110,6 +110,9 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
             Assert.Equal(AccountStoreResult.Success, manager.ChangePassword(account, [0x01], [0x02]));
             Assert.Equal(0, account.PersistenceRevision);
             Assert.Equal(PersistenceState.Clean, account.PersistenceState);
+            Assert.Equal(new byte[] { 0x01 }, account.PasswordHash);
+            Assert.Equal(new byte[] { 0x02 }, account.Salt);
+            Assert.Equal(AccountFlags.BypassLoginQueue, account.Flags);
             Assert.True(manager.TryQueryAccountByEmail(account.Email, out DBAccount stored));
             Assert.Equal(AccountFlags.BypassLoginQueue, stored.Flags);
             Assert.Equal(new byte[] { 0x01 }, stored.PasswordHash);
@@ -127,6 +130,49 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
             Assert.Equal(AccountStoreResult.Success, manager.InsertAccount(second));
 
             Assert.Equal(AccountStoreResult.PlayerNameConflict, manager.ChangePlayerName(first, second.PlayerName));
+            Assert.Equal("PlayerOne", first.PlayerName);
+        }
+
+        [Fact]
+        public void AccountIntentWrites_SuccessApplyCommittedValuesToModel()
+        {
+            using TemporaryDirectory temporaryDirectory = new();
+            SQLiteDBManager manager = InitializeManager(temporaryDirectory);
+            DBAccount account = CreateAccount(1, "account@example.com", "PlayerOne");
+            Assert.Equal(AccountStoreResult.Success, manager.InsertAccount(account));
+
+            Assert.Equal(AccountStoreResult.Success, manager.ChangePlayerName(account, "PlayerTwo"));
+            Assert.Equal("PlayerTwo", account.PlayerName);
+            Assert.Equal(AccountStoreResult.Success, manager.ChangeUserLevel(account, AccountUserLevel.Admin));
+            Assert.Equal(AccountUserLevel.Admin, account.UserLevel);
+            Assert.Equal(AccountStoreResult.Success, manager.ChangeFlags(account, AccountFlags.IsBanned));
+            Assert.Equal(AccountFlags.IsBanned, account.Flags);
+            Assert.Equal(0, account.PersistenceRevision);
+            Assert.Equal(PersistenceState.Clean, account.PersistenceState);
+        }
+
+        [Fact]
+        public void AccountIntentWrites_FailureLeavesModelUnchanged()
+        {
+            using TemporaryDirectory temporaryDirectory = new();
+            SQLiteDBManager manager = InitializeManager(temporaryDirectory);
+            DBAccount account = CreateAccount(1, "account@example.com", "PlayerOne");
+            account.PersistenceRevision = 7;
+            account.PersistenceState = PersistenceState.OutcomeUncertain;
+            byte[] passwordHash = account.PasswordHash;
+            byte[] salt = account.Salt;
+
+            Assert.Equal(AccountStoreResult.AccountNotFound, manager.ChangePlayerName(account, "PlayerTwo"));
+            Assert.Equal(AccountStoreResult.AccountNotFound, manager.ChangePassword(account, [0x01], [0x02]));
+            Assert.Equal(AccountStoreResult.AccountNotFound, manager.ChangeUserLevel(account, AccountUserLevel.Admin));
+            Assert.Equal(AccountStoreResult.AccountNotFound, manager.ChangeFlags(account, AccountFlags.IsBanned));
+            Assert.Equal("PlayerOne", account.PlayerName);
+            Assert.Equal(passwordHash, account.PasswordHash);
+            Assert.Equal(salt, account.Salt);
+            Assert.Equal(AccountUserLevel.User, account.UserLevel);
+            Assert.Equal(AccountFlags.None, account.Flags);
+            Assert.Equal(7, account.PersistenceRevision);
+            Assert.Equal(PersistenceState.OutcomeUncertain, account.PersistenceState);
         }
 
         [Fact]
@@ -181,6 +227,47 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
             InsertGuild(databasePath, 2, "Second");
 
             Assert.Equal(GuildStoreResult.NameConflict, manager.ChangeGuildName(new DBGuild(1, "First", string.Empty, 1, 0), "Second"));
+        }
+
+        [Fact]
+        public void GuildIntentWrites_SuccessApplyCommittedValuesToModel()
+        {
+            using TemporaryDirectory temporaryDirectory = new();
+            string databasePath = Path.Combine(temporaryDirectory.Path, "Account.db");
+            SQLiteDBManager manager = new();
+            Assert.True(manager.Initialize(databasePath, 0, TimeSpan.FromHours(1)));
+            InsertGuild(databasePath, 1, "First");
+            DBGuild guild = new(1, "First", "Original", 1, 0)
+            {
+                PersistenceRevision = 7,
+                PersistenceState = PersistenceState.OutcomeUncertain
+            };
+
+            Assert.Equal(GuildStoreResult.Success, manager.ChangeGuildName(guild, "Renamed"));
+            Assert.Equal("Renamed", guild.Name);
+            Assert.Equal(GuildStoreResult.Success, manager.ChangeGuildMotd(guild, "Updated"));
+            Assert.Equal("Updated", guild.Motd);
+            Assert.Equal(0, guild.PersistenceRevision);
+            Assert.Equal(PersistenceState.Clean, guild.PersistenceState);
+        }
+
+        [Fact]
+        public void GuildIntentWrites_FailureLeavesModelUnchanged()
+        {
+            using TemporaryDirectory temporaryDirectory = new();
+            SQLiteDBManager manager = InitializeManager(temporaryDirectory);
+            DBGuild guild = new(1, "Missing", "Original", 1, 0)
+            {
+                PersistenceRevision = 7,
+                PersistenceState = PersistenceState.OutcomeUncertain
+            };
+
+            Assert.Equal(GuildStoreResult.GuildNotFound, manager.ChangeGuildName(guild, "Renamed"));
+            Assert.Equal(GuildStoreResult.GuildNotFound, manager.ChangeGuildMotd(guild, "Updated"));
+            Assert.Equal("Missing", guild.Name);
+            Assert.Equal("Original", guild.Motd);
+            Assert.Equal(7, guild.PersistenceRevision);
+            Assert.Equal(PersistenceState.OutcomeUncertain, guild.PersistenceState);
         }
 
         [Fact]
