@@ -168,6 +168,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                     if (updated != 1)
                         return AccountStoreResult.AccountNotFound;
 
+                    account.PlayerName = playerName;
                     SetPersistenceMetadata(account);
                     return AccountStoreResult.Success;
                 }
@@ -197,6 +198,8 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                     if (updated != 1)
                         return AccountStoreResult.AccountNotFound;
 
+                    account.PasswordHash = passwordHash;
+                    account.Salt = salt;
                     account.Flags = flags;
                     SetPersistenceMetadata(account);
                     return AccountStoreResult.Success;
@@ -220,6 +223,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                     if (updated != 1)
                         return AccountStoreResult.AccountNotFound;
 
+                    account.UserLevel = userLevel;
                     SetPersistenceMetadata(account);
                     return AccountStoreResult.Success;
                 }
@@ -242,6 +246,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                     if (updated != 1)
                         return AccountStoreResult.AccountNotFound;
 
+                    account.Flags = flags;
                     SetPersistenceMetadata(account);
                     return AccountStoreResult.Success;
                 }
@@ -389,6 +394,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                 if (updated != 1)
                     return GuildStoreResult.GuildNotFound;
 
+                guild.Name = name;
                 SetPersistenceMetadata(guild);
                 return GuildStoreResult.Success;
             }
@@ -413,6 +419,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                 if (updated != 1)
                     return GuildStoreResult.GuildNotFound;
 
+                guild.Motd = motd;
                 SetPersistenceMetadata(guild);
                 return GuildStoreResult.Success;
             }
