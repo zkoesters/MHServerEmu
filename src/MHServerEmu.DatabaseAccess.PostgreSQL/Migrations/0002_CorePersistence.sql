@@ -61,6 +61,7 @@ CREATE TABLE mhserveremu.player_entity (
     CONSTRAINT player_entity_owner_id_unique UNIQUE (owner_account_id, id),
     CONSTRAINT player_entity_kind CHECK (kind BETWEEN 0 AND 3),
     CONSTRAINT player_entity_slot CHECK (slot BETWEEN 0 AND 4294967295),
+    CONSTRAINT player_entity_controlled_parent CHECK (kind <> 3 OR parent_entity_id IS NOT NULL),
     CONSTRAINT player_entity_parent FOREIGN KEY (owner_account_id, parent_entity_id) REFERENCES mhserveremu.player_entity (owner_account_id, id) ON DELETE CASCADE
 );
 

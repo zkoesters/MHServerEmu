@@ -35,6 +35,19 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
         }
 
         [PostgreSQLIntegrationFact]
+        public async Task RunAsync_RootControlledEntity_ViolatesNamedParentConstraint()
+        {
+            NpgsqlDataSource dataSource = await _database.CreateDataSourceAsync();
+            Assert.True((await new PostgreSQLMigrationRunner(dataSource, PostgreSQLMigrationCatalog.LoadEmbedded(), TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(5)).RunAsync()).Succeeded);
+            await ExecuteAsync(dataSource, "INSERT INTO mhserveremu.account (id, email, normalized_email, player_name, normalized_player_name, password_hash, password_salt, user_level, flags) VALUES (1, 'player@example.com', 'player@example.com', 'Player', 'player', decode(repeat('00', 64), 'hex'), decode(repeat('00', 64), 'hex'), 0, 0)");
+            await ExecuteAsync(dataSource, "INSERT INTO mhserveremu.player_profile (account_id) VALUES (1)");
+
+            PostgresException exception = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(dataSource, "INSERT INTO mhserveremu.player_entity (id, owner_account_id, kind, inventory_proto_id, slot, entity_proto_id) VALUES (1, 1, 3, 0, 0, 0)"));
+
+            Assert.Equal("player_entity_controlled_parent", exception.ConstraintName);
+        }
+
+        [PostgreSQLIntegrationFact]
         public async Task RunAsync_AlreadyAppliedCatalog_IsIdempotent()
         {
             NpgsqlDataSource dataSource = await _database.CreateDataSourceAsync();
