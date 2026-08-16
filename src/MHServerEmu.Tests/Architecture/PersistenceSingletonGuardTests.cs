@@ -59,6 +59,22 @@ namespace MHServerEmu.Tests.Architecture
         }
 
         [Fact]
+        public void ContainsPersistenceSingleton_DetectsNamespaceScopedAlias()
+        {
+            const string Source = "namespace Test { using Db = MHServerEmu.DatabaseAccess.IDBManager; class Test { void Method() { Db.Instance.Initialize(); } } }";
+
+            Assert.True(ContainsPersistenceSingleton(Source));
+        }
+
+        [Fact]
+        public void ContainsPersistenceSingleton_IgnoresNamespaceScopedUnrelatedAlias()
+        {
+            const string Source = "namespace Test { using Db = OtherDatabase; class Test { void Method() { Db.Instance.Initialize(); } } }";
+
+            Assert.False(ContainsPersistenceSingleton(Source));
+        }
+
+        [Fact]
         public void ProductionCode_DoesNotUsePersistenceSingletons()
         {
             string repositoryRoot = RepositoryRoot.Find();
@@ -75,7 +91,7 @@ namespace MHServerEmu.Tests.Architecture
         private static bool ContainsPersistenceSingleton(string source)
         {
             CompilationUnitSyntax compilationUnit = CSharpSyntaxTree.ParseText(source).GetCompilationUnitRoot();
-            HashSet<string> singletonAliases = compilationUnit.Usings
+            HashSet<string> singletonAliases = compilationUnit.DescendantNodes().OfType<UsingDirectiveSyntax>()
                 .Where(usingDirective => usingDirective.Alias != null
                     && GetTerminalReceiverIdentifier(usingDirective.Name) is "IDBManager" or "PlayerNameCache")
                 .Select(usingDirective => usingDirective.Alias.Name.Identifier.ValueText)
