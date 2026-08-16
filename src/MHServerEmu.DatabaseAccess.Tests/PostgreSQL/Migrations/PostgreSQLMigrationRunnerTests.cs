@@ -17,9 +17,11 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
         }
 
         [PostgreSQLIntegrationFact]
-        public async Task RunAsync_BootstrapsOnlyThePersistenceFoundation()
+        public async Task RunAsync_FreshHistoryProbeReturnsNoRelation_AndBootstrapsOnlyThePersistenceFoundation()
         {
             NpgsqlDataSource dataSource = await _database.CreateDataSourceAsync();
+            Assert.Null(await ScalarAsync<string>(dataSource, "SELECT to_regclass('mhserveremu.schema_migrations')::text"));
+
             PostgreSQLMigrationResult result = await new PostgreSQLMigrationRunner(dataSource, PostgreSQLMigrationCatalog.LoadEmbedded(), TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(5)).RunAsync();
 
             Assert.True(result.Succeeded);
@@ -190,7 +192,8 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
         private static async Task<T> ScalarAsync<T>(NpgsqlDataSource dataSource, string sql)
         {
             await using NpgsqlCommand command = dataSource.CreateCommand(sql);
-            return (T)await command.ExecuteScalarAsync();
+            object result = await command.ExecuteScalarAsync();
+            return result is DBNull ? default : (T)result;
         }
 
         private static async Task<string[]> TablesAsync(NpgsqlDataSource dataSource)

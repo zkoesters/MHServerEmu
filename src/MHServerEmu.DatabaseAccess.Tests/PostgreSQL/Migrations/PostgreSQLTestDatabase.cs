@@ -77,6 +77,22 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
             return dataSource;
         }
 
+        public async Task<string> CreateSettingsConnectionStringAsync()
+        {
+            NpgsqlDataSource dataSource = await CreateDataSourceAsync();
+            NpgsqlConnectionStringBuilder databaseBuilder = new(dataSource.ConnectionString);
+            NpgsqlConnectionStringBuilder adminBuilder = new(_adminConnectionString);
+            NpgsqlConnectionStringBuilder settingsBuilder = new()
+            {
+                Host = adminBuilder.Host,
+                Port = adminBuilder.Port,
+                Database = databaseBuilder.Database,
+                Username = adminBuilder.Username,
+                Password = adminBuilder.Password,
+            };
+            return settingsBuilder.ConnectionString;
+        }
+
         public async Task DisposeAsync()
         {
             List<Exception> exceptions = new();
