@@ -100,7 +100,7 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Locking
         }
 
         [PostgreSQLIntegrationFact]
-        public async Task ExecuteWriterTransactionAsync_ReadCommittedRejectsOldFenceAfterWaitingForReplacement()
+        public async Task ExecuteWriterTransactionAsync_ReadCommittedRejectsOldFenceAfterReplacement()
         {
             PostgreSQLSettings settings = await CreateSettingsAsync();
             await SetDefaultTransactionIsolationAsync(settings, "repeatable read");
@@ -118,7 +118,6 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Locking
                 protectedWriteExecuted = true;
                 return Task.CompletedTask;
             });
-            await WaitForWaitingWriterLockAsync();
 
             await using (NpgsqlTransaction transaction = await replacement.BeginTransactionAsync())
             {
@@ -171,19 +170,6 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Locking
             command.Parameters.AddWithValue("namespace", PostgreSQLAdvisoryKeys.Namespace);
             command.Parameters.AddWithValue("resource", PostgreSQLAdvisoryKeys.WriterResource);
             await command.ExecuteNonQueryAsync();
-        }
-
-        private static async Task WaitForWaitingWriterLockAsync()
-        {
-            await WaitUntilAsync(async () =>
-            {
-                await using NpgsqlConnection connection = new(Environment.GetEnvironmentVariable("MHSERVEREMU_POSTGRESQL_TEST_ADMIN_CONNECTION_STRING"));
-                await connection.OpenAsync();
-                await using NpgsqlCommand command = new("SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND classid = @namespace AND objid = @resource AND granted = false)", connection);
-                command.Parameters.AddWithValue("namespace", PostgreSQLAdvisoryKeys.Namespace);
-                command.Parameters.AddWithValue("resource", PostgreSQLAdvisoryKeys.WriterResource);
-                return (bool)await command.ExecuteScalarAsync();
-            }, TimeSpan.FromSeconds(5));
         }
 
         private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)

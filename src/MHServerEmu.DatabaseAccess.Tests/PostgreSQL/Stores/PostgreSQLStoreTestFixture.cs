@@ -15,11 +15,11 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
 
         internal PostgreSQLProvider Provider { get; }
 
-        internal static async Task<PostgreSQLStoreTestFixture> StartAsync(PostgreSQLTestDatabase database)
+        internal static async Task<PostgreSQLStoreTestFixture> StartAsync(PostgreSQLTestDatabase database, PostgreSQLConfig config = null)
         {
             ArgumentNullException.ThrowIfNull(database);
             string connectionString = await database.CreateSettingsConnectionStringAsync();
-            if (PostgreSQLSettings.TryCreate(connectionString, new PostgreSQLConfig(), false, out PostgreSQLSettings settings, out _) == false)
+            if (PostgreSQLSettings.TryCreate(connectionString, config ?? new PostgreSQLConfig(), false, out PostgreSQLSettings settings, out _) == false)
                 throw new InvalidOperationException("Unable to create PostgreSQL test settings.");
 
             PostgreSQLProvider provider = new(settings, PostgreSQLMigrationCatalog.LoadEmbedded());

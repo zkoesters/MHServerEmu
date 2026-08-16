@@ -1,4 +1,5 @@
 using MHServerEmu.DatabaseAccess.PostgreSQL;
+using MHServerEmu.DatabaseAccess.PostgreSQL.Configuration;
 using MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations;
 using MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores;
 using Npgsql;
@@ -38,6 +39,16 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL
             });
 
             Assert.False(called);
+            Assert.Equal(PostgreSQLWriteOutcome.Failed, result.Outcome);
+        }
+
+        [PostgreSQLIntegrationFact]
+        public async Task ExecuteWriteAsync_CommitCancellationSourceExpiresBeforeCommit_ReturnsFailed()
+        {
+            await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database, new PostgreSQLConfig { OperationTimeoutSeconds = 1 });
+
+            PostgreSQLWriteResult result = await fixture.Provider.StoreExecutor.ExecuteWriteAsync("AccountChange", 30, async (_, _, _) => await Task.Delay(TimeSpan.FromSeconds(2)));
+
             Assert.Equal(PostgreSQLWriteOutcome.Failed, result.Outcome);
         }
 
