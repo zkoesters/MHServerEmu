@@ -3,7 +3,7 @@ using MHServerEmu.DatabaseAccess.Models;
 
 namespace MHServerEmu.PlayerManagement.Tests
 {
-    public sealed class StubDBManager : IDBManager, IAccountStore, IPlayerStore, IGuildStore
+    public sealed class StubDBManager : IAccountStore, IPlayerStore, IGuildStore
     {
         public Dictionary<string, DBAccount> Accounts { get; } = new(StringComparer.OrdinalIgnoreCase);
         public List<DBGuild> GuildsToLoad { get; } = new();

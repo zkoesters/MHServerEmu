@@ -1,6 +1,5 @@
 using MHServerEmu.Core.Config;
 using MHServerEmu.Core.Logging;
-using MHServerEmu.DatabaseAccess;
 using MHServerEmu.DatabaseAccess.Json;
 using MHServerEmu.DatabaseAccess.Persistence;
 using MHServerEmu.DatabaseAccess.SQLite;
@@ -64,7 +63,6 @@ namespace MHServerEmu.Persistence
             if (manager.Initialize() == false)
                 return (false, null);
 
-            IDBManager.Instance = manager;
             return (true, new(manager, manager, manager, PersistenceCapabilities.Json));
         }
 
@@ -74,7 +72,6 @@ namespace MHServerEmu.Persistence
             if (manager.Initialize() == false)
                 return (false, null);
 
-            IDBManager.Instance = manager;
             return (true, new(manager, manager, manager, PersistenceCapabilities.SQLite));
         }
     }

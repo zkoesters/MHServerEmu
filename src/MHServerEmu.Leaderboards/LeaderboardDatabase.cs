@@ -31,6 +31,7 @@ namespace MHServerEmu.Leaderboards
         private readonly Dictionary<PrototypeGuid, Leaderboard> _leaderboards = new();
         private readonly Dictionary<PrototypeGuid, Leaderboard> _metaLeaderboards = new();
         private readonly Dictionary<ulong, string> _playerNames = new();
+        private IPlayerStore _players;
 
         private readonly DoubleBufferQueue<ServiceMessage.LeaderboardScoreUpdateBatch> _scoreUpdateQueue = new();
 
@@ -44,7 +45,7 @@ namespace MHServerEmu.Leaderboards
         /// <summary>
         /// Initializes the <see cref="LeaderboardDatabase"/> instance.
         /// </summary>
-        public bool Initialize(SQLiteLeaderboardDBManager instance)
+        public bool Initialize(SQLiteLeaderboardDBManager instance, IPlayerStore players)
         {
             DBManager = instance;
 
@@ -66,9 +67,7 @@ namespace MHServerEmu.Leaderboards
             if (noTables)
                 GenerateTables(schedulePath);
 
-            // Load and cache player names (remove/disable this if the number of accounts gets out of hand)
-            if (IDBManager.Instance.GetPlayerNames(_playerNames))
-                Logger.Info($"Loaded and cached {_playerNames.Count} player names");
+            InitializePlayerNames(players);
 
             // Load the schedule and write changes to the database if needed
             List<DBLeaderboard> updatedLeaderboards = new();
@@ -86,6 +85,16 @@ namespace MHServerEmu.Leaderboards
 
             Logger.Info($"Initialized {_leaderboards.Count} leaderboards in {stopwatch.ElapsedMilliseconds} ms");
             return true;
+        }
+
+        internal void InitializePlayerNames(IPlayerStore players)
+        {
+            _players = players ?? throw new ArgumentNullException(nameof(players));
+            _playerNames.Clear();
+
+            // Remove or disable this if the number of accounts gets out of hand.
+            if (_players.GetPlayerNames(_playerNames))
+                Logger.Info($"Loaded and cached {_playerNames.Count} player names");
         }
 
         /// <summary>
@@ -400,7 +409,7 @@ namespace MHServerEmu.Leaderboards
                     return playerName;
 
                 // Query the database if not cached
-                if (IDBManager.Instance.TryGetPlayerName(participantId, out playerName) == false)
+                if (_players.TryGetPlayerName(participantId, out playerName) == false)
                 {
                     playerName = $"Player{participantId}";
                     Logger.Warn($"GetPlayerNameById(): Failed to get player name for participant 0x{participantId:X}");

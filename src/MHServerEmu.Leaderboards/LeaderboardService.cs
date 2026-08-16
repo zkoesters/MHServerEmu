@@ -2,6 +2,7 @@
 using MHServerEmu.Core.Config;
 using MHServerEmu.Core.Logging;
 using MHServerEmu.Core.Network;
+using MHServerEmu.DatabaseAccess;
 using MHServerEmu.DatabaseAccess.SQLite;
 using MHServerEmu.Games;
 
@@ -17,11 +18,17 @@ namespace MHServerEmu.Leaderboards
         private static readonly Logger Logger = LogManager.CreateLogger();
 
         private readonly LeaderboardDatabase _database = LeaderboardDatabase.Instance;
+        private readonly IPlayerStore _players;
         private readonly LeaderboardRewardManager _rewardManager = new();
 
         private bool _isEnabled;
 
         public GameServiceState State { get; private set; } = GameServiceState.Created;
+
+        public LeaderboardService(IPlayerStore players)
+        {
+            _players = players ?? throw new ArgumentNullException(nameof(players));
+        }
 
         #region IGameService Implementation
 
@@ -38,7 +45,7 @@ namespace MHServerEmu.Leaderboards
                 return;
             }
 
-            _database.Initialize(SQLiteLeaderboardDBManager.Instance);
+            _database.Initialize(SQLiteLeaderboardDBManager.Instance, _players);
 
             State = GameServiceState.Running;
 

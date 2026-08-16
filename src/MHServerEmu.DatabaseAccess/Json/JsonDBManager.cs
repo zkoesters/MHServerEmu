@@ -8,9 +8,9 @@ using MHServerEmu.DatabaseAccess.Models;
 namespace MHServerEmu.DatabaseAccess.Json
 {
     /// <summary>
-    /// Provides functionality for storing a single <see cref="DBAccount"/> instance in a JSON file using the <see cref="IDBManager"/> interface.
+    /// Provides functionality for storing a single <see cref="DBAccount"/> instance in a JSON file.
     /// </summary>
-    public class JsonDBManager : IDBManager, IAccountStore, IPlayerStore, IGuildStore
+    public class JsonDBManager : IAccountStore, IPlayerStore, IGuildStore
     {
         private static readonly Logger Logger = LogManager.CreateLogger();
 
@@ -22,8 +22,6 @@ namespace MHServerEmu.DatabaseAccess.Json
         private CooldownTimer _backupTimer;
 
         public static JsonDBManager Instance { get; } = new();
-
-        public bool VerifyAccounts { get => false; }
 
         private JsonDBManager() { }
 
