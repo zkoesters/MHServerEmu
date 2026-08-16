@@ -20,7 +20,7 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL
         }
 
         [Fact]
-        public void ProviderSources_DoNotLogRawExceptions()
+        public void ProviderSources_DoNotUseLogger()
         {
             DirectoryInfo directory = new(AppContext.BaseDirectory);
             while (directory != null && Directory.Exists(Path.Combine(directory.FullName, "MHServerEmu.DatabaseAccess.PostgreSQL")) == false)
@@ -29,7 +29,7 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL
             Assert.NotNull(directory);
             string providerDirectory = Path.Combine(directory.FullName, "MHServerEmu.DatabaseAccess.PostgreSQL");
             string[] unsafeSources = Directory.GetFiles(providerDirectory, "*.cs", SearchOption.AllDirectories)
-                .Where(path => ContainsUnsafeLoggerInvocation(File.ReadAllText(path)))
+                .Where(path => ContainsProviderLoggerReference(File.ReadAllText(path)))
                 .ToArray();
 
             Assert.Empty(unsafeSources);
@@ -40,39 +40,51 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL
         [InlineData("class Test { void M(System.Exception e) { Logger.Warn(e.Message); } }")]
         [InlineData("class Test { void M(System.Exception e) { Logger.Error($\"{e}\"); } }")]
         [InlineData("class Test { void M(System.Exception exception) { Logger.ErrorException(exception, \"failure\"); } }")]
-        public void SourceGuard_DetectsUnsafeLoggerExpressions(string source)
+        [InlineData("class Test { void M(System.Exception dbError) { Logger.Error(dbError.Message); } }")]
+        [InlineData("class Test { void M(object lastFailure) { Logger.Warn(lastFailure.ToString()); } }")]
+        [InlineData("class Test { void M() { Logger.Info(\"safe\"); } }")]
+        public void SourceGuard_DetectsLoggerReferences(string source)
         {
-            Assert.True(ContainsUnsafeLoggerInvocation(source));
+            Assert.True(ContainsProviderLoggerReference(source));
         }
 
         [Fact]
-        public void SourceGuard_AllowsPersistenceFailureLogging()
+        public void SourceGuard_DetectsLoggerIdentifierReferences()
         {
-            const string Source = "class Test { void M(PostgreSQLPersistenceFailure failure) { Logger.Error(failure); } }";
+            const string Source = "class Test { void M() { var logger = Logger; } }";
 
-            Assert.False(ContainsUnsafeLoggerInvocation(Source));
+            Assert.True(ContainsProviderLoggerReference(Source));
         }
 
-        private static bool ContainsUnsafeLoggerInvocation(string source)
+        [Fact]
+        public void SourceGuard_AllowsNonLoggerMethods()
         {
-            return CSharpSyntaxTree.ParseText(source).GetCompilationUnitRoot().DescendantNodes()
-                .OfType<InvocationExpressionSyntax>()
-                .Any(IsUnsafeLoggerInvocation);
+            const string Source = "class Test { void M() { Diagnostics.Info(\"safe\"); } }";
+
+            Assert.False(ContainsProviderLoggerReference(Source));
         }
 
-        private static bool IsUnsafeLoggerInvocation(InvocationExpressionSyntax invocation)
+        private static bool ContainsProviderLoggerReference(string source)
         {
-            if (invocation.Expression is not MemberAccessExpressionSyntax memberAccess
-                || memberAccess.Expression is not IdentifierNameSyntax receiver
-                || receiver.Identifier.ValueText != "Logger")
-                return false;
+            var root = CSharpSyntaxTree.ParseText(source).GetCompilationUnitRoot();
+            return root.DescendantNodes().OfType<InvocationExpressionSyntax>().Any(IsLoggerInvocation)
+                || root.DescendantNodes().OfType<IdentifierNameSyntax>().Any(identifier => identifier.Identifier.ValueText == "Logger");
+        }
 
-            if (memberAccess.Name.Identifier.ValueText.EndsWith("Exception", StringComparison.Ordinal))
-                return true;
+        private static bool IsLoggerInvocation(InvocationExpressionSyntax invocation)
+        {
+            return invocation.Expression is MemberAccessExpressionSyntax memberAccess
+                && GetTerminalIdentifier(memberAccess.Expression) == "Logger";
+        }
 
-            return invocation.ArgumentList.Arguments.Any(argument => argument.Expression.DescendantNodesAndSelf()
-                .OfType<IdentifierNameSyntax>()
-                .Any(identifier => identifier.Identifier.ValueText is "e" or "exception"));
+        private static string GetTerminalIdentifier(ExpressionSyntax expression)
+        {
+            return expression switch
+            {
+                IdentifierNameSyntax identifier => identifier.Identifier.ValueText,
+                MemberAccessExpressionSyntax memberAccess => memberAccess.Name.Identifier.ValueText,
+                _ => null,
+            };
         }
     }
 }
