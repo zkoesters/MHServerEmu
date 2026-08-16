@@ -1,4 +1,5 @@
 using MHServerEmu.DatabaseAccess.Models;
+using MHServerEmu.DatabaseAccess.PostgreSQL.Configuration;
 using MHServerEmu.DatabaseAccess.Tests.Conformance;
 using MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations;
 using Npgsql;
@@ -166,6 +167,25 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
             Assert.Equal(persistedAfterAmbiguity.UserLevel, persistedAfterRetry.UserLevel);
             Assert.Equal(persistedAfterAmbiguity.Flags, persistedAfterRetry.Flags);
             Assert.Equal(persistedAfterAmbiguity.PersistenceRevision, persistedAfterRetry.PersistenceRevision);
+        }
+
+        [PostgreSQLIntegrationFact]
+        public async Task Lookup_ExhaustedPool_ReturnsAtOperationDeadline()
+        {
+            await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database, new PostgreSQLConfig
+            {
+                MaxPoolSize = 4,
+                ConnectTimeoutSeconds = 5,
+                OperationTimeoutSeconds = 1,
+            });
+            await using NpgsqlConnection first = await fixture.Provider.DataSource.OpenConnectionAsync();
+            await using NpgsqlConnection second = await fixture.Provider.DataSource.OpenConnectionAsync();
+            await using NpgsqlConnection third = await fixture.Provider.DataSource.OpenConnectionAsync();
+            await using NpgsqlConnection fourth = await fixture.Provider.DataSource.OpenConnectionAsync();
+
+            Task<bool> lookup = Task.Run(() => fixture.AccountStore.TryQueryAccountByEmail("missing@example.test", out _));
+
+            Assert.False(await lookup.WaitAsync(TimeSpan.FromSeconds(2)));
         }
 
         private static async Task CreateDeferredBackendTerminationAsync(NpgsqlDataSource dataSource)

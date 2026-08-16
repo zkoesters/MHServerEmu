@@ -67,6 +67,31 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
             }
         }
 
+        internal async Task<PostgreSQLReadResult<T>> ExecuteReadAsync<T>(string operation, Func<NpgsqlConnection, PostgreSQLOperationDeadline, CancellationToken, Task<T>> readAsync, CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(operation);
+            ArgumentNullException.ThrowIfNull(readAsync);
+
+            PostgreSQLOperationDeadline deadline = new(_operationTimeout);
+            try
+            {
+                using (CancellationTokenSource connectionCancellation = deadline.CreateCancellationSource(cancellationToken))
+                await using (NpgsqlConnection connection = await _dataSource.OpenConnectionAsync(connectionCancellation.Token))
+                using (CancellationTokenSource readCancellation = deadline.CreateCancellationSource(cancellationToken))
+                {
+                    return PostgreSQLReadResult<T>.Success(await readAsync(connection, deadline, readCancellation.Token));
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                return PostgreSQLReadResult<T>.Failed(ClassifyReadFailure(operation, exception));
+            }
+        }
+
         internal static PostgreSQLWriteResult ClassifyFailure(string operation, bool commitStarted, Exception exception)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(operation);
@@ -84,6 +109,17 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
             string constraintName = exception is PostgresException constraintException ? constraintException.ConstraintName : null;
             PostgreSQLWriteOutcome outcome = commitStarted ? PostgreSQLWriteOutcome.OutcomeUncertain : PostgreSQLWriteOutcome.Failed;
             return new PostgreSQLWriteResult(outcome, new PostgreSQLPersistenceFailure(code, operation, sqlState, constraintName: constraintName));
+        }
+
+        private static PostgreSQLPersistenceFailure ClassifyReadFailure(string operation, Exception exception)
+        {
+            string code = exception switch
+            {
+                TimeoutException or OperationCanceledException => "OperationTimeout",
+                _ => "ReadFailed",
+            };
+            string sqlState = exception is PostgresException postgresException ? postgresException.SqlState : null;
+            return new PostgreSQLPersistenceFailure(code, operation, sqlState);
         }
 
         private static async Task ConfigureTimeoutsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, PostgreSQLOperationDeadline deadline, CancellationToken cancellationToken)
@@ -122,6 +158,30 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
             if (timeout <= TimeSpan.Zero)
                 throw new TimeoutException();
             return $"{Math.Max(1, (int)Math.Ceiling(timeout.TotalMilliseconds))}ms";
+        }
+    }
+
+    internal sealed class PostgreSQLReadResult<T>
+    {
+        private PostgreSQLReadResult(bool succeeded, T value, PostgreSQLPersistenceFailure failure)
+        {
+            Succeeded = succeeded;
+            Value = value;
+            Failure = failure;
+        }
+
+        public bool Succeeded { get; }
+        public T Value { get; }
+        public PostgreSQLPersistenceFailure Failure { get; }
+
+        public static PostgreSQLReadResult<T> Success(T value)
+        {
+            return new(true, value, null);
+        }
+
+        public static PostgreSQLReadResult<T> Failed(PostgreSQLPersistenceFailure failure)
+        {
+            return new(false, default, failure ?? throw new ArgumentNullException(nameof(failure)));
         }
     }
 }
