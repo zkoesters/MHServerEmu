@@ -43,9 +43,11 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
                             using (CancellationTokenSource writeCancellation = deadline.CreateCancellationSource(cancellationToken))
                             await writeAsync(connection, transaction, writeCancellation.Token);
 
-                            commitStarted = true;
                             using (CancellationTokenSource commitCancellation = deadline.CreateCancellationSource(cancellationToken))
-                            await _committer.CommitAsync(transaction, commitCancellation.Token);
+                            {
+                                commitStarted = true;
+                                await _committer.CommitAsync(transaction, commitCancellation.Token);
+                            }
 
                             return PostgreSQLWriteResult.Success();
                         }
