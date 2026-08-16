@@ -81,8 +81,9 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
                     _ => "WriteFailed",
                 };
             string sqlState = exception is PostgresException postgresException ? postgresException.SqlState : null;
+            string constraintName = exception is PostgresException constraintException ? constraintException.ConstraintName : null;
             PostgreSQLWriteOutcome outcome = commitStarted ? PostgreSQLWriteOutcome.OutcomeUncertain : PostgreSQLWriteOutcome.Failed;
-            return new PostgreSQLWriteResult(outcome, new PostgreSQLPersistenceFailure(code, operation, sqlState));
+            return new PostgreSQLWriteResult(outcome, new PostgreSQLPersistenceFailure(code, operation, sqlState, constraintName: constraintName));
         }
 
         private static async Task ConfigureTimeoutsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, PostgreSQLOperationDeadline deadline, CancellationToken cancellationToken)
@@ -113,7 +114,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
         private static PostgreSQLWriteResult WithEntityId(PostgreSQLWriteResult result, long entityId)
         {
             PostgreSQLPersistenceFailure failure = result.Failure;
-            return new PostgreSQLWriteResult(result.Outcome, new PostgreSQLPersistenceFailure(failure.Code, failure.Operation, failure.SqlState, failure.MigrationIdentity, entityId.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+            return new PostgreSQLWriteResult(result.Outcome, new PostgreSQLPersistenceFailure(failure.Code, failure.Operation, failure.SqlState, failure.MigrationIdentity, entityId.ToString(System.Globalization.CultureInfo.InvariantCulture), failure.ConstraintName));
         }
 
         private static string ToMilliseconds(TimeSpan timeout)
