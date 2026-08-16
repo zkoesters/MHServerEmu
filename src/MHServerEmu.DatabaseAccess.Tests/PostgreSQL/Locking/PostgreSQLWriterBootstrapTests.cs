@@ -99,6 +99,41 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Locking
             Assert.Equal("migration_lock_timeout", result.Failure.Code);
         }
 
+        [PostgreSQLIntegrationFact]
+        public async Task ExecuteWriterTransactionAsync_ReadCommittedRejectsOldFenceAfterWaitingForReplacement()
+        {
+            PostgreSQLSettings settings = await CreateSettingsAsync();
+            await SetDefaultTransactionIsolationAsync(settings, "repeatable read");
+            await using PostgreSQLProvider provider = new(settings, PostgreSQLMigrationCatalog.LoadEmbedded());
+            Assert.True((await provider.StartAsync()).Succeeded);
+            PostgreSQLWriterFenceToken oldToken = provider.WriterFenceToken;
+            await TerminateBackendAsync(provider.WriterBackendProcessId);
+
+            await using NpgsqlConnection replacement = PostgreSQLDataSourceFactory.BuildWriterConnection(settings);
+            await replacement.OpenAsync();
+            await ExecuteAdvisoryLockAsync(replacement, "SELECT pg_advisory_lock(@namespace, @resource)");
+            bool protectedWriteExecuted = false;
+            Task protectedWrite = provider.ExecuteWriterTransactionAsync((_, _, _) =>
+            {
+                protectedWriteExecuted = true;
+                return Task.CompletedTask;
+            });
+            await WaitForWaitingWriterLockAsync();
+
+            await using (NpgsqlTransaction transaction = await replacement.BeginTransactionAsync())
+            {
+                await using NpgsqlCommand claim = new("UPDATE mhserveremu.writer_fence SET generation = generation + 1, owner_id = @ownerId WHERE singleton = true", replacement, transaction);
+                claim.Parameters.AddWithValue("ownerId", Guid.NewGuid());
+                await claim.ExecuteNonQueryAsync();
+                await transaction.CommitAsync();
+            }
+            await ExecuteAdvisoryLockAsync(replacement, "SELECT pg_advisory_unlock(@namespace, @resource)");
+
+            await Assert.ThrowsAsync<PostgreSQLWriterFencedException>(() => protectedWrite);
+            Assert.False(protectedWriteExecuted);
+            Assert.Equal(oldToken.Generation + 1, await ScalarAsync<long>(provider.DataSource, "SELECT generation FROM mhserveremu.writer_fence WHERE singleton = true"));
+        }
+
         private async Task<PostgreSQLSettings> CreateSettingsAsync()
         {
             await using NpgsqlDataSource dataSource = await _database.CreateDataSourceAsync();
@@ -122,10 +157,47 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Locking
             await command.ExecuteNonQueryAsync();
         }
 
+        private static async Task SetDefaultTransactionIsolationAsync(PostgreSQLSettings settings, string isolationLevel)
+        {
+            NpgsqlConnectionStringBuilder builder = new(settings.ConnectionString);
+            await using NpgsqlConnection connection = new(Environment.GetEnvironmentVariable("MHSERVEREMU_POSTGRESQL_TEST_ADMIN_CONNECTION_STRING"));
+            await connection.OpenAsync();
+            await using NpgsqlCommand command = new($"ALTER DATABASE \"{builder.Database}\" SET default_transaction_isolation = '{isolationLevel}'", connection);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        private static async Task ExecuteAdvisoryLockAsync(NpgsqlConnection connection, string sql)
+        {
+            await using NpgsqlCommand command = new(sql, connection);
+            command.Parameters.AddWithValue("namespace", PostgreSQLAdvisoryKeys.Namespace);
+            command.Parameters.AddWithValue("resource", PostgreSQLAdvisoryKeys.WriterResource);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        private static async Task WaitForWaitingWriterLockAsync()
+        {
+            await WaitUntilAsync(async () =>
+            {
+                await using NpgsqlConnection connection = new(Environment.GetEnvironmentVariable("MHSERVEREMU_POSTGRESQL_TEST_ADMIN_CONNECTION_STRING"));
+                await connection.OpenAsync();
+                await using NpgsqlCommand command = new("SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND classid = @namespace AND objid = @resource AND granted = false)", connection);
+                command.Parameters.AddWithValue("namespace", PostgreSQLAdvisoryKeys.Namespace);
+                command.Parameters.AddWithValue("resource", PostgreSQLAdvisoryKeys.WriterResource);
+                return (bool)await command.ExecuteScalarAsync();
+            }, TimeSpan.FromSeconds(5));
+        }
+
         private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
         {
             using CancellationTokenSource cancellationSource = new(timeout);
             while (condition() == false)
+                await Task.Delay(50, cancellationSource.Token);
+        }
+
+        private static async Task WaitUntilAsync(Func<Task<bool>> condition, TimeSpan timeout)
+        {
+            using CancellationTokenSource cancellationSource = new(timeout);
+            while (await condition() == false)
                 await Task.Delay(50, cancellationSource.Token);
         }
     }
