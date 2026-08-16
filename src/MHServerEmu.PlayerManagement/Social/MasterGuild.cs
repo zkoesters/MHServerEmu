@@ -20,6 +20,7 @@ namespace MHServerEmu.PlayerManagement.Social
         private readonly MasterGuildManager _guildManager;
         private readonly ClientManager _clientManager;
         private readonly bool _persistenceEnabled;
+        private readonly Func<int> _guildCapacity;
 
         private readonly Dictionary<ulong, MemberEntry> _members = new();
 
@@ -37,10 +38,16 @@ namespace MHServerEmu.PlayerManagement.Social
         public string Motd { get => _data.Motd; }
 
         public int MemberCount { get => _members.Count; }
-        public bool IsFull { get => MemberCount >= GameDatabase.GlobalsPrototype.PlayerGuildMaxSize; }
+        public bool IsFull { get => MemberCount >= _guildCapacity(); }
 
         public MasterGuild(DBGuild data, bool saveToDatabase, IGuildStore guildStore, PlayerNameCache playerNameCache,
             MasterGuildManager guildManager, ClientManager clientManager, bool persistenceEnabled)
+            : this(data, saveToDatabase, guildStore, playerNameCache, guildManager, clientManager, persistenceEnabled, null)
+        {
+        }
+
+        private MasterGuild(DBGuild data, bool saveToDatabase, IGuildStore guildStore, PlayerNameCache playerNameCache,
+            MasterGuildManager guildManager, ClientManager clientManager, bool persistenceEnabled, Func<int> guildCapacity)
         {
             _data = data ?? throw new ArgumentNullException(nameof(data));
             _guildStore = guildStore ?? throw new ArgumentNullException(nameof(guildStore));
@@ -48,6 +55,7 @@ namespace MHServerEmu.PlayerManagement.Social
             _guildManager = guildManager ?? throw new ArgumentNullException(nameof(guildManager));
             _clientManager = clientManager;
             _persistenceEnabled = persistenceEnabled;
+            _guildCapacity = guildCapacity ?? (() => GameDatabase.GlobalsPrototype.PlayerGuildMaxSize);
 
             foreach (DBGuildMember member in _data.Members)
                 AddMember(member);
@@ -66,8 +74,8 @@ namespace MHServerEmu.PlayerManagement.Social
         }
 
         internal MasterGuild(DBGuild data, bool saveToDatabase, IGuildStore guildStore, PlayerNameCache playerNameCache,
-            MasterGuildManager guildManager, bool persistenceEnabled)
-            : this(data, saveToDatabase, guildStore, playerNameCache, guildManager, null, persistenceEnabled)
+            MasterGuildManager guildManager, bool persistenceEnabled, Func<int> guildCapacity = null)
+            : this(data, saveToDatabase, guildStore, playerNameCache, guildManager, null, persistenceEnabled, guildCapacity)
         {
         }
 
@@ -214,7 +222,10 @@ namespace MHServerEmu.PlayerManagement.Social
                 return GuildRespondToInviteResultCode.eGRIRCNotInvited;
 
             if (IsFull)
+            {
+                _pendingInvites.Remove(player.PlayerDbId);
                 return GuildRespondToInviteResultCode.eGRIRCGuildFull;
+            }
 
             if (respondCode != GuildRespondToInviteCode.eGRICAccepted)
             {

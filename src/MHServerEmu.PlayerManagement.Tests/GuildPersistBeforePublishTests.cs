@@ -175,6 +175,21 @@ namespace MHServerEmu.PlayerManagement.Tests
         }
 
         [Fact]
+        public void ReceiveInviteResponse_GuildFull_ConsumesInvite()
+        {
+            GuildFixture fixture = new(_messages);
+            fixture.GuildCapacity = 3;
+            Assert.Equal(GuildInviteResultCode.eGIRCSuccess, fixture.Guild.InvitePlayer(fixture.Invitee, fixture.Leader));
+
+            fixture.GuildCapacity = 2;
+            Assert.Equal(GuildRespondToInviteResultCode.eGRIRCGuildFull, fixture.Guild.ReceiveInviteResponse(fixture.Invitee, GuildRespondToInviteCode.eGRICAccepted));
+
+            Assert.Equal(GuildChangeMemberResultCode.eGCMRCSuccess, fixture.Guild.ChangeMember(fixture.Leader, fixture.Successor.PlayerDbId, GuildMembership.eGMNone));
+            Assert.Equal(GuildRespondToInviteResultCode.eGRIRCNotInvited, fixture.Guild.ReceiveInviteResponse(fixture.Invitee, GuildRespondToInviteCode.eGRICAccepted));
+            Assert.False(fixture.Guild.HasMember(fixture.Invitee.PlayerDbId));
+        }
+
+        [Fact]
         public void SoleLeaderDeparture_DeleteFailure_DoesNotPublishRemoval()
         {
             GuildFixture fixture = new(_messages, includeSuccessor: false);
@@ -197,6 +212,7 @@ namespace MHServerEmu.PlayerManagement.Tests
             public PlayerHandle Invitee { get; }
             public DBGuildMember LeaderData { get; }
             public DBGuildMember SuccessorData { get; }
+            public int GuildCapacity { get; set; } = 3;
 
             public GuildFixture(GuildMessageFixture messages, bool includeSuccessor = true)
             {
@@ -208,7 +224,7 @@ namespace MHServerEmu.PlayerManagement.Tests
                 if (includeSuccessor)
                     guildData.Members.Add(SuccessorData);
 
-                Guild = new MasterGuild(guildData, false, Store, new PlayerNameCache(Store), Manager, true);
+                Guild = new MasterGuild(guildData, false, Store, new PlayerNameCache(Store), Manager, true, () => GuildCapacity);
                 Leader = CreatePlayer(Store, 1, "Leader");
                 Successor = CreatePlayer(Store, 2, "Successor");
                 Invitee = CreatePlayer(Store, 3, "Invitee");
