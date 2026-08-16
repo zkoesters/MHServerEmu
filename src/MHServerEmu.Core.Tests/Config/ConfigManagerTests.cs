@@ -59,15 +59,17 @@ namespace MHServerEmu.Core.Tests.Config
         }
 
         [Fact]
-        public void Constructor_OverrideAllowsConcurrentReaders_InitializesWithoutThrow()
+        public void Constructor_MissingOverride_AllowsConcurrentReadersToInitialize()
         {
             using TemporaryConfigFiles files = new();
-            files.WriteOverride(string.Empty);
+
+            ConfigManager firstManager = new(files.ConfigPath, files.OverridePath);
 
             using FileStream overrideFile = new(files.OverridePath, FileMode.Open, FileAccess.Write, FileShare.Read);
-            ConfigManager manager = new(files.ConfigPath, files.OverridePath);
+            ConfigManager secondManager = new(files.ConfigPath, files.OverridePath);
 
-            Assert.NotNull(manager);
+            Assert.NotNull(firstManager);
+            Assert.NotNull(secondManager);
         }
 
         [Theory]

@@ -47,7 +47,7 @@ namespace MHServerEmu.Core.Config
                     }
                     else
                     {
-                        using (FileStream stream = new FileStream(OverrideFilePath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                        using (FileStream stream = new FileStream(OverrideFilePath, FileMode.CreateNew, FileAccess.Write, FileShare.Read))
                         {
                         }
                     }
