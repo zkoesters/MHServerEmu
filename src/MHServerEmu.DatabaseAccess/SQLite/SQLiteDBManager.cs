@@ -134,16 +134,31 @@ namespace MHServerEmu.DatabaseAccess.SQLite
             lock (_writeLock)
             {
                 using SQLiteConnection connection = GetConnection();
+                using SQLiteTransaction transaction = connection.BeginTransaction();
 
                 try
                 {
+                    if (connection.QueryFirstOrDefault<long?>("SELECT Id FROM Account WHERE Email=@Email COLLATE NOCASE", new { account.Email }, transaction).HasValue)
+                    {
+                        transaction.Rollback();
+                        return AccountStoreResult.EmailConflict;
+                    }
+
+                    if (connection.QueryFirstOrDefault<long?>("SELECT Id FROM Account WHERE PlayerName=@PlayerName COLLATE NOCASE", new { account.PlayerName }, transaction).HasValue)
+                    {
+                        transaction.Rollback();
+                        return AccountStoreResult.PlayerNameConflict;
+                    }
+
                     connection.Execute(@"INSERT INTO Account (Id, Email, PlayerName, PasswordHash, Salt, UserLevel, Flags)
-                        VALUES (@Id, @Email, @PlayerName, @PasswordHash, @Salt, @UserLevel, @Flags)", account);
+                        VALUES (@Id, @Email, @PlayerName, @PasswordHash, @Salt, @UserLevel, @Flags)", account, transaction);
+                    transaction.Commit();
                     SetPersistenceMetadata(account);
                     return AccountStoreResult.Success;
                 }
                 catch (Exception e)
                 {
+                    transaction.Rollback();
                     Logger.ErrorException(e, nameof(InsertAccount));
 
                     if (connection.QueryFirstOrDefault<long?>("SELECT Id FROM Account WHERE Email = @Email COLLATE NOCASE", new { account.Email }).HasValue)
@@ -161,22 +176,40 @@ namespace MHServerEmu.DatabaseAccess.SQLite
         {
             lock (_writeLock)
             {
+                using SQLiteConnection connection = GetConnection();
+                using SQLiteTransaction transaction = connection.BeginTransaction();
+
                 try
                 {
-                    using SQLiteConnection connection = GetConnection();
-                    int updated = connection.Execute("UPDATE Account SET PlayerName=@PlayerName WHERE Id=@Id", new { PlayerName = playerName, account.Id });
-                    if (updated != 1)
+                    if (connection.QueryFirstOrDefault<long?>("SELECT Id FROM Account WHERE Id=@Id", account, transaction).HasValue == false)
+                    {
+                        transaction.Rollback();
                         return AccountStoreResult.AccountNotFound;
+                    }
 
+                    if (connection.QueryFirstOrDefault<long?>("SELECT Id FROM Account WHERE PlayerName=@PlayerName COLLATE NOCASE AND Id<>@Id", new { PlayerName = playerName, account.Id }, transaction).HasValue)
+                    {
+                        transaction.Rollback();
+                        return AccountStoreResult.PlayerNameConflict;
+                    }
+
+                    int updated = connection.Execute("UPDATE Account SET PlayerName=@PlayerName WHERE Id=@Id", new { PlayerName = playerName, account.Id }, transaction);
+                    if (updated != 1)
+                    {
+                        transaction.Rollback();
+                        return AccountStoreResult.AccountNotFound;
+                    }
+
+                    transaction.Commit();
                     account.PlayerName = playerName;
                     SetPersistenceMetadata(account);
                     return AccountStoreResult.Success;
                 }
                 catch (Exception e)
                 {
+                    transaction.Rollback();
                     Logger.ErrorException(e, nameof(ChangePlayerName));
 
-                    using SQLiteConnection connection = GetConnection();
                     if (connection.QueryFirstOrDefault<long?>("SELECT Id FROM Account WHERE PlayerName = @PlayerName COLLATE NOCASE", new { PlayerName = playerName }).HasValue)
                         return AccountStoreResult.PlayerNameConflict;
 
@@ -189,15 +222,21 @@ namespace MHServerEmu.DatabaseAccess.SQLite
         {
             lock (_writeLock)
             {
+                using SQLiteConnection connection = GetConnection();
+                using SQLiteTransaction transaction = connection.BeginTransaction();
+
                 try
                 {
-                    using SQLiteConnection connection = GetConnection();
-                    AccountFlags flags = account.Flags & ~AccountFlags.IsPasswordExpired;
-                    int updated = connection.Execute("UPDATE Account SET PasswordHash=@PasswordHash, Salt=@Salt, Flags=@Flags WHERE Id=@Id",
-                        new { PasswordHash = passwordHash, Salt = salt, Flags = flags, account.Id });
+                    int updated = connection.Execute("UPDATE Account SET PasswordHash=@PasswordHash, Salt=@Salt, Flags=Flags & ~@PasswordExpiredFlag WHERE Id=@Id",
+                        new { PasswordHash = passwordHash, Salt = salt, PasswordExpiredFlag = (long)AccountFlags.IsPasswordExpired, account.Id }, transaction);
                     if (updated != 1)
+                    {
+                        transaction.Rollback();
                         return AccountStoreResult.AccountNotFound;
+                    }
 
+                    AccountFlags flags = (AccountFlags)connection.QuerySingle<long>("SELECT Flags FROM Account WHERE Id=@Id", account, transaction);
+                    transaction.Commit();
                     account.PasswordHash = passwordHash;
                     account.Salt = salt;
                     account.Flags = flags;
@@ -206,6 +245,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                 }
                 catch (Exception e)
                 {
+                    transaction.Rollback();
                     Logger.ErrorException(e, nameof(ChangePassword));
                     return AccountStoreResult.Failed;
                 }
@@ -260,12 +300,16 @@ namespace MHServerEmu.DatabaseAccess.SQLite
 
         public PlayerStoreResult LoadPlayerData(DBAccount account)
         {
-            // Clear existing data
+            using SQLiteConnection connection = GetConnection();
+
+            if (connection.QueryFirstOrDefault<long?>("SELECT Id FROM Account WHERE Id=@Id", account).HasValue == false)
+                return PlayerStoreResult.AccountNotFound;
+
+            // Clear existing data after confirming the account can be loaded.
             account.Player = null;
             account.ClearEntities();
 
             // Load fresh data
-            using SQLiteConnection connection = GetConnection();
 
             account.Player = connection.QueryFirstOrDefault<DBPlayer>("SELECT * FROM Player WHERE DbGuid = @DbGuid", new { DbGuid = account.Id });
             if (account.Player == null)
@@ -302,8 +346,9 @@ namespace MHServerEmu.DatabaseAccess.SQLite
         {
             for (int i = 0; i < NumPlayerDataWriteAttempts; i++)
             {
-                if (DoSavePlayerData(account))
-                    return PlayerStoreResult.Success;
+                PlayerStoreResult result = DoSavePlayerData(account);
+                if (result != PlayerStoreResult.Failed)
+                    return result;
 
                 // Maybe we should add a delay here
             }
@@ -360,6 +405,12 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                 {
                     using SQLiteTransaction transaction = connection.BeginTransaction();
 
+                    if (connection.QueryFirstOrDefault<long?>("SELECT Id FROM Guild WHERE Name=@Name COLLATE NOCASE", new { guild.Name }, transaction).HasValue)
+                    {
+                        transaction.Rollback();
+                        return GuildStoreResult.NameConflict;
+                    }
+
                     if (connection.QueryFirstOrDefault<long?>("SELECT GuildId FROM GuildMember WHERE PlayerDbGuid=@PlayerDbGuid", new { creator.PlayerDbGuid }, transaction).HasValue)
                     {
                         transaction.Rollback();
@@ -387,26 +438,47 @@ namespace MHServerEmu.DatabaseAccess.SQLite
 
         public GuildStoreResult ChangeGuildName(DBGuild guild, string name)
         {
-            try
+            lock (_writeLock)
             {
                 using SQLiteConnection connection = GetConnection();
-                int updated = connection.Execute("UPDATE Guild SET Name=@Name WHERE Id=@Id", new { Name = name, guild.Id });
-                if (updated != 1)
-                    return GuildStoreResult.GuildNotFound;
+                using SQLiteTransaction transaction = connection.BeginTransaction();
 
-                guild.Name = name;
-                SetPersistenceMetadata(guild);
-                return GuildStoreResult.Success;
-            }
-            catch (Exception e)
-            {
-                Logger.ErrorException(e, nameof(ChangeGuildName));
+                try
+                {
+                    if (connection.QueryFirstOrDefault<long?>("SELECT Id FROM Guild WHERE Id=@Id", new { guild.Id }, transaction).HasValue == false)
+                    {
+                        transaction.Rollback();
+                        return GuildStoreResult.GuildNotFound;
+                    }
 
-                using SQLiteConnection connection = GetConnection();
-                if (connection.QueryFirstOrDefault<long?>("SELECT Id FROM Guild WHERE Name=@Name COLLATE NOCASE", new { Name = name }).HasValue)
-                    return GuildStoreResult.NameConflict;
+                    if (connection.QueryFirstOrDefault<long?>("SELECT Id FROM Guild WHERE Name=@Name COLLATE NOCASE AND Id<>@Id", new { Name = name, guild.Id }, transaction).HasValue)
+                    {
+                        transaction.Rollback();
+                        return GuildStoreResult.NameConflict;
+                    }
 
-                return GuildStoreResult.Failed;
+                    int updated = connection.Execute("UPDATE Guild SET Name=@Name WHERE Id=@Id", new { Name = name, guild.Id }, transaction);
+                    if (updated != 1)
+                    {
+                        transaction.Rollback();
+                        return GuildStoreResult.GuildNotFound;
+                    }
+
+                    transaction.Commit();
+                    guild.Name = name;
+                    SetPersistenceMetadata(guild);
+                    return GuildStoreResult.Success;
+                }
+                catch (Exception e)
+                {
+                    transaction.Rollback();
+                    Logger.ErrorException(e, nameof(ChangeGuildName));
+
+                    if (connection.QueryFirstOrDefault<long?>("SELECT Id FROM Guild WHERE Name=@Name COLLATE NOCASE", new { Name = name }).HasValue)
+                        return GuildStoreResult.NameConflict;
+
+                    return GuildStoreResult.Failed;
+                }
             }
         }
 
@@ -666,7 +738,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
             return true;
         }
 
-        private bool DoSavePlayerData(DBAccount account)
+        private PlayerStoreResult DoSavePlayerData(DBAccount account)
         {
             // Lock to prevent corruption if we are doing a backup (TODO: Make this better)
             lock (_writeLock)
@@ -678,6 +750,12 @@ namespace MHServerEmu.DatabaseAccess.SQLite
 
                 try
                 {
+                    if (connection.QueryFirstOrDefault<long?>("SELECT Id FROM Account WHERE Id=@Id", account, transaction).HasValue == false)
+                    {
+                        transaction.Rollback();
+                        return PlayerStoreResult.AccountNotFound;
+                    }
+
                     // Update player entity
                     if (account.Player != null)
                     {
@@ -718,7 +796,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                 {
                     Logger.Warn($"DoSavePlayerData(): SQLite error for account [{account}]: {e.Message}");
                     transaction.Rollback();
-                    return false;
+                    return PlayerStoreResult.Failed;
                 }
 
                 Logger.Info($"Successfully written player data for account [{account}]");
@@ -729,7 +807,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                     Task.Run(CreateBackup);
                 }
 
-                return true;
+                return PlayerStoreResult.Success;
             }
         }
 
