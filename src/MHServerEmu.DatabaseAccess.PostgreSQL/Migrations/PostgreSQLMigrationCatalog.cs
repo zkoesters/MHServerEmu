@@ -75,7 +75,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Migrations
         {
             StringBuilder statement = new();
             bool inLineComment = false;
-            bool inBlockComment = false;
+            int blockCommentDepth = 0;
             bool inSingleQuote = false;
             bool inDoubleQuote = false;
 
@@ -94,13 +94,21 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Migrations
                     continue;
                 }
 
-                if (inBlockComment)
+                if (blockCommentDepth > 0)
                 {
+                    if (current == '/' && next == '*')
+                    {
+                        blockCommentDepth++;
+                        index++;
+                        continue;
+                    }
+
                     if (current == '*' && next == '/')
                     {
-                        inBlockComment = false;
+                        blockCommentDepth--;
                         index++;
-                        statement.Append(' ');
+                        if (blockCommentDepth == 0)
+                            statement.Append(' ');
                     }
                     continue;
                 }
@@ -131,7 +139,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Migrations
 
                 if (current == '/' && next == '*')
                 {
-                    inBlockComment = true;
+                    blockCommentDepth = 1;
                     index++;
                     statement.Append(' ');
                     continue;
@@ -159,6 +167,9 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL.Migrations
 
                 statement.Append(current);
             }
+
+            if (blockCommentDepth > 0)
+                throw new InvalidOperationException("Migration SQL contains an unterminated block comment.");
 
             return IsTransactionControl(statement.ToString());
         }
