@@ -92,6 +92,8 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
         [InlineData("ROLLBACK PREPARED 'migration';")]
         [InlineData("-- leading comment\nBEGIN;")]
         [InlineData("CREATE TABLE mhserveremu.safe_before (id integer); /* comment */ ROLLBACK;")]
+        [InlineData("/* outer /* nested */ */ END;")]
+        [InlineData("/* outer /* nested */ */ PREPARE TRANSACTION 'migration';")]
         public void Create_TransactionControl_Throws(string sql)
         {
             Assert.Throws<InvalidOperationException>(() => PostgreSQLMigrationCatalog.Create(new[]
@@ -107,6 +109,7 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
         [InlineData("ALTER TABLE mhserveremu.safe_ddl ADD COLUMN name text;")]
         [InlineData("CREATE INDEX safe_ddl_name_idx ON mhserveremu.safe_ddl (name);")]
         [InlineData("CREATE TABLE mhserveremu.first_safe_ddl (id integer);\nCREATE TABLE mhserveremu.second_safe_ddl (id integer);")]
+        [InlineData("/* outer /* nested */ END; */ CREATE TABLE mhserveremu.nested_comment_safe_ddl (id integer);")]
         public void Create_NonTransactionControlSql_IsAllowed(string sql)
         {
             PostgreSQLMigrationCatalog catalog = PostgreSQLMigrationCatalog.Create(new[]
@@ -115,6 +118,15 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
             });
 
             Assert.Single(catalog.Migrations);
+        }
+
+        [Fact]
+        public void Create_UnterminatedNestedBlockComment_Throws()
+        {
+            Assert.Throws<InvalidOperationException>(() => PostgreSQLMigrationCatalog.Create(new[]
+            {
+                new PostgreSQLMigrationResource("Migrations.0001_Initialize.sql", "/* outer /* nested */ CREATE TABLE mhserveremu.unfinished_comment (id integer);"u8.ToArray()),
+            }));
         }
     }
 }
