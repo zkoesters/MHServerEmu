@@ -30,9 +30,10 @@ namespace MHServerEmu.PlayerManagement.Social
             _playerNameCache = playerNameCache ?? throw new ArgumentNullException(nameof(playerNameCache));
         }
 
-        internal MasterGuildManager(IGuildStore guildStore)
+        internal static MasterGuildManager CreateForTesting(PlayerManagerService playerManager, IGuildStore guildStore)
         {
-            _guildStore = guildStore ?? throw new ArgumentNullException(nameof(guildStore));
+            ArgumentNullException.ThrowIfNull(playerManager);
+            return new(playerManager, guildStore, playerManager.PlayerNameCache);
         }
 
         public void Initialize()
