@@ -238,7 +238,7 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
             wrongOwnership.InsertInstance(10, 1, visible: true, state: (int)LeaderboardState.eLBS_Created);
             wrongOwnership.InsertInstance(20, 2, visible: true, state: (int)LeaderboardState.eLBS_Created);
 
-            Assert.Equal(LeaderboardStoreResult.Conflict, wrongOwnership.Store.ActivateInstance(new(1, 10, 20)));
+            Assert.Equal(LeaderboardStoreResult.InvalidData, wrongOwnership.Store.ActivateInstance(new(1, 10, 20)));
             Assert.Equal((int)LeaderboardState.eLBS_Created, wrongOwnership.ReadScalar("SELECT State FROM Instances WHERE InstanceId = 20"));
         }
 
