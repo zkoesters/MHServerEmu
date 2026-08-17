@@ -37,6 +37,9 @@ namespace MHServerEmu.Leaderboards
         private readonly ILeaderboardPrototypeCatalog _catalog;
         private readonly ILeaderboardPublisher _publisher;
         private readonly LeaderboardRuntimeOptions _options;
+        private LeaderboardArchiveCache<DBLeaderboardInstance> _archiveCache;
+
+        internal LeaderboardRuntimeOptions Options { get => _options; }
 
         private readonly DoubleBufferQueue<ServiceMessage.LeaderboardScoreUpdateBatch> _scoreUpdateQueue = new();
 
@@ -55,6 +58,7 @@ namespace MHServerEmu.Leaderboards
             _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
             _publisher = publisher ?? throw new ArgumentNullException(nameof(publisher));
             _options = options ?? throw new ArgumentNullException(nameof(options));
+            _archiveCache = new(_options.ArchiveCacheCapacity);
         }
 
         /// <summary>
@@ -508,12 +512,30 @@ namespace MHServerEmu.Leaderboards
             return true;
         }
 
-        internal bool TryLoadInstance(long leaderboardId, long instanceId, out DBLeaderboardInstance instance)
+        internal bool TryLoadArchivedInstance(long leaderboardId, long instanceId, out DBLeaderboardInstance instance)
         {
+            LeaderboardArchiveCache<DBLeaderboardInstance> archiveCache = _archiveCache ??= new(_options?.ArchiveCacheCapacity ?? 1);
+            if (archiveCache.TryGet((ulong)instanceId, out instance) && instance.LeaderboardId == leaderboardId)
+                return true;
+
+            IReadOnlyList<DBLeaderboardInstance> page;
             if (_store != null)
-                return _store.LoadInstance(leaderboardId, instanceId, out instance) == LeaderboardStoreResult.Success;
-            instance = DBManager.GetInstance(leaderboardId, instanceId);
-            return instance != null;
+            {
+                if (_store.LoadVisibleInstances(leaderboardId, 0, _options.ArchiveCacheCapacity, out page) != LeaderboardStoreResult.Success)
+                {
+                    instance = null;
+                    return false;
+                }
+            }
+            else
+            {
+                page = DBManager.GetInstances(leaderboardId, _options?.ArchiveCacheCapacity ?? 1);
+            }
+
+            foreach (DBLeaderboardInstance loaded in page)
+                archiveCache.Set((ulong)loaded.InstanceId, loaded);
+
+            return archiveCache.TryGet((ulong)instanceId, out instance) && instance.LeaderboardId == leaderboardId;
         }
 
         internal bool ActivateInstance(long leaderboardId, long instanceId, LeaderboardState state)

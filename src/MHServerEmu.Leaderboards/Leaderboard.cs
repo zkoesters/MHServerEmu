@@ -17,6 +17,7 @@ namespace MHServerEmu.Leaderboards
 
         public PrototypeGuid LeaderboardId { get; }
         internal LeaderboardDatabase Database { get => _database; }
+        internal int AutoSaveIntervalMinutes { get => _database.Options.AutoSaveIntervalMinutes; }
         public LeaderboardPrototype Prototype { get; }
         public List<LeaderboardInstance> Instances { get; } = new();
         public LeaderboardInstance ActiveInstance { get; private set; }
@@ -129,7 +130,7 @@ namespace MHServerEmu.Leaderboards
             if (instance == null && loadFromDb)
             {
                 // If not found, this instance may not be loaded from the database
-                if (_database.TryLoadInstance((long)LeaderboardId, (long)instanceId, out DBLeaderboardInstance dbInstance) == false)
+                if (_database.TryLoadArchivedInstance((long)LeaderboardId, (long)instanceId, out DBLeaderboardInstance dbInstance) == false)
                     return Logger.WarnReturn(instance, $"GetInstance(): Failed to find instance for id {instanceId}");
 
                 instance = AddInstance(dbInstance, true);

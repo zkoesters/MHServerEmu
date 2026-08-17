@@ -6,6 +6,7 @@ namespace MHServerEmu.Leaderboards
     {
         void Publish(ServiceMessage.LeaderboardStateChange change);
         void Publish(IReadOnlyList<ServiceMessage.LeaderboardStateChange> changes);
+        void Publish(ServiceMessage.LeaderboardRewardRequestResponse response);
     }
 
     public sealed class ServerManagerLeaderboardPublisher : ILeaderboardPublisher
@@ -18,6 +19,11 @@ namespace MHServerEmu.Leaderboards
         public void Publish(IReadOnlyList<ServiceMessage.LeaderboardStateChange> changes)
         {
             ServerManager.Instance.SendMessageToService(GameServiceType.GameInstance, new ServiceMessage.LeaderboardStateChangeList(changes.ToList()));
+        }
+
+        public void Publish(ServiceMessage.LeaderboardRewardRequestResponse response)
+        {
+            ServerManager.Instance.SendMessageToService(GameServiceType.GameInstance, response);
         }
     }
 }

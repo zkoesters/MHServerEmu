@@ -2,7 +2,6 @@
 using MHServerEmu.Core.Network;
 using MHServerEmu.Core.System.Time;
 using MHServerEmu.DatabaseAccess.Models.Leaderboards;
-using MHServerEmu.DatabaseAccess.SQLite;
 using MHServerEmu.DatabaseAccess;
 
 namespace MHServerEmu.Leaderboards
@@ -25,10 +24,6 @@ namespace MHServerEmu.Leaderboards
         private readonly object _queueLock = new();
         private readonly ILeaderboardStore _store;
         private readonly ILeaderboardPublisher _publisher;
-
-        public LeaderboardRewardManager()
-        {
-        }
 
         public LeaderboardRewardManager(ILeaderboardStore store, ILeaderboardPublisher publisher)
         {
@@ -102,9 +97,7 @@ namespace MHServerEmu.Leaderboards
 
             // Query the database and exit early if there are no rewards to give
             List<DBRewardEntry> dbRewards;
-            if (_store == null)
-                dbRewards = SQLiteLeaderboardDBManager.Instance.GetRewards((long)participantId);
-            else if (_store.GetPendingRewards((long)participantId, out IReadOnlyList<DBRewardEntry> rewards) == LeaderboardStoreResult.Success)
+            if (_store.GetPendingRewards((long)participantId, out IReadOnlyList<DBRewardEntry> rewards) == LeaderboardStoreResult.Success)
                 dbRewards = rewards.ToList();
             else
                 return false;
@@ -124,10 +117,7 @@ namespace MHServerEmu.Leaderboards
             }
 
             ServiceMessage.LeaderboardRewardRequestResponse requestResponse = new(participantId, rewardEntries);
-            if (_publisher == null)
-                ServerManager.Instance.SendMessageToService(GameServiceType.GameInstance, requestResponse);
-            else
-                ServerManager.Instance.SendMessageToService(GameServiceType.GameInstance, requestResponse);
+            _publisher.Publish(requestResponse);
 
             return true;
         }
@@ -159,12 +149,7 @@ namespace MHServerEmu.Leaderboards
                 return Logger.WarnReturn(false, $"FinalizeReward(): Failed to find reward for leaderboardId={leaderboardId}, instanceId={instanceId}, participant=0x{participantId:X}");
 
             // Update reward in the database
-            if (_store == null)
-            {
-                reward.UpdateRewardedDate();
-                SQLiteLeaderboardDBManager.Instance.UpdateReward(reward);
-            }
-            else if (_store.FinalizeReward(new LeaderboardRewardKey(leaderboardId, instanceId, (long)participantId), (long)Clock.UnixTime.TotalSeconds) is not (RewardFinalizationResult.Finalized or RewardFinalizationResult.AlreadyFinalized))
+            if (_store.FinalizeReward(new LeaderboardRewardKey(leaderboardId, instanceId, (long)participantId), (long)Clock.UnixTime.TotalSeconds) is not (RewardFinalizationResult.Finalized or RewardFinalizationResult.AlreadyFinalized))
             {
                 return false;
             }

@@ -34,7 +34,7 @@ namespace MHServerEmu.Leaderboards
             ILeaderboardPublisher publisher = new ServerManagerLeaderboardPublisher();
             _database = new LeaderboardDatabase(leaderboards, new PlayerStoreLeaderboardNameResolver(players),
                 new GameDatabaseLeaderboardPrototypeCatalog(), publisher,
-                new LeaderboardRuntimeOptions(schedulePath, config.NormalArchiveLimit));
+                new LeaderboardRuntimeOptions(schedulePath, config.NormalArchiveLimit, config.AutoSaveIntervalMinutes));
             _rewardManager = new LeaderboardRewardManager(leaderboards, publisher);
         }
 
