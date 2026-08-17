@@ -23,8 +23,10 @@ namespace MHServerEmu.Leaderboards
         private readonly LeaderboardDatabase _database;
         private readonly LeaderboardRewardManager _rewardManager;
         private readonly LeaderboardServiceMailbox _mailbox;
+        private readonly object _workLock = new();
 
         private bool _isEnabled;
+        private bool _acceptingWork;
 
         public GameServiceState State { get; private set; } = GameServiceState.Created;
         public ILeaderboardAdministration Administration { get => _mailbox; }
@@ -67,6 +69,7 @@ namespace MHServerEmu.Leaderboards
             }
 
             State = GameServiceState.Running;
+            _acceptingWork = true;
 
             while (State == GameServiceState.Running)
             {
@@ -81,6 +84,9 @@ namespace MHServerEmu.Leaderboards
                 Thread.Sleep(UpdateTimeMS);
             }
 
+            _database.ProcessLeaderboardScoreUpdateQueue();
+            _database.Save();
+            _rewardManager.Shutdown();
             State = GameServiceState.Shutdown;
         }
 
@@ -88,8 +94,8 @@ namespace MHServerEmu.Leaderboards
         {
             if (_isEnabled)
             {
-                _database?.Save();
-                _rewardManager?.Shutdown();
+                lock (_workLock)
+                    _acceptingWork = false;
                 State = GameServiceState.ShuttingDown;
             }
             else
@@ -107,15 +113,23 @@ namespace MHServerEmu.Leaderboards
                     break;
 
                 case ServiceMessage.LeaderboardScoreUpdateBatch leaderboardScoreUpdateBatch:
-                    _database.EnqueueLeaderboardScoreUpdate(leaderboardScoreUpdateBatch);
+                    lock (_workLock)
+                    {
+                        if (_acceptingWork)
+                            _database.EnqueueLeaderboardScoreUpdate(leaderboardScoreUpdateBatch);
+                        else
+                            leaderboardScoreUpdateBatch.Destroy();
+                    }
                     break;
 
                 case ServiceMessage.LeaderboardRewardRequest leaderboardRewardRequest:
-                    _rewardManager.OnLeaderboardRewardRequest(leaderboardRewardRequest);
+                    if (_acceptingWork)
+                        _rewardManager.OnLeaderboardRewardRequest(leaderboardRewardRequest);
                     break;
 
                 case ServiceMessage.LeaderboardRewardConfirmation leaderboardRewardConfirmation:
-                    _rewardManager.OnLeaderboardRewardConfirmation(leaderboardRewardConfirmation);
+                    if (_acceptingWork)
+                        _rewardManager.OnLeaderboardRewardConfirmation(leaderboardRewardConfirmation);
                     break;
 
                 default:

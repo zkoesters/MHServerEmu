@@ -15,20 +15,6 @@ namespace MHServerEmu.Persistence
     {
         private static readonly Logger Logger = LogManager.CreateLogger();
 
-        public static bool TryCreate(out PersistenceServices services)
-        {
-            PersistenceConfig persistenceConfig = ConfigManager.Instance.GetConfig<PersistenceConfig>();
-            PlayerManagerConfig playerManagerConfig = ConfigManager.Instance.GetConfig<PlayerManagerConfig>();
-            if (PersistenceProviderSelector.TrySelect(persistenceConfig.Provider, playerManagerConfig.UseJsonDBManager, out PersistenceProvider provider, out string error) == false)
-            {
-                Logger.Error($"TryCreate(): {error}");
-                services = null;
-                return false;
-            }
-
-            return TryCreate(provider, CreateJsonServices, CreateSQLiteServices, out services);
-        }
-
         public static Task<PersistenceRuntime> CreateAsync(Action<PersistenceFatalFailure> fatalCallback = null, CancellationToken cancellationToken = default)
         {
             fatalCallback ??= _ => { };
@@ -52,29 +38,6 @@ namespace MHServerEmu.Persistence
                     cancellationToken));
         }
 
-        internal static bool TryCreate(PersistenceProvider provider, Func<(bool Success, PersistenceServices Services)> jsonFactory,
-            Func<(bool Success, PersistenceServices Services)> sqliteFactory, out PersistenceServices services)
-        {
-            services = null;
-
-            switch (provider)
-            {
-                case PersistenceProvider.Json:
-                    return TryCreate(jsonFactory, out services);
-
-                case PersistenceProvider.SQLite:
-                    return TryCreate(sqliteFactory, out services);
-
-                case PersistenceProvider.PostgreSQL:
-                    Logger.Error("TryCreate(): PostgreSQL persistence is not available.");
-                    return false;
-
-                default:
-                    Logger.Error($"TryCreate(): Unsupported persistence provider {provider}.");
-                    return false;
-            }
-        }
-
         internal static Task<PersistenceRuntime> CreateAsync(PersistenceProvider provider,
             Func<Task<PersistenceRuntime>> jsonFactory,
             Func<Task<PersistenceRuntime>> sqliteFactory,
@@ -93,18 +56,11 @@ namespace MHServerEmu.Persistence
             };
         }
 
-        private static bool TryCreate(Func<(bool Success, PersistenceServices Services)> factory, out PersistenceServices services)
-        {
-            ArgumentNullException.ThrowIfNull(factory);
-
-            (bool success, PersistenceServices createdServices) = factory();
-            services = createdServices;
-            return success;
-        }
-
         private static Task<PersistenceRuntime> CreateRuntimeAsync(Func<(bool Success, PersistenceServices Services)> factory)
         {
-            if (TryCreate(factory, out PersistenceServices services) == false)
+            ArgumentNullException.ThrowIfNull(factory);
+            (bool success, PersistenceServices services) = factory();
+            if (success == false)
                 return Task.FromException<PersistenceRuntime>(new InvalidOperationException("Persistence initialization failed."));
 
             return Task.FromResult(new PersistenceRuntime(services, () => ValueTask.CompletedTask));

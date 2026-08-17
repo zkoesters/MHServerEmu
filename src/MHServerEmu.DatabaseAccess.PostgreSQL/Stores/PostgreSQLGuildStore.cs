@@ -105,7 +105,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
                 await using NpgsqlCommand memberCommand = new($"INSERT INTO {GuildMemberTable} (player_account_id, guild_id, membership) VALUES (@playerId, @guildId, @membership)", connection, transaction);
                 AddMemberParameters(memberCommand, leader);
                 await memberCommand.ExecuteNonQueryAsync(cancellationToken);
-            }).GetAwaiter().GetResult();
+            }, notifyFatalOnOutcomeUncertain: true).GetAwaiter().GetResult();
 
             return CompleteWrite(guild, write, metadata, MapWriteFailure);
         }
@@ -214,7 +214,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
                     result = GuildStoreResult.StaleRevision;
                     throw new GuildWriteAbortedException();
                 }
-            }).GetAwaiter().GetResult();
+            }, notifyFatalOnOutcomeUncertain: true).GetAwaiter().GetResult();
 
             return CompleteWrite(guild, write, metadata, failure => result == GuildStoreResult.Success ? MapWriteFailure(failure) : result);
         }
@@ -234,7 +234,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
                 deleted = await command.ExecuteScalarAsync(cancellationToken) != null;
                 if (deleted == false)
                     exists = await GuildExistsAsync(connection, transaction, guild.Id, cancellationToken);
-            }).GetAwaiter().GetResult();
+            }, notifyFatalOnOutcomeUncertain: true).GetAwaiter().GetResult();
 
             if (write.Outcome == PostgreSQLWriteOutcome.OutcomeUncertain)
             {
@@ -267,7 +267,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
                 }
                 if (metadata.HasValue == false)
                     exists = await GuildExistsAsync(connection, transaction, guild.Id, cancellationToken);
-            }).GetAwaiter().GetResult();
+            }, notifyFatalOnOutcomeUncertain: true).GetAwaiter().GetResult();
 
             return CompleteWrite(guild, write, metadata, failure => MapWriteFailure(failure), exists ? GuildStoreResult.StaleRevision : GuildStoreResult.GuildNotFound);
         }

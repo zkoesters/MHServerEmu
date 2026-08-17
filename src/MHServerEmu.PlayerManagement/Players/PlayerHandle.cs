@@ -196,32 +196,48 @@ namespace MHServerEmu.PlayerManagement.Players
 
         public bool SavePlayerData()
         {
+            return SavePlayerDataResult() == PlayerStoreResult.Success;
+        }
+
+        public PlayerStoreResult SavePlayerDataResult()
+        {
             if (State == PlayerHandleState.Created)
-                return Logger.WarnReturn(false, $"SavePlayerData(): Invalid state {State} for player [{this}]");
+                return Logger.WarnReturn(PlayerStoreResult.Failed, $"SavePlayerData(): Invalid state {State} for player [{this}]");
 
             // Skip saving if persistence is disabled.
             if (_persistenceEnabled() == false)
-                return true;
+                return PlayerStoreResult.Success;
 
             DBAccount account = Account;
 
             // Do not save accounts in error state to avoid data corruption
             if (account.MigrationData.IsInErrorState)
-                return true;
+                return PlayerStoreResult.Success;
 
             using var lockScope = account.Lock();
             if (lockScope.LockTaken == false)
-                return Logger.ErrorReturn(false, $"SavePlayerData(): Timed out acquiring lock for [{account}]");
+                return Logger.ErrorReturn(PlayerStoreResult.Failed, $"SavePlayerData(): Timed out acquiring lock for [{account}]");
 
             if (IsConnected == false)
                 account.Player.LastLogoutTime = (long)Clock.UnixTime.TotalMilliseconds;
 
-            if (_players.SavePlayerData(account) != PlayerStoreResult.Success)
-                return Logger.WarnReturn(false, $"SavePlayerData(): Failed to save player data for account [{account}] to the database");
+            PlayerStoreResult result = _players.SavePlayerData(account);
+            if (result != PlayerStoreResult.Success)
+                return Logger.WarnReturn(result, $"SavePlayerData(): Failed to save player data for account [{account}] to the database");
 
             Logger.Info($"Saved player data for account [{account}] to the database");
 
-            return true;
+            return PlayerStoreResult.Success;
+        }
+
+        internal void DiscardLoadedAggregate()
+        {
+            Account.Player = null;
+            Account.Avatars.Clear();
+            Account.TeamUps.Clear();
+            Account.Items.Clear();
+            Account.ControlledEntities.Clear();
+            Account.TransferredEntities.Clear();
         }
 
         public bool BeginAddToGame(GameHandle game)
