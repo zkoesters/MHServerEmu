@@ -922,6 +922,9 @@ namespace MHServerEmu.DatabaseAccess.SQLite
 
         public RewardFinalizationResult FinalizeReward(LeaderboardRewardKey key, long rewardedDate)
         {
+            if (rewardedDate == 0)
+                return RewardFinalizationResult.Failed;
+
             bool commitStarted = false;
             try
             {
