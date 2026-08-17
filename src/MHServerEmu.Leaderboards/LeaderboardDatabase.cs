@@ -518,24 +518,39 @@ namespace MHServerEmu.Leaderboards
             if (archiveCache.TryGet((ulong)instanceId, out instance) && instance.LeaderboardId == leaderboardId)
                 return true;
 
-            IReadOnlyList<DBLeaderboardInstance> page;
-            if (_store != null)
+            int pageSize = Math.Min(_options?.ArchiveCacheCapacity ?? 1, 100);
+            if (_store == null)
             {
-                if (_store.LoadVisibleInstances(leaderboardId, 0, _options.ArchiveCacheCapacity, out page) != LeaderboardStoreResult.Success)
+                foreach (DBLeaderboardInstance loaded in DBManager.GetInstances(leaderboardId, pageSize).Reverse<DBLeaderboardInstance>())
+                    archiveCache.Set((ulong)loaded.InstanceId, loaded);
+                return archiveCache.TryGet((ulong)instanceId, out instance) && instance.LeaderboardId == leaderboardId;
+            }
+
+            long beforeInstanceId = 0;
+            while (true)
+            {
+                if (_store.LoadVisibleInstances(leaderboardId, beforeInstanceId, pageSize, out IReadOnlyList<DBLeaderboardInstance> page) != LeaderboardStoreResult.Success)
                 {
                     instance = null;
                     return false;
                 }
-            }
-            else
-            {
-                page = DBManager.GetInstances(leaderboardId, _options?.ArchiveCacheCapacity ?? 1);
+
+                foreach (DBLeaderboardInstance loaded in page.Reverse())
+                    archiveCache.Set((ulong)loaded.InstanceId, loaded);
+
+                if (archiveCache.TryGet((ulong)instanceId, out instance) && instance.LeaderboardId == leaderboardId)
+                    return true;
+                if (page.Count < pageSize)
+                    break;
+
+                long nextBeforeInstanceId = page[^1].InstanceId;
+                if (nextBeforeInstanceId == beforeInstanceId)
+                    break;
+                beforeInstanceId = nextBeforeInstanceId;
             }
 
-            foreach (DBLeaderboardInstance loaded in page)
-                archiveCache.Set((ulong)loaded.InstanceId, loaded);
-
-            return archiveCache.TryGet((ulong)instanceId, out instance) && instance.LeaderboardId == leaderboardId;
+            instance = null;
+            return false;
         }
 
         internal bool ActivateInstance(long leaderboardId, long instanceId, LeaderboardState state)
@@ -675,7 +690,7 @@ namespace MHServerEmu.Leaderboards
             if (leaderboard == null)
                 return false;
 
-            LeaderboardInstance instance = leaderboard.GetInstance(instanceId);
+            LeaderboardInstance instance = leaderboard.GetInstance(instanceId, true);
             if (instance == null)
                 return false;
 
@@ -697,7 +712,7 @@ namespace MHServerEmu.Leaderboards
 
             LeaderboardType type = leaderboard.Prototype.Type;
 
-            LeaderboardInstance instance = leaderboard.GetInstance(instanceId);
+            LeaderboardInstance instance = leaderboard.GetInstance(instanceId, true);
             if (instance == null)
                 return false;
 

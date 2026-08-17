@@ -40,7 +40,10 @@ namespace MHServerEmu.Tests.Leaderboards
         [Fact]
         public void RuntimeArchiveLookup_CachesBoundedPageOnMiss()
         {
-            ArchiveStore store = new([new DBLeaderboardInstance { LeaderboardId = 1, InstanceId = 10 }]);
+            ArchiveStore store = new(new Dictionary<long, IReadOnlyList<DBLeaderboardInstance>>
+            {
+                [0] = [new DBLeaderboardInstance { LeaderboardId = 1, InstanceId = 10 }],
+            });
             LeaderboardDatabase database = new(store, new NameResolver(), new Catalog(), new Publisher(),
                 new LeaderboardRuntimeOptions("schedule.json", normalArchiveLimit: 2));
 
@@ -49,6 +52,36 @@ namespace MHServerEmu.Tests.Leaderboards
             Assert.True(TryLoadArchivedInstance(database, 1, 10, out DBLeaderboardInstance second));
             Assert.Equal(10, second.InstanceId);
             Assert.Equal(new[] { (1L, 0L, 2) }, store.VisiblePageRequests);
+        }
+
+        [Fact]
+        public void RuntimeArchiveLookup_PagesPastNewestHistoryUntilItFindsTheRequestedInstance()
+        {
+            ArchiveStore store = new(new Dictionary<long, IReadOnlyList<DBLeaderboardInstance>>
+            {
+                [0] = [new DBLeaderboardInstance { LeaderboardId = 1, InstanceId = 100 }, new DBLeaderboardInstance { LeaderboardId = 1, InstanceId = 99 }],
+                [99] = [new DBLeaderboardInstance { LeaderboardId = 1, InstanceId = 98 }, new DBLeaderboardInstance { LeaderboardId = 1, InstanceId = 10 }],
+            });
+            LeaderboardDatabase database = new(store, new NameResolver(), new Catalog(), new Publisher(),
+                new LeaderboardRuntimeOptions("schedule.json", normalArchiveLimit: 2));
+
+            Assert.True(TryLoadArchivedInstance(database, 1, 10, out DBLeaderboardInstance instance));
+            Assert.Equal(10, instance.InstanceId);
+            Assert.Equal(new[] { (1L, 0L, 2), (1L, 99L, 2) }, store.VisiblePageRequests);
+        }
+
+        [Fact]
+        public void RuntimeArchiveLookup_ClampsPageSizeToStoreMaximum()
+        {
+            ArchiveStore store = new(new Dictionary<long, IReadOnlyList<DBLeaderboardInstance>>
+            {
+                [0] = [new DBLeaderboardInstance { LeaderboardId = 1, InstanceId = 10 }],
+            });
+            LeaderboardDatabase database = new(store, new NameResolver(), new Catalog(), new Publisher(),
+                new LeaderboardRuntimeOptions("schedule.json", normalArchiveLimit: 101));
+
+            Assert.True(TryLoadArchivedInstance(database, 1, 10, out _));
+            Assert.Equal(new[] { (1L, 0L, 100) }, store.VisiblePageRequests);
         }
 
         private static bool TryLoadArchivedInstance(LeaderboardDatabase database, long leaderboardId, long instanceId, out DBLeaderboardInstance instance)
@@ -78,7 +111,7 @@ namespace MHServerEmu.Tests.Leaderboards
             public void Publish(ServiceMessage.LeaderboardRewardRequestResponse response) { }
         }
 
-        private sealed class ArchiveStore(IReadOnlyList<DBLeaderboardInstance> page) : ILeaderboardStore
+        private sealed class ArchiveStore(IReadOnlyDictionary<long, IReadOnlyList<DBLeaderboardInstance>> pages) : ILeaderboardStore
         {
             public List<(long LeaderboardId, long BeforeInstanceId, int Limit)> VisiblePageRequests { get; } = new();
 
@@ -90,7 +123,7 @@ namespace MHServerEmu.Tests.Leaderboards
             public LeaderboardStoreResult LoadVisibleInstances(long leaderboardId, long beforeInstanceId, int limit, out IReadOnlyList<DBLeaderboardInstance> instances)
             {
                 VisiblePageRequests.Add((leaderboardId, beforeInstanceId, limit));
-                instances = page;
+                instances = pages.GetValueOrDefault(beforeInstanceId, Array.Empty<DBLeaderboardInstance>());
                 return LeaderboardStoreResult.Success;
             }
             public LeaderboardStoreResult ActivateInstance(LeaderboardActivation request) => LeaderboardStoreResult.Failed;
