@@ -303,6 +303,8 @@ namespace MHServerEmu.PlayerManagement.Players
 
         public void MarkForDiscardAfterGameRemoval()
         {
+            // An uncertain save must never be replayed while waiting for removal.
+            _saveNeeded = false;
             _discardAfterGameRemoval = true;
         }
 
