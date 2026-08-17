@@ -124,9 +124,10 @@ namespace MHServerEmu.DatabaseAccess.Json
                 return AccountStoreResult.InvalidData;
             if (account.PersistenceState == PersistenceState.Clean)
                 return AccountStoreResult.Success;
-            if (ReferenceEquals(account, _account) == false)
+            if (_account == null || account.Id != _account.Id)
                 return AccountStoreResult.AccountNotFound;
 
+            ApplyReconciledScalars(account, _account);
             account.PersistenceState = PersistenceState.Clean;
             return AccountStoreResult.Success;
         }
@@ -185,6 +186,26 @@ namespace MHServerEmu.DatabaseAccess.Json
         }
 
         #endregion
+
+        private static void ApplyReconciledScalars(DBAccount account, DBAccount persisted)
+        {
+            account.Email = persisted.Email;
+            account.PlayerName = persisted.PlayerName;
+            account.PasswordHash = persisted.PasswordHash;
+            account.Salt = persisted.Salt;
+            account.UserLevel = persisted.UserLevel;
+            account.Flags = persisted.Flags;
+            account.PasswordAlgorithm = persisted.PasswordAlgorithm;
+            account.PasswordFormatVersion = persisted.PasswordFormatVersion;
+            account.PasswordIterations = persisted.PasswordIterations;
+            account.PasswordKeySize = persisted.PasswordKeySize;
+            account.CredentialVersion = persisted.CredentialVersion;
+            account.GameSecurityVersion = persisted.GameSecurityVersion;
+            account.PersistenceRevision = persisted.PersistenceRevision;
+            account.EmailVerifiedAtUtc = persisted.EmailVerifiedAtUtc;
+            account.CreatedAtUtc = persisted.CreatedAtUtc;
+            account.UpdatedAtUtc = persisted.UpdatedAtUtc;
+        }
 
         /// <summary>
         /// Creates a backup of the account file if enough time has passed since the last one.
