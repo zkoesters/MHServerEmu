@@ -69,7 +69,8 @@ namespace MHServerEmu.Leaderboards
             }
 
             State = GameServiceState.Running;
-            _acceptingWork = true;
+            lock (_workLock)
+                _acceptingWork = true;
 
             while (State == GameServiceState.Running)
             {
@@ -123,13 +124,19 @@ namespace MHServerEmu.Leaderboards
                     break;
 
                 case ServiceMessage.LeaderboardRewardRequest leaderboardRewardRequest:
-                    if (_acceptingWork)
-                        _rewardManager.OnLeaderboardRewardRequest(leaderboardRewardRequest);
+                    lock (_workLock)
+                    {
+                        if (_acceptingWork)
+                            _rewardManager.OnLeaderboardRewardRequest(leaderboardRewardRequest);
+                    }
                     break;
 
                 case ServiceMessage.LeaderboardRewardConfirmation leaderboardRewardConfirmation:
-                    if (_acceptingWork)
-                        _rewardManager.OnLeaderboardRewardConfirmation(leaderboardRewardConfirmation);
+                    lock (_workLock)
+                    {
+                        if (_acceptingWork)
+                            _rewardManager.OnLeaderboardRewardConfirmation(leaderboardRewardConfirmation);
+                    }
                     break;
 
                 default:

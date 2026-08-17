@@ -24,7 +24,7 @@ namespace MHServerEmu.Core.Config
         {
         }
 
-        internal ConfigManager(string configPath, string overridePath)
+        public ConfigManager(string configPath, string overridePath)
         {
             _iniFile = new(configPath);
 

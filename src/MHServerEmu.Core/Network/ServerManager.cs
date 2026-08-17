@@ -46,6 +46,8 @@ namespace MHServerEmu.Core.Network
         private readonly IGameService[] _services = new IGameService[(int)GameServiceType.NumServiceTypes];
         private readonly Thread[] _serviceThreads = new Thread[(int)GameServiceType.NumServiceTypes];
         private readonly bool[] _startedServices = new bool[(int)GameServiceType.NumServiceTypes];
+        private readonly TaskCompletionSource<Exception>[] _serviceFaults = new TaskCompletionSource<Exception>[(int)GameServiceType.NumServiceTypes];
+        private readonly TaskCompletionSource<Exception> _fault = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly object _lifecycleLock = new();
 
         private ServerManagerState _state = ServerManagerState.Created;
@@ -55,6 +57,8 @@ namespace MHServerEmu.Core.Network
         public TimeSpan StartupTime { get; private set; }
 
         public ServerManager() { }
+
+        public Task<Exception> WaitForFaultAsync() => _fault.Task;
 
         /// <summary>
         /// Initializes the <see cref="ServerManager"/> instance.
@@ -177,16 +181,18 @@ namespace MHServerEmu.Core.Network
 
                 Logger.Info($"Starting service for type [{serviceType}]...");
 
-                TaskCompletionSource<Exception> startupFailure = new(TaskCreationOptions.RunContinuationsAsynchronously);
-                _serviceThreads[i] = new(() => RunService(service, startupFailure)) { Name = $"Service [{serviceType}]", IsBackground = true, CurrentCulture = CultureInfo.InvariantCulture };
+                int serviceIndex = i;
+                TaskCompletionSource<Exception> serviceFault = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                _serviceFaults[serviceIndex] = serviceFault;
+                _serviceThreads[serviceIndex] = new(() => RunService(service, exception => ReportServiceFault(serviceIndex, exception))) { Name = $"Service [{serviceType}]", IsBackground = true, CurrentCulture = CultureInfo.InvariantCulture };
                 _serviceThreads[i].Start();
 
-                while (service.State != GameServiceState.Running && startupFailure.Task.IsCompleted == false)
+                while (service.State != GameServiceState.Running && serviceFault.Task.IsCompleted == false)
                     Thread.Sleep(1);
 
-                if (service.State != GameServiceState.Running)
+                if (service.State != GameServiceState.Running || serviceFault.Task.IsCompleted)
                 {
-                    Exception exception = startupFailure.Task.GetAwaiter().GetResult();
+                    Exception exception = serviceFault.Task.GetAwaiter().GetResult();
                     Logger.ErrorException(exception, $"Service for type [{serviceType}] failed during startup");
                     ShutdownServices();
                     return false;
@@ -237,7 +243,7 @@ namespace MHServerEmu.Core.Network
 
                 _services[i].Shutdown();
 
-                while (service.State != GameServiceState.Shutdown)
+                while (service.State != GameServiceState.Shutdown && _serviceFaults[i]?.Task.IsCompleted == false)
                     Thread.Sleep(1);
 
                 _serviceThreads[i] = null;
@@ -252,18 +258,24 @@ namespace MHServerEmu.Core.Network
                 _state = ServerManagerState.Shutdown;
         }
 
-        private static void RunService(IGameService service, TaskCompletionSource<Exception> startupFailure)
+        private static void RunService(IGameService service, Action<Exception> reportFault)
         {
             try
             {
                 service.Run();
-                if (service.State != GameServiceState.Running)
-                    startupFailure.TrySetResult(new InvalidOperationException("Service exited before reaching the running state."));
+                if (service.State != GameServiceState.Shutdown)
+                    reportFault(new InvalidOperationException("Service exited unexpectedly."));
             }
             catch (Exception exception)
             {
-                startupFailure.TrySetResult(exception);
+                reportFault(exception);
             }
+        }
+
+        private void ReportServiceFault(int index, Exception exception)
+        {
+            _serviceFaults[index].TrySetResult(exception);
+            _fault.TrySetResult(exception);
         }
 
         /// <summary>
