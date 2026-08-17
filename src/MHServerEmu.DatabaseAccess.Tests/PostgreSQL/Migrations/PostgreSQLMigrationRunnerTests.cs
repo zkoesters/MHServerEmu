@@ -17,7 +17,7 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
         }
 
         [PostgreSQLIntegrationFact]
-        public async Task RunAsync_FreshHistoryProbeReturnsNoRelation_AndBootstrapsFoundationAndCorePersistence()
+        public async Task RunAsync_FreshHistoryProbeReturnsNoRelation_AndBootstrapsFoundationCoreAndLeaderboardPersistence()
         {
             NpgsqlDataSource dataSource = await _database.CreateDataSourceAsync();
             Assert.Null(await ScalarAsync<string>(dataSource, "SELECT to_regclass('mhserveremu.schema_migrations')::text"));
@@ -25,10 +25,10 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
             PostgreSQLMigrationResult result = await new PostgreSQLMigrationRunner(dataSource, PostgreSQLMigrationCatalog.LoadEmbedded(), TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(5)).RunAsync();
 
             Assert.True(result.Succeeded);
-            Assert.Equal(2, result.AppliedMigrationCount);
+            Assert.Equal(3, result.AppliedMigrationCount);
             Assert.Equal("mhserveremu.schema_migrations", await ScalarAsync<string>(dataSource, "SELECT to_regclass('mhserveremu.schema_migrations')::text"));
-            Assert.Equal(new[] { "account", "application_metadata", "guild", "guild_member", "player_entity", "player_profile", "schema_migrations", "writer_fence" }, await TablesAsync(dataSource));
-            Assert.Equal(new[] { 1, 2 }, await MigrationVersionsAsync(dataSource));
+            Assert.Equal(new[] { "account", "application_metadata", "guild", "guild_member", "leaderboard", "leaderboard_entry", "leaderboard_instance", "leaderboard_meta_entry", "leaderboard_reward", "player_entity", "player_profile", "schema_migrations", "writer_fence" }, await TablesAsync(dataSource));
+            Assert.Equal(new[] { 1, 2, 3 }, await MigrationVersionsAsync(dataSource));
             Assert.Equal(1, await ScalarAsync<int>(dataSource, "SELECT identity_normalization_version FROM mhserveremu.application_metadata"));
             Assert.Equal(0L, await ScalarAsync<long>(dataSource, "SELECT generation FROM mhserveremu.writer_fence WHERE singleton = true"));
             Assert.Equal(Guid.Empty, await ScalarAsync<Guid>(dataSource, "SELECT owner_id FROM mhserveremu.writer_fence WHERE singleton = true"));
@@ -192,7 +192,7 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
             PostgreSQLMigrationCatalog embedded = PostgreSQLMigrationCatalog.LoadEmbedded();
             return PostgreSQLMigrationCatalog.Create(embedded.Migrations
                 .Select(migration => new PostgreSQLMigrationResource($"Migrations.{migration.Version:D4}_{migration.Name}.sql", Encoding.UTF8.GetBytes(migration.Sql)))
-                .Append(new PostgreSQLMigrationResource("Migrations.0003_Test.sql", Encoding.UTF8.GetBytes(migrationSql))));
+                .Append(new PostgreSQLMigrationResource("Migrations.0004_Test.sql", Encoding.UTF8.GetBytes(migrationSql))));
         }
 
         private static async Task ExecuteAsync(NpgsqlDataSource dataSource, string sql)
