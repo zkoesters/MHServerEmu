@@ -542,12 +542,13 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                     return LeaderboardStoreResult.NotFound;
 
                 if (instance.LeaderboardId != request.LeaderboardId)
-                    return LeaderboardStoreResult.Conflict;
+                    return LeaderboardStoreResult.InvalidData;
 
                 if (definition.ActiveInstanceId != request.InstanceId || instance.State != request.ExpectedState)
                     return LeaderboardStoreResult.StaleState;
 
                 List<LeaderboardEntryWrite> missingEntries = new();
+                List<LeaderboardEntryWrite> existingEntries = new();
                 foreach (LeaderboardEntryWrite entry in request.Entries)
                 {
                     DBLeaderboardEntry existing = connection.QueryFirstOrDefault<DBLeaderboardEntry>(@"
@@ -559,8 +560,10 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                         continue;
                     }
 
-                    if (existing.Score != entry.Score || existing.HighScore != entry.HighScore || existing.RuleStates?.SequenceEqual(entry.RuleStates) != true)
-                        return LeaderboardStoreResult.Conflict;
+                    if (existing.RuleStates == null)
+                        return LeaderboardStoreResult.InvalidData;
+
+                    existingEntries.Add(entry);
                 }
 
                 foreach (LeaderboardEntryWrite entry in missingEntries)
@@ -568,6 +571,14 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                     connection.Execute(@"
                         INSERT INTO Entries (InstanceId, ParticipantId, Score, HighScore, RuleStates)
                         VALUES (@InstanceId, @ParticipantId, @Score, @HighScore, @RuleStates)",
+                        new { entry.InstanceId, entry.ParticipantId, entry.Score, entry.HighScore, RuleStates = entry.RuleStates }, transaction);
+                }
+
+                foreach (LeaderboardEntryWrite entry in existingEntries)
+                {
+                    connection.Execute(@"
+                        UPDATE Entries SET Score = @Score, HighScore = @HighScore, RuleStates = @RuleStates
+                        WHERE InstanceId = @InstanceId AND ParticipantId = @ParticipantId",
                         new { entry.InstanceId, entry.ParticipantId, entry.Score, entry.HighScore, RuleStates = entry.RuleStates }, transaction);
                 }
 
@@ -601,10 +612,12 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                     return LeaderboardStoreResult.NotFound;
 
                 if (instance.LeaderboardId != request.LeaderboardId)
-                    return LeaderboardStoreResult.Conflict;
+                    return LeaderboardStoreResult.InvalidData;
 
                 List<DBLeaderboardEntry> existingEntries = connection.Query<DBLeaderboardEntry>("SELECT * FROM Entries WHERE InstanceId = @InstanceId",
                     new { request.InstanceId }, transaction).ToList();
+                if (existingEntries.Any(entry => entry.RuleStates == null))
+                    return LeaderboardStoreResult.InvalidData;
                 if (instance.State == LeaderboardState.eLBS_Expired)
                     return HasExactEntries(existingEntries, request.Entries) ? LeaderboardStoreResult.Success : LeaderboardStoreResult.Conflict;
 
@@ -665,6 +678,11 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                     if (request.NextInstance.InstanceId != 0 && definition.ActiveInstanceId != request.NextInstance.InstanceId)
                         return LeaderboardStoreResult.StaleState;
 
+                    if (request.NextInstance.InstanceId == 0
+                        && (LeaderboardInstanceIdGenerator.TryGetNext(request.LeaderboardId, new[] { request.ExpectedActiveInstanceId }, out long expectedReplayInstanceId) == false
+                            || definition.ActiveInstanceId != expectedReplayInstanceId))
+                        return LeaderboardStoreResult.StaleState;
+
                     DBLeaderboardInstance replay = connection.QueryFirstOrDefault<DBLeaderboardInstance>("SELECT * FROM Instances WHERE InstanceId = @InstanceId",
                         new { InstanceId = definition.ActiveInstanceId }, transaction);
                     if (replay == null || replay.LeaderboardId != request.LeaderboardId || previous.State != request.PreviousState
@@ -686,7 +704,9 @@ namespace MHServerEmu.DatabaseAccess.SQLite
 
                 List<long> leaderboardInstanceIds = connection.Query<long>("SELECT InstanceId FROM Instances WHERE LeaderboardId = @LeaderboardId",
                     new { request.LeaderboardId }, transaction).ToList();
-                if (LeaderboardInstanceIdGenerator.TryGetNext(request.LeaderboardId, leaderboardInstanceIds, out long generatedInstanceId) == false
+                if (LeaderboardInstanceIdGenerator.TryGetNext(request.LeaderboardId, new[] { request.ExpectedActiveInstanceId }, out long expectedGeneratedInstanceId) == false
+                    || LeaderboardInstanceIdGenerator.TryGetNext(request.LeaderboardId, leaderboardInstanceIds, out long generatedInstanceId) == false
+                    || generatedInstanceId != expectedGeneratedInstanceId
                     || (request.NextInstance.InstanceId != 0 && request.NextInstance.InstanceId != generatedInstanceId)
                     || connection.QuerySingleOrDefault<long?>("SELECT InstanceId FROM Instances WHERE InstanceId = @InstanceId", new { InstanceId = generatedInstanceId }, transaction) != null)
                     return LeaderboardStoreResult.InvalidData;
