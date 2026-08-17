@@ -13,8 +13,10 @@ namespace MHServerEmu.Leaderboards
         private static readonly Logger Logger = LogManager.CreateLogger();
 
         private readonly object _lock = new();
+        private readonly LeaderboardDatabase _database;
 
         public PrototypeGuid LeaderboardId { get; }
+        internal LeaderboardDatabase Database { get => _database; }
         public LeaderboardPrototype Prototype { get; }
         public List<LeaderboardInstance> Instances { get; } = new();
         public LeaderboardInstance ActiveInstance { get; private set; }
@@ -26,16 +28,21 @@ namespace MHServerEmu.Leaderboards
         /// Constructs a <see cref="Leaderboard"/> for the provided <see cref="LeaderboardPrototype"/>.
         /// </summary>
         public Leaderboard(LeaderboardPrototype proto, DBLeaderboard dbLeaderboard)
+            : this(LeaderboardDatabase.Instance, proto, dbLeaderboard,
+                LeaderboardDatabase.Instance.DBManager.GetInstances(dbLeaderboard.LeaderboardId, proto.MaxArchivedInstances))
         {
+        }
+
+        internal Leaderboard(LeaderboardDatabase database, LeaderboardPrototype proto, DBLeaderboard dbLeaderboard, IEnumerable<DBLeaderboardInstance> instances)
+        {
+            _database = database;
             Prototype = proto;
             LeaderboardId = (PrototypeGuid)dbLeaderboard.LeaderboardId;
 
             // 2025/05/24 - Removed CanReset check here to allow permanent leaderboards to be included in the enabled leaderboard list
             Scheduler.Initialize(dbLeaderboard);
 
-            var dbManager = LeaderboardDatabase.Instance.DBManager;
-            List<DBLeaderboardInstance> instanceList = dbManager.GetInstances(dbLeaderboard.LeaderboardId, proto.MaxArchivedInstances);
-            foreach (DBLeaderboardInstance dbInstance in instanceList)
+            foreach (DBLeaderboardInstance dbInstance in instances)
                 AddInstance(dbInstance, true);
 
             if (dbLeaderboard.ActiveInstanceId != 0)

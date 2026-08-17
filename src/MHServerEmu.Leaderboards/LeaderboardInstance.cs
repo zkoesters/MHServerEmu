@@ -336,14 +336,15 @@ namespace MHServerEmu.Leaderboards
                 var leaderboardProto = LeaderboardPrototype;
                 if (leaderboardProto == null) return;
 
-                var dbManager = LeaderboardDatabase.Instance.DBManager;
-                foreach (var dbEntry in dbManager.GetEntries((long)InstanceId, leaderboardProto.RankingRule == LeaderboardRankingRule.Ascending))
+                if (_leaderboard.Database.LoadEntries((long)InstanceId, out IReadOnlyList<DBLeaderboardEntry> dbEntries) == false)
+                    return;
+                foreach (var dbEntry in dbEntries)
                 {
                     LeaderboardEntry entry = new(dbEntry);
                     if (leaderboardProto.IsMetaLeaderboard)
                         entry.SetNameFromLeaderboardGuid((PrototypeGuid)entry.ParticipantId);
                     else
-                        entry.Name = LeaderboardDatabase.Instance.GetPlayerNameById(entry.ParticipantId);
+                        entry.Name = _leaderboard.Database.GetPlayerNameById(entry.ParticipantId);
 
                     Entries.Add(entry);
                     _entryMap[entry.ParticipantId] = entry;

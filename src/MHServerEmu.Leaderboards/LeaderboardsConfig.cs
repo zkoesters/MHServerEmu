@@ -7,5 +7,6 @@ namespace MHServerEmu.Leaderboards
         public string DatabaseFile { get; private set; } = "Leaderboards.db";
         public string ScheduleFile { get; private set; } = "LeaderboardSchedule.json";
         public int AutoSaveIntervalMinutes { get; private set; } = 5;
+        public int NormalArchiveLimit { get; private set; } = 10;
     }
 }
