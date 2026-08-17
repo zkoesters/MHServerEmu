@@ -153,13 +153,14 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
         public async Task ReconcileSchedule_ReturnsBoundedCommittedArchiveSnapshot()
         {
             await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
-            LeaderboardReconciliation request = Reconciliation(1);
+            LeaderboardReconciliation request = Reconciliation(1, normalArchiveLimit: 1);
             Assert.Equal(LeaderboardStoreResult.Success, fixture.Leaderboards.ReconcileSchedule(request, out _));
             await InsertInstanceAsync(fixture, 2, 1, true, LeaderboardState.eLBS_Rewarded, false);
             await InsertInstanceAsync(fixture, 3, 1, true, LeaderboardState.eLBS_Rewarded, false);
 
             Assert.Equal(LeaderboardStoreResult.Success, fixture.Leaderboards.ReconcileSchedule(request, out LeaderboardSnapshot snapshot));
-            Assert.Equal(3, Assert.Single(snapshot.NormalArchiveInstances).InstanceId);
+            Assert.Equal(new[] { 1L }, snapshot.NonterminalInstances.Select(instance => instance.InstanceId));
+            Assert.Equal(new[] { 3L }, snapshot.NormalArchiveInstances.Select(instance => instance.InstanceId));
         }
 
         [PostgreSQLIntegrationFact]
@@ -192,11 +193,11 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
             Assert.Single(instances);
         }
 
-        private static LeaderboardReconciliation Reconciliation(long leaderboardId, bool enabled = true, long startTime = 100, int maxResetCount = 0, long activationDate = 300, long currentTime = 500)
+        private static LeaderboardReconciliation Reconciliation(long leaderboardId, bool enabled = true, long startTime = 100, int maxResetCount = 0, long activationDate = 300, long currentTime = 500, int normalArchiveLimit = 2)
         {
             return new([new LeaderboardDefinitionSpec(leaderboardId, $"Leaderboard{leaderboardId}", enabled, startTime, maxResetCount)],
                 [new LeaderboardInstanceSpec(0, leaderboardId, enabled ? LeaderboardState.eLBS_Created : LeaderboardState.eLBS_Rewarded, activationDate, enabled)],
-                Array.Empty<LeaderboardMetaMapping>(), currentTime, 2);
+                Array.Empty<LeaderboardMetaMapping>(), currentTime, normalArchiveLimit);
         }
 
         private static async Task InsertDefinitionAsync(PostgreSQLStoreTestFixture fixture, long leaderboardId, bool enabled = true)
