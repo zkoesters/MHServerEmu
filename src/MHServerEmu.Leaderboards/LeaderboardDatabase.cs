@@ -152,7 +152,7 @@ namespace MHServerEmu.Leaderboards
         }
 
         /// <summary>
-        /// Returns a <see cref="string"/> containing the name of the specified player participant. 
+        /// Returns a <see cref="string"/> containing the name of the specified player participant.
         /// </summary>
         public string GetPlayerNameById(ulong participantId)
         {
