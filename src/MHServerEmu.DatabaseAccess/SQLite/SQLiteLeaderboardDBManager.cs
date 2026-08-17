@@ -1,4 +1,5 @@
 ﻿using Dapper;
+using System.Data;
 using System.Data.SQLite;
 using Gazillion;
 using MHServerEmu.Core.Helpers;
@@ -13,10 +14,16 @@ namespace MHServerEmu.DatabaseAccess.SQLite
 
         private static readonly Logger Logger = LogManager.CreateLogger();
         private static readonly Lazy<IReadOnlyDictionary<string, string>> SchemaVersionOneMetadata = new(CreateSchemaVersionOneMetadata);
+        [ThreadStatic] private static Action ReconciliationStateReadHook;
         public static SQLiteLeaderboardDBManager Instance { get; } = new();
 
         private string _dbFilePath;
         private string _connectionString;
+
+        static SQLiteLeaderboardDBManager()
+        {
+            ReconciliationStateReadHook = null;
+        }
 
         private SQLiteLeaderboardDBManager() { }
 
@@ -117,7 +124,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
         {
             return connection.Query<SQLiteSchemaObject>(@"
                 SELECT Type, Name, Sql FROM sqlite_master
-                WHERE Type IN ('table', 'index') AND Name NOT LIKE 'sqlite_%'")
+                WHERE Type IN ('table', 'index', 'trigger') AND Name NOT LIKE 'sqlite_%'")
                 .ToDictionary(schema => $"{schema.Type}:{schema.Name}", schema => NormalizeSchemaSql(schema.Sql));
         }
 
@@ -222,8 +229,10 @@ namespace MHServerEmu.DatabaseAccess.SQLite
             try
             {
                 using SQLiteConnection connection = GetConnection();
-                List<DBLeaderboard> currentDefinitions = connection.Query<DBLeaderboard>("SELECT * FROM Leaderboards").ToList();
-                List<DBLeaderboardInstance> currentInstances = connection.Query<DBLeaderboardInstance>("SELECT * FROM Instances").ToList();
+                using SQLiteTransaction transaction = connection.BeginTransaction(IsolationLevel.Serializable);
+                List<DBLeaderboard> currentDefinitions = connection.Query<DBLeaderboard>("SELECT * FROM Leaderboards", transaction: transaction).ToList();
+                List<DBLeaderboardInstance> currentInstances = connection.Query<DBLeaderboardInstance>("SELECT * FROM Instances", transaction: transaction).ToList();
+                ReconciliationStateReadHook?.Invoke();
 
                 if (TryValidateReconciliation(request, currentDefinitions, currentInstances, out Dictionary<long, LeaderboardDefinitionSpec> desiredDefinitions,
                     out Dictionary<long, LeaderboardInstanceSpec> initialInstances, out Dictionary<long, long> nextInstanceIds) == false)
@@ -245,7 +254,6 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                 if (TryValidateTopology(request.MetaMappings, desiredDefinitions.Keys, activeInstanceIds) == false)
                     return LeaderboardStoreResult.InvalidData;
 
-                using SQLiteTransaction transaction = connection.BeginTransaction();
                 foreach (LeaderboardDefinitionSpec definition in desiredDefinitions.Values.OrderBy(definition => unchecked((ulong)definition.LeaderboardId)))
                 {
                     bool exists = currentById.TryGetValue(definition.LeaderboardId, out DBLeaderboard current);
