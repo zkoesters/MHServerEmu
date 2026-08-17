@@ -76,6 +76,28 @@ namespace MHServerEmu.Tests.Leaderboards
             }
         }
 
+        [Fact]
+        public void LoadOrCreate_InvalidLegacySchedule_DoesNotRewriteSource()
+        {
+            string path = Path.Combine(Path.GetTempPath(), $"leaderboard-schedule-{Guid.NewGuid():N}.json");
+            const string LegacySchedule = """
+                [{ "PrototypeName": "LeaderboardOne", "IsEnabled": true, "StartTime": "2026-01-01T00:00:00Z", "MaxResetCount": -1 }]
+                """;
+            try
+            {
+                File.WriteAllText(path, LegacySchedule);
+                LeaderboardScheduleLoader loader = new(new TestCatalog(
+                    new LeaderboardPrototypeDefinition(101, "LeaderboardOne", true, Array.Empty<long>())), DateTime.UtcNow);
+
+                Assert.False(loader.TryLoadOrCreate(path, normalArchiveLimit: 1, out _));
+                Assert.Equal(LegacySchedule, File.ReadAllText(path));
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        }
+
         private sealed class TestCatalog(params LeaderboardPrototypeDefinition[] definitions) : ILeaderboardPrototypeCatalog
         {
             public IReadOnlyList<LeaderboardPrototypeDefinition> GetPublicPrototypes() => definitions;

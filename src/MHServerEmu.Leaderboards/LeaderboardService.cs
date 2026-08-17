@@ -66,9 +66,6 @@ namespace MHServerEmu.Leaderboards
                 // Update state for instances
                 _database.UpdateState();
 
-                // Process score updates
-                _database.ProcessLeaderboardScoreUpdateQueue();
-
                 // Process rewards
                 _rewardManager.Update();
 

@@ -33,6 +33,7 @@ namespace MHServerEmu.Leaderboards
                 Dictionary<long, LeaderboardPrototypeDefinition> definitionsById = prototypes.ToDictionary(prototype => prototype.LeaderboardId);
                 Dictionary<string, LeaderboardPrototypeDefinition> definitionsByName = prototypes.ToDictionary(prototype => prototype.PrototypeName, StringComparer.Ordinal);
                 ScheduleEntry[] entries;
+                bool rewriteLegacySchedule = false;
                 if (File.Exists(path))
                 {
                     entries = JsonSerializer.Deserialize<ScheduleEntry[]>(File.ReadAllText(path), JsonOptions);
@@ -53,7 +54,7 @@ namespace MHServerEmu.Leaderboards
                             StartTime = entry.StartTime,
                             MaxResetCount = entry.MaxResetCount,
                         }).ToArray();
-                        File.WriteAllText(path, JsonSerializer.Serialize(entries, JsonOptions));
+                        rewriteLegacySchedule = true;
                     }
                 }
                 else
@@ -109,6 +110,8 @@ namespace MHServerEmu.Leaderboards
 
                 reconciliation = new LeaderboardReconciliation(definitions, initialInstances, mappings,
                     Clock.DateTimeToTimestamp(_currentTime), normalArchiveLimit);
+                if (rewriteLegacySchedule)
+                    WriteScheduleAtomically(path, entries);
                 return true;
             }
             catch (Exception)
@@ -136,6 +139,21 @@ namespace MHServerEmu.Leaderboards
                 && entry.StartTime.Kind == DateTimeKind.Utc
                 && entry.StartTime != DateTime.MinValue
                 && entry.MaxResetCount >= 0;
+        }
+
+        private static void WriteScheduleAtomically(string path, ScheduleEntry[] entries)
+        {
+            string temporaryPath = $"{path}.{Guid.NewGuid():N}.tmp";
+            try
+            {
+                File.WriteAllText(temporaryPath, JsonSerializer.Serialize(entries, JsonOptions));
+                File.Move(temporaryPath, path, true);
+            }
+            finally
+            {
+                if (File.Exists(temporaryPath))
+                    File.Delete(temporaryPath);
+            }
         }
 
         private sealed class ScheduleEntry

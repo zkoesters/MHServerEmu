@@ -7,5 +7,14 @@ namespace MHServerEmu.Leaderboards
             int rank = entryIndex + 1;
             return hasPrevious && score == previousScore ? previousRank : rank;
         }
+
+        public static int CompareEntries(ulong leftScore, ulong leftParticipantId, ulong rightScore, ulong rightParticipantId, bool ascending)
+        {
+            int scoreComparison = leftScore.CompareTo(rightScore);
+            if (scoreComparison != 0)
+                return ascending ? scoreComparison : -scoreComparison;
+
+            return leftParticipantId.CompareTo(rightParticipantId);
+        }
     }
 }

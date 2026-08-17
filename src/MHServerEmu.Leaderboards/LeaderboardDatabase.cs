@@ -870,6 +870,8 @@ namespace MHServerEmu.Leaderboards
         /// </summary>
         public void UpdateState()
         {
+            ProcessLeaderboardScoreUpdateQueue();
+
             using var leaderboardsHandle = ListPool<Leaderboard>.Instance.Get(out List<Leaderboard> leaderboards);
             GetLeaderboards(leaderboards);
 
