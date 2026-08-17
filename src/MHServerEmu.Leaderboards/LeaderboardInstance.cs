@@ -286,12 +286,16 @@ namespace MHServerEmu.Leaderboards
 
             foreach (MetaLeaderboardEntry entry in _metaLeaderboardEntries)
             {
+                Leaderboard child = _leaderboard.Database.GetLeaderboard(entry.SubLeaderboardId);
+                if (child?.ActiveInstance == null)
+                    return null;
+
                 metaEntries.Add(
                     new DBMetaEntry
                     {
                         LeaderboardId = (long)LeaderboardId,
                         InstanceId = (long)instanceId,
-                        SubInstanceId = (long)entry.SubInstanceId,
+                        SubInstanceId = (long)child.ActiveInstance.InstanceId,
                         SubLeaderboardId = (long)entry.SubLeaderboardId 
                     });
             }
