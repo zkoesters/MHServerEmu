@@ -6,6 +6,8 @@ using MHServerEmu.Core.Network;
 using MHServerEmu.Core.System.Time;
 using MHServerEmu.DatabaseAccess;
 using MHServerEmu.Games;
+using MHServerEmu.Games.GameData;
+using MHServerEmu.Leaderboards.Administration;
 
 namespace MHServerEmu.Leaderboards
 {
@@ -20,10 +22,13 @@ namespace MHServerEmu.Leaderboards
 
         private readonly LeaderboardDatabase _database;
         private readonly LeaderboardRewardManager _rewardManager;
+        private readonly LeaderboardServiceMailbox _mailbox;
 
         private bool _isEnabled;
 
         public GameServiceState State { get; private set; } = GameServiceState.Created;
+        public ILeaderboardAdministration Administration { get => _mailbox; }
+        internal bool CanAdminister { get => State == GameServiceState.Running && _isEnabled && _database.IsInitialized; }
 
         public LeaderboardService(IPlayerStore players, ILeaderboardStore leaderboards)
         {
@@ -37,6 +42,7 @@ namespace MHServerEmu.Leaderboards
                 new GameDatabaseLeaderboardPrototypeCatalog(), publisher,
                 new LeaderboardRuntimeOptions(schedulePath, config.NormalArchiveLimit, config.AutoSaveIntervalMinutes), Shutdown);
             _rewardManager = new LeaderboardRewardManager(leaderboards, publisher, () => Clock.UnixTime, Shutdown);
+            _mailbox = new(this);
         }
 
         #region IGameService Implementation
@@ -64,6 +70,8 @@ namespace MHServerEmu.Leaderboards
 
             while (State == GameServiceState.Running)
             {
+                _mailbox.ProcessMessages();
+
                 // Update state for instances
                 _database.UpdateState();
 
@@ -149,17 +157,70 @@ namespace MHServerEmu.Leaderboards
 
             //Logger.Trace($"Received NetMessageLeaderboardRequest for {GameDatabase.GetPrototypeNameByGuid((PrototypeGuid)request.DataQuery.LeaderboardId)}");
 
-            // TODO: Handle this in the leaderboard service thread and send the report to the game instance as a service message.
-            const ushort MuxChannel = 1;
-
-            Task.Run(() =>
-            {
-                client.SendMessage(MuxChannel, NetMessageLeaderboardReportClient.CreateBuilder()
-                    .SetReport(_database.GetLeaderboardReport(request))
-                    .Build());
-            });
+            _mailbox.PostLeaderboardRequest(client, request);
 
             return true;
+        }
+
+        internal LeaderboardAdminResult ReloadSchedule()
+        {
+            if (CanAdminister == false)
+                return LeaderboardAdminResult.Unavailable;
+
+            _database.ProcessLeaderboardScoreUpdateQueue();
+            if (_database.Save() == false)
+                return LeaderboardAdminResult.Failed;
+            return _database.ReloadAndReapplySchedule() ? LeaderboardAdminResult.Success : LeaderboardAdminResult.Failed;
+        }
+
+        internal void SendLeaderboardReport(IFrontendClient client, NetMessageLeaderboardRequest request)
+        {
+            const ushort MuxChannel = 1;
+            client.SendMessage(MuxChannel, NetMessageLeaderboardReportClient.CreateBuilder()
+                .SetReport(_database.GetLeaderboardReport(request))
+                .Build());
+        }
+
+        internal LeaderboardInstanceResponse GetInstance(long instanceId)
+        {
+            if (CanAdminister == false)
+                return new(LeaderboardAdminResult.Unavailable, null);
+
+            LeaderboardInstance instance = _database.FindInstance((ulong)instanceId);
+            return instance == null
+                ? new(LeaderboardAdminResult.NotFound, null)
+                : new(LeaderboardAdminResult.Success, ToSummary(instance));
+        }
+
+        internal LeaderboardResponse GetLeaderboard(long leaderboardId)
+        {
+            if (CanAdminister == false)
+                return new(LeaderboardAdminResult.Unavailable, null);
+
+            Leaderboard leaderboard = _database.GetLeaderboard((PrototypeGuid)leaderboardId);
+            return leaderboard == null
+                ? new(LeaderboardAdminResult.NotFound, null)
+                : new(LeaderboardAdminResult.Success, ToSummary(leaderboard));
+        }
+
+        internal LeaderboardsResponse GetLeaderboards()
+        {
+            if (CanAdminister == false)
+                return new(LeaderboardAdminResult.Unavailable, Array.Empty<LeaderboardSummary>());
+
+            return new(LeaderboardAdminResult.Success, Array.AsReadOnly(_database.GetLeaderboards().Select(ToSummary).ToArray()));
+        }
+
+        private static LeaderboardSummary ToSummary(Leaderboard leaderboard)
+        {
+            return new((long)leaderboard.LeaderboardId, leaderboard.Prototype.DataRef.GetNameFormatted(), leaderboard.Scheduler.IsEnabled,
+                leaderboard.Scheduler.StartTime, leaderboard.ActiveInstance == null ? null : ToSummary(leaderboard.ActiveInstance), leaderboard.ToString());
+        }
+
+        private static LeaderboardInstanceSummary ToSummary(LeaderboardInstance instance)
+        {
+            return new((long)instance.InstanceId, (long)instance.LeaderboardId, instance.LeaderboardPrototype.DataRef.GetNameFormatted(), instance.State,
+                instance.ActivationTime, instance.ExpirationTime, instance.ToString());
         }
     }
 }

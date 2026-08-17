@@ -112,7 +112,8 @@ namespace MHServerEmu
             }
 
             // Initialize the command system
-            CommandManager.Instance.Initialize(new AccountCommands(_accountManager));
+            LeaderboardService leaderboardService = new(_persistence.Players, _persistence.Leaderboards);
+            CommandManager.Instance.Initialize(new AccountCommands(_accountManager), new LeaderboardsCommands(leaderboardService.Administration));
             CommandManager.Instance.SetClientOutput(new FrontendClientChatOutput());
             ICommandParser.Instance = new CommandParser();
 
@@ -121,7 +122,7 @@ namespace MHServerEmu
             serverManager.Initialize();
 
             serverManager.RegisterGameService(new GameInstanceService(), GameServiceType.GameInstance);
-            serverManager.RegisterGameService(new LeaderboardService(_persistence.Players, _persistence.Leaderboards), GameServiceType.Leaderboard);
+            serverManager.RegisterGameService(leaderboardService, GameServiceType.Leaderboard);
             serverManager.RegisterGameService(new PlayerManagerService(_accountManager, _persistence.Players, _persistence.Guilds, _persistence.Capabilities), GameServiceType.PlayerManager);
             serverManager.RegisterGameService(new GroupingManagerService(), GameServiceType.GroupingManager);
             serverManager.RegisterGameService(new FrontendServer(), GameServiceType.Frontend);

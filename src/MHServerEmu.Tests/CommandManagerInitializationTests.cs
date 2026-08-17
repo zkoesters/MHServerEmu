@@ -4,6 +4,7 @@ using MHServerEmu.Commands.Implementations;
 using MHServerEmu.Core.Network;
 using MHServerEmu.DatabaseAccess.Json;
 using MHServerEmu.DatabaseAccess.Persistence;
+using MHServerEmu.Leaderboards.Administration;
 using MHServerEmu.PlayerManagement.Players;
 
 namespace MHServerEmu.Tests
@@ -38,6 +39,17 @@ namespace MHServerEmu.Tests
             Assert.True(commandManager.Initialize());
         }
 
+        [Fact]
+        public void Initialize_RegistersSuppliedLeaderboardCommandsWithoutParameterlessActivation()
+        {
+            LeaderboardsCommands commands = new(new StubLeaderboardAdministration());
+            CommandManager manager = new();
+
+            Assert.True(manager.Initialize(commands));
+            Assert.True(manager.TryGetCommandGroup("leaderboards", out CommandGroup registered));
+            Assert.Same(commands, registered);
+        }
+
         private static AccountManager CreateAccountManager()
         {
             return new(JsonDBManager.Instance, JsonDBManager.Instance, PersistenceCapabilities.Json, new TestAccountSecurityNotifier());
@@ -49,6 +61,14 @@ namespace MHServerEmu.Tests
         private sealed class TestAccountSecurityNotifier : IAccountSecurityNotifier
         {
             public void Notify(ulong accountId, AccountSecurityChangeType changeType) { }
+        }
+
+        private sealed class StubLeaderboardAdministration : ILeaderboardAdministration
+        {
+            public LeaderboardAdminResult ReloadSchedule() => LeaderboardAdminResult.Success;
+            public LeaderboardAdminResult TryGetInstance(long instanceId, out LeaderboardInstanceSummary summary) { summary = null; return LeaderboardAdminResult.NotFound; }
+            public LeaderboardAdminResult TryGetLeaderboard(long leaderboardId, out LeaderboardSummary summary) { summary = null; return LeaderboardAdminResult.NotFound; }
+            public LeaderboardAdminResult GetLeaderboards(out IReadOnlyList<LeaderboardSummary> summaries) { summaries = Array.Empty<LeaderboardSummary>(); return LeaderboardAdminResult.Success; }
         }
     }
 }

@@ -25,6 +25,27 @@ namespace MHServerEmu.Tests.Leaderboards
         }
 
         [Fact]
+        public void ProductionLeaderboardRuntime_DoesNotReferenceCompatibilitySingletons()
+        {
+            string root = FindRoot();
+            string[] paths =
+            [
+                "src/MHServerEmu.Leaderboards/LeaderboardDatabase.cs",
+                "src/MHServerEmu.Leaderboards/LeaderboardService.cs",
+                "src/MHServerEmu/Commands/Implementations/LeaderboardsCommands.cs",
+                "src/MHServerEmu.DatabaseAccess/SQLite/SQLiteLeaderboardDBManager.cs",
+            ];
+
+            string[] offenders = paths.Where(path =>
+                File.ReadAllText(Path.Combine(root, path)).Contains("LeaderboardDatabase" + ".Instance", StringComparison.Ordinal)
+                || File.ReadAllText(Path.Combine(root, path)).Contains("SQLiteLeaderboardDBManager" + ".Instance", StringComparison.Ordinal)
+                || File.ReadAllText(Path.Combine(root, path)).Contains("static LeaderboardDatabase Instance", StringComparison.Ordinal)
+                || File.ReadAllText(Path.Combine(root, path)).Contains("static SQLiteLeaderboardDBManager Instance", StringComparison.Ordinal)).ToArray();
+
+            Assert.Empty(offenders);
+        }
+
+        [Fact]
         public void LeaderboardInstance_DoesNotReadStaticConfiguration()
         {
             string root = FindRoot();
