@@ -15,13 +15,18 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
         private const long ReconciliationLockKey = unchecked((long)0x4C6561646572626FUL);
 
         private static Action<string> SnapshotMetaMappingCommandHook = null;
-        [ThreadStatic] private static Action LifecyclePreCommitHook = null;
+        private static readonly AsyncLocal<Action> LifecyclePreCommitHook = new();
         private readonly PostgreSQLStoreExecutor _executor;
 
         internal PostgreSQLLeaderboardStore(NpgsqlDataSource dataSource, PostgreSQLStoreExecutor executor)
         {
             ArgumentNullException.ThrowIfNull(dataSource);
             _executor = executor ?? throw new ArgumentNullException(nameof(executor));
+        }
+
+        internal static void SetLifecyclePreCommitHookForTest(Action hook)
+        {
+            LifecyclePreCommitHook.Value = hook;
         }
 
         public LeaderboardStoreResult Initialize()
@@ -434,7 +439,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
             Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Action<LeaderboardStoreResult>, Task> writeAsync, Action<LeaderboardStoreResult> abort)
         {
             await writeAsync(connection, transaction, cancellationToken, abort);
-            LifecyclePreCommitHook?.Invoke();
+            LifecyclePreCommitHook.Value?.Invoke();
         }
 
         private static async Task<DBLeaderboard> ReadDefinitionAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long leaderboardId, bool forUpdate, CancellationToken cancellationToken)
