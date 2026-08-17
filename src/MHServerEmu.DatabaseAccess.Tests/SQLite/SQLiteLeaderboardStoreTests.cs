@@ -64,6 +64,31 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
         }
 
         [Fact]
+        public void Initialize_VersionOneDatabaseWithMatchingNamesButMissingKeysAndForeignKeysReturnsFailedWithoutRewritingIt()
+        {
+            using TemporaryDirectory directory = new();
+            string databasePath = Path.Combine(directory.Path, "Leaderboards.db");
+            SQLiteConnection.CreateFile(databasePath);
+            Execute(databasePath, @"
+                PRAGMA user_version = 1;
+                CREATE TABLE Leaderboards (LeaderboardId INTEGER NOT NULL PRIMARY KEY, PrototypeName TEXT, ActiveInstanceId INTEGER, IsEnabled INTEGER, StartTime INTEGER, MaxResetCount INTEGER);
+                CREATE TABLE Instances (InstanceId INTEGER NOT NULL PRIMARY KEY, LeaderboardId INTEGER NOT NULL, State INTEGER, ActivationDate INTEGER, Visible INTEGER);
+                CREATE TABLE Entries (InstanceId INTEGER NOT NULL, ParticipantId INTEGER NOT NULL, Score INTEGER, HighScore INTEGER, RuleStates BLOB);
+                CREATE TABLE MetaEntries (LeaderboardId INTEGER NOT NULL, InstanceId INTEGER NOT NULL, SubLeaderboardId INTEGER NOT NULL, SubInstanceId INTEGER NOT NULL);
+                CREATE TABLE Rewards (LeaderboardId INTEGER NOT NULL, InstanceId INTEGER NOT NULL, ParticipantId INTEGER NOT NULL, Rank INTEGER NOT NULL, RewardId INTEGER NOT NULL, CreationDate INTEGER, RewardedDate INTEGER);
+                CREATE INDEX idx_instances_leaderboardid ON Instances (LeaderboardId);
+                CREATE UNIQUE INDEX idx_entries_instanceid ON Entries (InstanceId);
+                CREATE INDEX idx_rewards_participantid ON Rewards (ParticipantId);");
+            SQLiteLeaderboardDBManager store = new(databasePath);
+
+            Assert.Equal(LeaderboardStoreResult.Failed, store.Initialize());
+            Assert.Equal(1L, ReadScalar(databasePath, "PRAGMA user_version"));
+            Assert.Equal(0L, ReadScalar(databasePath, "SELECT COUNT(*) FROM pragma_foreign_key_list('Instances')"));
+            Assert.Equal(0L, ReadScalar(databasePath, "SELECT COUNT(*) FROM pragma_foreign_key_list('Entries')"));
+            Assert.Equal(0L, ReadScalar(databasePath, "SELECT COUNT(*) FROM pragma_index_list('Entries') WHERE name = 'idx_entries_instanceid' AND [unique] = 0"));
+        }
+
+        [Fact]
         public void LoadEntriesAndInstance_ReturnDetachedRowsAndExpectedMissingResults()
         {
             using SQLiteLeaderboardStoreFixture fixture = new();
@@ -141,6 +166,24 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
             Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.LoadVisibleInstances(1, first[^1].InstanceId, 3, out IReadOnlyList<DBLeaderboardInstance> second));
             Assert.Equal(expected.Skip(3), second.Select(instance => instance.InstanceId));
             Assert.Equal(expected, first.Concat(second).Select(instance => instance.InstanceId));
+        }
+
+        [Fact]
+        public void LoadVisibleInstances_PaginatesMixedSignedIdsAcrossNegativeAndPositiveCursorsWithoutRepeats()
+        {
+            using SQLiteLeaderboardStoreFixture fixture = new();
+            fixture.InsertDefinition(1, activeInstanceId: -1);
+            long[] expected = { -1, -2, long.MinValue, 7, 3, 1 };
+            foreach (long instanceId in expected)
+                fixture.InsertInstance(instanceId, 1, visible: true);
+
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.LoadVisibleInstances(1, 0, 2, out IReadOnlyList<DBLeaderboardInstance> first));
+            Assert.Equal(expected.Take(2), first.Select(instance => instance.InstanceId));
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.LoadVisibleInstances(1, first[^1].InstanceId, 2, out IReadOnlyList<DBLeaderboardInstance> second));
+            Assert.Equal(expected.Skip(2).Take(2), second.Select(instance => instance.InstanceId));
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.LoadVisibleInstances(1, second[^1].InstanceId, 2, out IReadOnlyList<DBLeaderboardInstance> third));
+            Assert.Equal(expected.Skip(4), third.Select(instance => instance.InstanceId));
+            Assert.Equal(expected, first.Concat(second).Concat(third).Select(instance => instance.InstanceId));
         }
 
         [Fact]
@@ -256,6 +299,32 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
             Assert.Equal(LeaderboardStoreResult.InvalidData, fixture.Store.ReconcileSchedule(invalid, out LeaderboardSnapshot snapshot));
             Assert.Empty(snapshot.Definitions);
             Assert.Equal(1, fixture.ReadScalar("SELECT IsEnabled FROM Leaderboards WHERE LeaderboardId = 1"));
+            Assert.Equal((int)LeaderboardState.eLBS_Created, fixture.ReadScalar("SELECT State FROM Instances WHERE InstanceId = 2"));
+        }
+
+        [Fact]
+        public void ReconcileSchedule_RejectsCrossLeaderboardActivePointerForRetainedDefinitionBeforeWriting()
+        {
+            using SQLiteLeaderboardStoreFixture fixture = new();
+            fixture.InsertDefinition(1, activeInstanceId: 2, enabled: true, startTime: 100);
+            fixture.InsertDefinition(2, activeInstanceId: 2, enabled: true);
+            fixture.InsertInstance(2, 2, visible: true, state: (int)LeaderboardState.eLBS_Created);
+            LeaderboardReconciliation invalid = new(
+                new[]
+                {
+                    new LeaderboardDefinitionSpec(1, "Leaderboard1", true, 900, 0),
+                    new LeaderboardDefinitionSpec(2, "Leaderboard2", true, 100, 0),
+                },
+                new[]
+                {
+                    new LeaderboardInstanceSpec(0, 1, LeaderboardState.eLBS_Created, 300, true),
+                    new LeaderboardInstanceSpec(0, 2, LeaderboardState.eLBS_Created, 300, true),
+                },
+                Array.Empty<LeaderboardMetaMapping>(), 500, 2);
+
+            Assert.Equal(LeaderboardStoreResult.InvalidData, fixture.Store.ReconcileSchedule(invalid, out LeaderboardSnapshot snapshot));
+            Assert.Empty(snapshot.Definitions);
+            Assert.Equal(100, fixture.ReadScalar("SELECT StartTime FROM Leaderboards WHERE LeaderboardId = 1"));
             Assert.Equal((int)LeaderboardState.eLBS_Created, fixture.ReadScalar("SELECT State FROM Instances WHERE InstanceId = 2"));
         }
 
