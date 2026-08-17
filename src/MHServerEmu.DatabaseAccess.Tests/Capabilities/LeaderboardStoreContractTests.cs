@@ -41,19 +41,35 @@ namespace MHServerEmu.DatabaseAccess.Tests.Capabilities
             MethodInfo[] methods = storeType.GetMethods();
 
             Assert.Equal(13, methods.Length);
-            Assert.Contains(methods, method => method.Name == nameof(ILeaderboardStore.Initialize)
-                && method.ReturnType == typeof(LeaderboardStoreResult));
-            Assert.Contains(methods, method => method.Name == nameof(ILeaderboardStore.LoadVisibleInstances)
-                && method.GetParameters().Select(parameter => parameter.ParameterType).SequenceEqual(new[]
-                {
-                    typeof(long), typeof(long), typeof(int), typeof(IReadOnlyList<DBLeaderboardInstance>).MakeByRefType(),
-                }));
-            Assert.Contains(methods, method => method.Name == nameof(ILeaderboardStore.FinalizeReward)
-                && method.ReturnType == typeof(RewardFinalizationResult)
-                && method.GetParameters().Select(parameter => parameter.ParameterType).SequenceEqual(new[]
-                {
-                    typeof(LeaderboardRewardKey), typeof(long),
-                }));
+            AssertMethod(methods, nameof(ILeaderboardStore.Initialize), typeof(LeaderboardStoreResult));
+            AssertMethod(methods, nameof(ILeaderboardStore.ReconcileSchedule), typeof(LeaderboardStoreResult), new[] { typeof(LeaderboardReconciliation), typeof(LeaderboardSnapshot).MakeByRefType() }, 1);
+            AssertMethod(methods, nameof(ILeaderboardStore.LoadEntries), typeof(LeaderboardStoreResult), new[] { typeof(long), typeof(IReadOnlyList<DBLeaderboardEntry>).MakeByRefType() }, 1);
+            AssertMethod(methods, nameof(ILeaderboardStore.LoadInstance), typeof(LeaderboardStoreResult), new[] { typeof(long), typeof(long), typeof(DBLeaderboardInstance).MakeByRefType() }, 2);
+            AssertMethod(methods, nameof(ILeaderboardStore.LoadVisibleInstances), typeof(LeaderboardStoreResult), new[] { typeof(long), typeof(long), typeof(int), typeof(IReadOnlyList<DBLeaderboardInstance>).MakeByRefType() }, 3);
+            AssertMethod(methods, nameof(ILeaderboardStore.ActivateInstance), typeof(LeaderboardStoreResult), new[] { typeof(LeaderboardActivation) });
+            AssertMethod(methods, nameof(ILeaderboardStore.SaveScoreBatch), typeof(LeaderboardStoreResult), new[] { typeof(LeaderboardScoreBatch) });
+            AssertMethod(methods, nameof(ILeaderboardStore.ExpireInstance), typeof(LeaderboardStoreResult), new[] { typeof(LeaderboardExpiration) });
+            AssertMethod(methods, nameof(ILeaderboardStore.RotateActiveInstance), typeof(LeaderboardStoreResult), new[] { typeof(LeaderboardRotation), typeof(DBLeaderboardInstance).MakeByRefType() }, 1);
+            AssertMethod(methods, nameof(ILeaderboardStore.MaintainVisibility), typeof(LeaderboardStoreResult), new[] { typeof(LeaderboardVisibilityRequest), typeof(LeaderboardVisibilitySnapshot).MakeByRefType() }, 1);
+            AssertMethod(methods, nameof(ILeaderboardStore.GenerateRewards), typeof(LeaderboardStoreResult), new[] { typeof(LeaderboardRewardGeneration) });
+            AssertMethod(methods, nameof(ILeaderboardStore.GetPendingRewards), typeof(LeaderboardStoreResult), new[] { typeof(long), typeof(IReadOnlyList<DBRewardEntry>).MakeByRefType() }, 1);
+            AssertMethod(methods, nameof(ILeaderboardStore.FinalizeReward), typeof(RewardFinalizationResult), new[] { typeof(LeaderboardRewardKey), typeof(long) });
+        }
+
+        [Theory]
+        [InlineData(0)]
+        [InlineData(101)]
+        public void ValidateVisibleInstancesLimit_RejectsValuesOutsidePageBounds(int limit)
+        {
+            Assert.Throws<ArgumentOutOfRangeException>(() => LeaderboardStoreValidator.ValidateVisibleInstancesLimit(limit));
+        }
+
+        [Theory]
+        [InlineData(1)]
+        [InlineData(100)]
+        public void ValidateVisibleInstancesLimit_AcceptsPageBoundaries(int limit)
+        {
+            LeaderboardStoreValidator.ValidateVisibleInstancesLimit(limit);
         }
 
         [Theory]
@@ -72,6 +88,21 @@ namespace MHServerEmu.DatabaseAccess.Tests.Capabilities
         public void PersistenceFatalFailure_RejectsBlankOperation(string operation)
         {
             Assert.Throws<ArgumentException>(() => new PersistenceFatalFailure("persistence_failure", operation));
+        }
+
+        private static void AssertMethod(IEnumerable<MethodInfo> methods, string name, Type returnType, Type[] parameterTypes = null, params int[] outParameterIndices)
+        {
+            parameterTypes ??= Array.Empty<Type>();
+            MethodInfo method = Assert.Single(methods.Where(method => method.Name == name
+                && method.ReturnType == returnType
+                && method.GetParameters().Select(parameter => parameter.ParameterType).SequenceEqual(parameterTypes)));
+
+            int[] actualOutParameterIndices = method.GetParameters()
+                .Select((parameter, index) => (parameter, index))
+                .Where(value => value.parameter.IsOut)
+                .Select(value => value.index)
+                .ToArray();
+            Assert.Equal(outParameterIndices, actualOutParameterIndices);
         }
     }
 }
