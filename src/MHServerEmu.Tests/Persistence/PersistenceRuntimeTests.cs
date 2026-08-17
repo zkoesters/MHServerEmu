@@ -10,9 +10,7 @@ namespace MHServerEmu.Tests.Persistence
         public async Task DisposeAsync_DisposesOwnedLifetimeOnce()
         {
             int disposalCount = 0;
-            JsonDBManager manager = JsonDBManager.Instance;
-            PersistenceServices services = new(manager, manager, manager, new SQLiteLeaderboardDBManager("unused.db"), PersistenceCapabilities.Json);
-            PersistenceRuntime runtime = new(services, () =>
+            PersistenceRuntime runtime = new(CreateServices(), () =>
             {
                 disposalCount++;
                 return ValueTask.CompletedTask;
@@ -22,6 +20,54 @@ namespace MHServerEmu.Tests.Persistence
             await runtime.DisposeAsync();
 
             Assert.Equal(1, disposalCount);
+        }
+
+        [Fact]
+        public async Task DisposeAsync_ConcurrentCallersAwaitTheSameCleanup()
+        {
+            TaskCompletionSource started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            TaskCompletionSource release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            int disposalCount = 0;
+            PersistenceRuntime runtime = new(CreateServices(), async () =>
+            {
+                disposalCount++;
+                started.SetResult();
+                await release.Task;
+            });
+
+            Task first = runtime.DisposeAsync().AsTask();
+            await started.Task;
+            Task second = runtime.DisposeAsync().AsTask();
+
+            Assert.False(second.IsCompleted);
+            release.SetResult();
+            await Task.WhenAll(first, second);
+
+            Assert.Equal(1, disposalCount);
+        }
+
+        [Fact]
+        public async Task DisposeAsync_FailedCleanupCanBeRetried()
+        {
+            int attempts = 0;
+            PersistenceRuntime runtime = new(CreateServices(), () =>
+            {
+                attempts++;
+                return attempts == 1
+                    ? ValueTask.FromException(new InvalidOperationException("cleanup failed"))
+                    : ValueTask.CompletedTask;
+            });
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() => runtime.DisposeAsync().AsTask());
+            await runtime.DisposeAsync();
+
+            Assert.Equal(2, attempts);
+        }
+
+        private static PersistenceServices CreateServices()
+        {
+            JsonDBManager manager = JsonDBManager.Instance;
+            return new PersistenceServices(manager, manager, manager, new SQLiteLeaderboardDBManager("unused.db"), PersistenceCapabilities.Json);
         }
     }
 }
