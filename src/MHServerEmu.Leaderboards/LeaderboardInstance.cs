@@ -355,10 +355,8 @@ namespace MHServerEmu.Leaderboards
                     _entryMap[entry.ParticipantId] = entry;
                 }
 
-                _sorted = true;
-
-                UpdatePercentileBuckets();
-                UpdateCachedTableData();
+                _sorted = false;
+                SortEntries();
 
                 ScheduleNextAutoSave();
             }
@@ -380,10 +378,8 @@ namespace MHServerEmu.Leaderboards
                 if (_sorted)
                     return;
 
-                if (leaderboardProto.RankingRule == LeaderboardRankingRule.Ascending)
-                    Entries.Sort((a, b) => a.Score.CompareTo(b.Score));
-                else
-                    Entries.Sort((a, b) => b.Score.CompareTo(a.Score));
+                Entries.Sort((a, b) => LeaderboardRanking.CompareEntries(a.Score, a.ParticipantId, b.Score, b.ParticipantId,
+                    leaderboardProto.RankingRule == LeaderboardRankingRule.Ascending));
 
                 _sorted = true;
 

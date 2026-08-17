@@ -40,6 +40,16 @@ namespace MHServerEmu.Tests.Leaderboards
             Assert.Equal(2, source.Split("leaderboard.GetInstance(instanceId, true)", StringSplitOptions.None).Length - 1);
         }
 
+        [Fact]
+        public void LifecycleTick_DrainsAcceptedScoresBeforeExpiringInstances()
+        {
+            string source = File.ReadAllText(Path.Combine(FindRoot(), "src/MHServerEmu.Leaderboards/LeaderboardDatabase.cs"));
+            int drainScores = source.IndexOf("ProcessLeaderboardScoreUpdateQueue();", StringComparison.Ordinal);
+            int updateLifecycle = source.IndexOf("leaderboard.UpdateState(updateTime);", StringComparison.Ordinal);
+
+            Assert.InRange(drainScores, 0, updateLifecycle - 1);
+        }
+
         private static string FindRoot()
         {
             DirectoryInfo directory = new(AppContext.BaseDirectory);
