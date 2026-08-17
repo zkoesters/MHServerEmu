@@ -31,13 +31,16 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
         }
 
         [Fact]
-        public void LoadEmbedded_ReturnsFoundationAndCoreMigrations()
+        public void LoadEmbedded_ReturnsFoundationCoreAndLeaderboardMigrations()
         {
             PostgreSQLMigrationCatalog catalog = PostgreSQLMigrationCatalog.LoadEmbedded();
             Assembly assembly = typeof(PostgreSQLMigrationCatalog).Assembly;
             using Stream stream = assembly.GetManifestResourceStream("Migrations.0001_InitializePersistence.sql");
             using MemoryStream bytes = new();
             stream.CopyTo(bytes);
+            using Stream leaderboardStream = assembly.GetManifestResourceStream("Migrations.0003_LeaderboardPersistence.sql");
+            using MemoryStream leaderboardBytes = new();
+            leaderboardStream.CopyTo(leaderboardBytes);
 
             Assert.Collection(catalog.Migrations,
                 migration =>
@@ -46,7 +49,12 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
                     Assert.Equal("InitializePersistence", migration.Name);
                     Assert.Equal(Convert.ToHexString(SHA256.HashData(bytes.ToArray())), migration.Checksum);
                 },
-                migration => Assert.Equal((2, "CorePersistence"), (migration.Version, migration.Name)));
+                migration => Assert.Equal((2, "CorePersistence"), (migration.Version, migration.Name)),
+                migration =>
+                {
+                    Assert.Equal((3, "LeaderboardPersistence"), (migration.Version, migration.Name));
+                    Assert.Equal(Convert.ToHexString(SHA256.HashData(leaderboardBytes.ToArray())), migration.Checksum);
+                });
         }
 
         [Theory]
