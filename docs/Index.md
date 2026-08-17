@@ -12,6 +12,8 @@ If this is your first time using MHServerEmu, you may be interested in this.
 
 - [Advanced Setup](./Setup/AdvancedSetup.md) - advanced setup instructions (enabling accounts, remote connections, etc.).
 
+- [PostgreSQL Setup](./Setup/PostgreSQL.md) - fresh-install PostgreSQL deployment, backup, restore, and upgrade instructions.
+
 ## Server Emulator
 
 MHServerEmu-specific topics.
