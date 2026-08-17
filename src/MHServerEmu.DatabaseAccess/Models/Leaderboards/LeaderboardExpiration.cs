@@ -12,6 +12,9 @@ namespace MHServerEmu.DatabaseAccess.Models.Leaderboards
 
         public LeaderboardExpiration(long leaderboardId, long expectedActiveInstanceId, long instanceId, LeaderboardState expectedState, IEnumerable<LeaderboardEntryWrite> entries)
         {
+            if (expectedState != LeaderboardState.eLBS_Active)
+                throw new ArgumentException("Expected state must be active.", nameof(expectedState));
+
             LeaderboardId = leaderboardId;
             ExpectedActiveInstanceId = expectedActiveInstanceId;
             InstanceId = instanceId;

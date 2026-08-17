@@ -154,6 +154,39 @@ namespace MHServerEmu.DatabaseAccess.Tests.Models
         }
 
         [Fact]
+        public void Expiration_RejectsUnexpectedState()
+        {
+            Assert.Throws<ArgumentException>(() => new LeaderboardExpiration(10, 11, 11, LeaderboardState.eLBS_Created, new[] { TestEntry(11, 22, 33, new byte[] { 44 }) }));
+        }
+
+        [Fact]
+        public void Rotation_RejectsNextInstanceForAnotherLeaderboard()
+        {
+            LeaderboardInstanceSpec nextInstance = new(12, 99, LeaderboardState.eLBS_Created, 100, true);
+
+            Assert.Throws<ArgumentException>(() => CreateRotation(nextInstance, new LeaderboardMetaMapping(10, 12, 20, 21)));
+        }
+
+        [Fact]
+        public void Rotation_RejectsMetaMappingForAnotherLeaderboardOrInstance()
+        {
+            LeaderboardInstanceSpec nextInstance = new(12, 10, LeaderboardState.eLBS_Created, 100, true);
+
+            Assert.Throws<ArgumentException>(() => CreateRotation(nextInstance, new LeaderboardMetaMapping(99, 12, 20, 21)));
+            Assert.Throws<ArgumentException>(() => CreateRotation(nextInstance, new LeaderboardMetaMapping(10, 13, 20, 21)));
+        }
+
+        [Fact]
+        public void Rotation_RejectsDuplicateSubLeaderboardMappings()
+        {
+            LeaderboardInstanceSpec nextInstance = new(12, 10, LeaderboardState.eLBS_Created, 100, true);
+            LeaderboardMetaMapping first = new(10, 12, 20, 21);
+            LeaderboardMetaMapping duplicate = new(10, 12, 20, 22);
+
+            Assert.Throws<ArgumentException>(() => CreateRotation(nextInstance, first, duplicate));
+        }
+
+        [Fact]
         public void RewardGeneration_RejectsDuplicateParticipantRewards()
         {
             LeaderboardRewardWrite reward = new(10, 11, 12, 13, 1, 14);
@@ -225,6 +258,11 @@ namespace MHServerEmu.DatabaseAccess.Tests.Models
                 HighScore = score,
                 RuleStates = ruleStates,
             };
+        }
+
+        private static LeaderboardRotation CreateRotation(LeaderboardInstanceSpec nextInstance, params LeaderboardMetaMapping[] metaMappings)
+        {
+            return new LeaderboardRotation(10, 11, LeaderboardState.eLBS_Active, LeaderboardState.eLBS_Expired, nextInstance, LeaderboardState.eLBS_Created, metaMappings);
         }
 
         private static DBLeaderboardInstance TestInstance(long instanceId, long leaderboardId)
