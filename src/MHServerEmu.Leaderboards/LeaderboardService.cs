@@ -167,9 +167,6 @@ namespace MHServerEmu.Leaderboards
             if (CanAdminister == false)
                 return LeaderboardAdminResult.Unavailable;
 
-            _database.ProcessLeaderboardScoreUpdateQueue();
-            if (_database.Save() == false)
-                return LeaderboardAdminResult.Failed;
             return _database.ReloadAndReapplySchedule() ? LeaderboardAdminResult.Success : LeaderboardAdminResult.Failed;
         }
 
