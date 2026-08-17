@@ -32,6 +32,11 @@ namespace MHServerEmu.Leaderboards
         private readonly Dictionary<PrototypeGuid, Leaderboard> _metaLeaderboards = new();
         private readonly Dictionary<ulong, string> _playerNames = new();
         private IPlayerStore _players;
+        private readonly ILeaderboardStore _store;
+        private readonly ILeaderboardPlayerNameResolver _nameResolver;
+        private readonly ILeaderboardPrototypeCatalog _catalog;
+        private readonly ILeaderboardPublisher _publisher;
+        private readonly LeaderboardRuntimeOptions _options;
 
         private readonly DoubleBufferQueue<ServiceMessage.LeaderboardScoreUpdateBatch> _scoreUpdateQueue = new();
 
@@ -41,6 +46,77 @@ namespace MHServerEmu.Leaderboards
         public static LeaderboardDatabase Instance { get; } = new();
 
         private LeaderboardDatabase() { }
+
+        public LeaderboardDatabase(ILeaderboardStore store, ILeaderboardPlayerNameResolver nameResolver,
+            ILeaderboardPrototypeCatalog catalog, ILeaderboardPublisher publisher, LeaderboardRuntimeOptions options)
+        {
+            _store = store ?? throw new ArgumentNullException(nameof(store));
+            _nameResolver = nameResolver ?? throw new ArgumentNullException(nameof(nameResolver));
+            _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
+            _publisher = publisher ?? throw new ArgumentNullException(nameof(publisher));
+            _options = options ?? throw new ArgumentNullException(nameof(options));
+        }
+
+        /// <summary>
+        /// Initializes an explicitly owned runtime from the store's committed schedule snapshot.
+        /// </summary>
+        public bool Initialize()
+        {
+            if (_store == null)
+                throw new InvalidOperationException("The compatibility database requires its legacy initializer.");
+
+            // Schedule generation and validation must succeed before a persistence adapter is contacted.
+            LeaderboardScheduleLoader loader = new(_catalog, Clock.UtcNowPrecise);
+            if (loader.TryLoadOrCreate(_options.SchedulePath, _options.NormalArchiveLimit, out LeaderboardReconciliation reconciliation) == false)
+                return false;
+
+            if (_store.Initialize() != LeaderboardStoreResult.Success)
+                return false;
+            if (_store.ReconcileSchedule(reconciliation, out LeaderboardSnapshot snapshot) != LeaderboardStoreResult.Success)
+                return false;
+
+            lock (_leaderboardLock)
+            {
+                _leaderboards.Clear();
+                _metaLeaderboards.Clear();
+                IReadOnlyList<LeaderboardInstanceSpec> instances = snapshot.NonterminalInstances.Concat(snapshot.NormalArchiveInstances).ToArray();
+                foreach (LeaderboardDefinitionSpec definition in snapshot.Definitions)
+                {
+                    if (_catalog.TryGetPrototype(definition.LeaderboardId, out LeaderboardPrototype prototype) == false)
+                        continue;
+
+                    DBLeaderboardInstance[] definitionInstances = instances.Where(instance => instance.LeaderboardId == definition.LeaderboardId)
+                        .GroupBy(instance => instance.InstanceId)
+                        .Select(group => group.First())
+                        .Select(instance => new DBLeaderboardInstance
+                        {
+                            InstanceId = instance.InstanceId,
+                            LeaderboardId = instance.LeaderboardId,
+                            State = instance.State,
+                            ActivationDate = instance.ActivationDate,
+                            Visible = instance.Visible,
+                        }).ToArray();
+                    long activeInstanceId = definitionInstances.Where(instance => instance.State is LeaderboardState.eLBS_Created or LeaderboardState.eLBS_Active)
+                        .OrderByDescending(instance => unchecked((ulong)instance.InstanceId)).Select(instance => instance.InstanceId).FirstOrDefault();
+                    Leaderboard leaderboard = new(this, prototype, new DBLeaderboard
+                    {
+                        LeaderboardId = definition.LeaderboardId,
+                        PrototypeName = definition.PrototypeName,
+                        IsEnabled = definition.IsEnabled,
+                        StartTime = definition.StartTime,
+                        MaxResetCount = definition.MaxResetCount,
+                        ActiveInstanceId = activeInstanceId,
+                    }, definitionInstances);
+                    if (prototype.IsMetaLeaderboard)
+                        _metaLeaderboards.Add((PrototypeGuid)definition.LeaderboardId, leaderboard);
+                    else
+                        _leaderboards.Add((PrototypeGuid)definition.LeaderboardId, leaderboard);
+                }
+            }
+
+            IsInitialized = true;
+            return true;
+        }
 
         /// <summary>
         /// Initializes the <see cref="LeaderboardDatabase"/> instance.
@@ -404,6 +480,8 @@ namespace MHServerEmu.Leaderboards
         {
             lock (_leaderboardLock)
             {
+                if (_nameResolver != null)
+                    return _nameResolver.GetPlayerName(participantId);
                 // Check name cache
                 if (_playerNames.TryGetValue(participantId, out string playerName))
                     return playerName;
@@ -418,6 +496,15 @@ namespace MHServerEmu.Leaderboards
                 _playerNames[participantId] = playerName;
                 return playerName;
             }
+        }
+
+        internal bool LoadEntries(long instanceId, out IReadOnlyList<DBLeaderboardEntry> entries)
+        {
+            if (_store != null)
+                return _store.LoadEntries(instanceId, out entries) == LeaderboardStoreResult.Success;
+
+            entries = DBManager.GetEntries(instanceId, false);
+            return true;
         }
 
         /// <summary>
@@ -613,6 +700,12 @@ namespace MHServerEmu.Leaderboards
                 leaderboards.AddRange(_leaderboards.Values);
                 leaderboards.AddRange(_metaLeaderboards.Values);
             }
+        }
+
+        public IReadOnlyList<Leaderboard> GetLeaderboards()
+        {
+            lock (_leaderboardLock)
+                return _leaderboards.Values.Concat(_metaLeaderboards.Values).ToList();
         }
 
         /// <summary>

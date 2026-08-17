@@ -1,9 +1,9 @@
 ﻿using Gazillion;
 using MHServerEmu.Core.Config;
+using MHServerEmu.Core.Helpers;
 using MHServerEmu.Core.Logging;
 using MHServerEmu.Core.Network;
 using MHServerEmu.DatabaseAccess;
-using MHServerEmu.DatabaseAccess.SQLite;
 using MHServerEmu.Games;
 
 namespace MHServerEmu.Leaderboards
@@ -17,17 +17,25 @@ namespace MHServerEmu.Leaderboards
 
         private static readonly Logger Logger = LogManager.CreateLogger();
 
-        private readonly LeaderboardDatabase _database = LeaderboardDatabase.Instance;
-        private readonly IPlayerStore _players;
-        private readonly LeaderboardRewardManager _rewardManager = new();
+        private readonly LeaderboardDatabase _database;
+        private readonly LeaderboardRewardManager _rewardManager;
 
         private bool _isEnabled;
 
         public GameServiceState State { get; private set; } = GameServiceState.Created;
 
-        public LeaderboardService(IPlayerStore players)
+        public LeaderboardService(IPlayerStore players, ILeaderboardStore leaderboards)
         {
-            _players = players ?? throw new ArgumentNullException(nameof(players));
+            if (players == null) throw new ArgumentNullException(nameof(players));
+            if (leaderboards == null) throw new ArgumentNullException(nameof(leaderboards));
+
+            LeaderboardsConfig config = ConfigManager.Instance.GetConfig<LeaderboardsConfig>();
+            string schedulePath = Path.Combine(FileHelper.DataDirectory, "Leaderboards", config.ScheduleFile);
+            ILeaderboardPublisher publisher = new ServerManagerLeaderboardPublisher();
+            _database = new LeaderboardDatabase(leaderboards, new PlayerStoreLeaderboardNameResolver(players),
+                new GameDatabaseLeaderboardPrototypeCatalog(), publisher,
+                new LeaderboardRuntimeOptions(schedulePath, config.NormalArchiveLimit));
+            _rewardManager = new LeaderboardRewardManager(leaderboards, publisher);
         }
 
         #region IGameService Implementation
@@ -45,7 +53,11 @@ namespace MHServerEmu.Leaderboards
                 return;
             }
 
-            _database.Initialize(SQLiteLeaderboardDBManager.Instance, _players);
+            if (_database.Initialize() == false)
+            {
+                State = GameServiceState.Shutdown;
+                return;
+            }
 
             State = GameServiceState.Running;
 

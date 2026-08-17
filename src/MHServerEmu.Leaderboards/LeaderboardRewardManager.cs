@@ -3,6 +3,7 @@ using MHServerEmu.Core.Network;
 using MHServerEmu.Core.System.Time;
 using MHServerEmu.DatabaseAccess.Models.Leaderboards;
 using MHServerEmu.DatabaseAccess.SQLite;
+using MHServerEmu.DatabaseAccess;
 
 namespace MHServerEmu.Leaderboards
 {
@@ -22,9 +23,17 @@ namespace MHServerEmu.Leaderboards
         private Queue<ServiceMessage.LeaderboardRewardConfirmation> _processConfirmationQueue = new();
 
         private readonly object _queueLock = new();
+        private readonly ILeaderboardStore _store;
+        private readonly ILeaderboardPublisher _publisher;
 
         public LeaderboardRewardManager()
         {
+        }
+
+        public LeaderboardRewardManager(ILeaderboardStore store, ILeaderboardPublisher publisher)
+        {
+            _store = store ?? throw new ArgumentNullException(nameof(store));
+            _publisher = publisher ?? throw new ArgumentNullException(nameof(publisher));
         }
 
         /// <summary>
@@ -92,7 +101,13 @@ namespace MHServerEmu.Leaderboards
                 return Logger.WarnReturn(false, $"QueryRewards(): Participant 0x{participantId:X} already has pending rewards");
 
             // Query the database and exit early if there are no rewards to give
-            List<DBRewardEntry> dbRewards = SQLiteLeaderboardDBManager.Instance.GetRewards((long)participantId);
+            List<DBRewardEntry> dbRewards;
+            if (_store == null)
+                dbRewards = SQLiteLeaderboardDBManager.Instance.GetRewards((long)participantId);
+            else if (_store.GetPendingRewards((long)participantId, out IReadOnlyList<DBRewardEntry> rewards) == LeaderboardStoreResult.Success)
+                dbRewards = rewards.ToList();
+            else
+                return false;
             if (dbRewards.Count == 0)
                 return true;
 
@@ -109,7 +124,10 @@ namespace MHServerEmu.Leaderboards
             }
 
             ServiceMessage.LeaderboardRewardRequestResponse requestResponse = new(participantId, rewardEntries);
-            ServerManager.Instance.SendMessageToService(GameServiceType.GameInstance, requestResponse);
+            if (_publisher == null)
+                ServerManager.Instance.SendMessageToService(GameServiceType.GameInstance, requestResponse);
+            else
+                ServerManager.Instance.SendMessageToService(GameServiceType.GameInstance, requestResponse);
 
             return true;
         }
@@ -141,8 +159,15 @@ namespace MHServerEmu.Leaderboards
                 return Logger.WarnReturn(false, $"FinalizeReward(): Failed to find reward for leaderboardId={leaderboardId}, instanceId={instanceId}, participant=0x{participantId:X}");
 
             // Update reward in the database
-            reward.UpdateRewardedDate();
-            SQLiteLeaderboardDBManager.Instance.UpdateReward(reward);
+            if (_store == null)
+            {
+                reward.UpdateRewardedDate();
+                SQLiteLeaderboardDBManager.Instance.UpdateReward(reward);
+            }
+            else if (_store.FinalizeReward(new LeaderboardRewardKey(leaderboardId, instanceId, (long)participantId), (long)Clock.UnixTime.TotalSeconds) is not (RewardFinalizationResult.Finalized or RewardFinalizationResult.AlreadyFinalized))
+            {
+                return false;
+            }
 
             // Finish this batch of rewards if we have received confirmations for everything
             if (rewards.Count == 0)
