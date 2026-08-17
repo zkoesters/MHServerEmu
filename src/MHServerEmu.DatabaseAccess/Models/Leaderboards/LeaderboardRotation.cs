@@ -14,6 +14,15 @@ namespace MHServerEmu.DatabaseAccess.Models.Leaderboards
 
         public LeaderboardRotation(long leaderboardId, long expectedActiveInstanceId, LeaderboardState expectedActiveState, LeaderboardState previousState, LeaderboardInstanceSpec nextInstance, LeaderboardState nextState, IEnumerable<LeaderboardMetaMapping> metaMappings)
         {
+            if (expectedActiveState != LeaderboardState.eLBS_Expired)
+                throw new ArgumentException("Expected active state must be expired.", nameof(expectedActiveState));
+
+            if (previousState != LeaderboardState.eLBS_Expired)
+                throw new ArgumentException("Previous state must remain expired for reward generation.", nameof(previousState));
+
+            if (nextState != LeaderboardState.eLBS_Created)
+                throw new ArgumentException("Next state must be created.", nameof(nextState));
+
             LeaderboardId = leaderboardId;
             ExpectedActiveInstanceId = expectedActiveInstanceId;
             ExpectedActiveState = expectedActiveState;
@@ -21,6 +30,9 @@ namespace MHServerEmu.DatabaseAccess.Models.Leaderboards
             NextInstance = nextInstance ?? throw new ArgumentNullException(nameof(nextInstance));
             if (NextInstance.LeaderboardId != LeaderboardId)
                 throw new ArgumentException("Next instance must belong to the requested leaderboard.", nameof(nextInstance));
+
+            if (NextInstance.State != NextState)
+                throw new ArgumentException("Next instance state must match the requested next state.", nameof(nextInstance));
 
             NextState = nextState;
             MetaMappings = LeaderboardStoreRecords.Copy(metaMappings, nameof(metaMappings));
