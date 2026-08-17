@@ -15,6 +15,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
         private const long ReconciliationLockKey = unchecked((long)0x4C6561646572626FUL);
 
         private static Action<string> SnapshotMetaMappingCommandHook = null;
+        [ThreadStatic] private static Action LifecyclePreCommitHook = null;
         private readonly PostgreSQLStoreExecutor _executor;
 
         internal PostgreSQLLeaderboardStore(NpgsqlDataSource dataSource, PostgreSQLStoreExecutor executor)
@@ -247,14 +248,342 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
             }
         }
 
-        public LeaderboardStoreResult ActivateInstance(LeaderboardActivation request) => LeaderboardStoreResult.Failed;
-        public LeaderboardStoreResult SaveScoreBatch(LeaderboardScoreBatch request) => LeaderboardStoreResult.Failed;
-        public LeaderboardStoreResult ExpireInstance(LeaderboardExpiration request) => LeaderboardStoreResult.Failed;
-        public LeaderboardStoreResult RotateActiveInstance(LeaderboardRotation request, out DBLeaderboardInstance committedInstance) { committedInstance = null; return LeaderboardStoreResult.Failed; }
+        public LeaderboardStoreResult ActivateInstance(LeaderboardActivation request)
+        {
+            if (request == null)
+                return LeaderboardStoreResult.InvalidData;
+
+            return ExecuteLifecycleWrite("LeaderboardActivate", request.LeaderboardId, async (connection, transaction, cancellationToken, abort) =>
+            {
+                await LockRequestedDefinitionsAsync(connection, transaction, [request.LeaderboardId], cancellationToken);
+                DBLeaderboard definition = await ReadDefinitionAsync(connection, transaction, request.LeaderboardId, true, cancellationToken);
+                if (definition == null)
+                    abort(LeaderboardStoreResult.NotFound);
+                DBLeaderboardInstance instance = await ReadInstanceAsync(connection, transaction, request.InstanceId, true, cancellationToken);
+                if (instance == null)
+                    abort(LeaderboardStoreResult.NotFound);
+                if (instance.LeaderboardId != request.LeaderboardId)
+                    abort(LeaderboardStoreResult.InvalidData);
+                if (definition.ActiveInstanceId != request.ExpectedActiveInstanceId || request.InstanceId != definition.ActiveInstanceId)
+                    abort(LeaderboardStoreResult.StaleState);
+                if (instance.State == LeaderboardState.eLBS_Active)
+                    return;
+                if (instance.State != request.ExpectedState)
+                    abort(LeaderboardStoreResult.StaleState);
+                if (await UpdateInstanceStateAsync(connection, transaction, request.InstanceId, request.ExpectedState, LeaderboardState.eLBS_Active, cancellationToken) == false)
+                    abort(LeaderboardStoreResult.StaleState);
+            });
+        }
+
+        public LeaderboardStoreResult SaveScoreBatch(LeaderboardScoreBatch request)
+        {
+            if (request == null || request.Entries.GroupBy(entry => entry.ParticipantId).Any(group => group.Skip(1).Any()))
+                return LeaderboardStoreResult.InvalidData;
+
+            return ExecuteLifecycleWrite("LeaderboardSaveScores", request.LeaderboardId, async (connection, transaction, cancellationToken, abort) =>
+            {
+                await LockRequestedDefinitionsAsync(connection, transaction, [request.LeaderboardId], cancellationToken);
+                DBLeaderboard definition = await ReadDefinitionAsync(connection, transaction, request.LeaderboardId, true, cancellationToken);
+                if (definition == null)
+                    abort(LeaderboardStoreResult.NotFound);
+                DBLeaderboardInstance instance = await ReadInstanceAsync(connection, transaction, request.InstanceId, true, cancellationToken);
+                if (instance == null)
+                    abort(LeaderboardStoreResult.NotFound);
+                if (instance.LeaderboardId != request.LeaderboardId)
+                    abort(LeaderboardStoreResult.InvalidData);
+                if (definition.ActiveInstanceId != request.InstanceId || instance.State != request.ExpectedState)
+                    abort(LeaderboardStoreResult.StaleState);
+                await UpsertEntriesAsync(connection, transaction, request.InstanceId, request.Entries, true, cancellationToken);
+            });
+        }
+
+        public LeaderboardStoreResult ExpireInstance(LeaderboardExpiration request)
+        {
+            if (request == null || request.Entries.GroupBy(entry => entry.ParticipantId).Any(group => group.Skip(1).Any()))
+                return LeaderboardStoreResult.InvalidData;
+
+            return ExecuteLifecycleWrite("LeaderboardExpire", request.LeaderboardId, async (connection, transaction, cancellationToken, abort) =>
+            {
+                await LockRequestedDefinitionsAsync(connection, transaction, [request.LeaderboardId], cancellationToken);
+                DBLeaderboard definition = await ReadDefinitionAsync(connection, transaction, request.LeaderboardId, true, cancellationToken);
+                if (definition == null)
+                    abort(LeaderboardStoreResult.NotFound);
+                DBLeaderboardInstance instance = await ReadInstanceAsync(connection, transaction, request.InstanceId, true, cancellationToken);
+                if (instance == null)
+                    abort(LeaderboardStoreResult.NotFound);
+                if (instance.LeaderboardId != request.LeaderboardId)
+                    abort(LeaderboardStoreResult.InvalidData);
+
+                List<DBLeaderboardEntry> existingEntries = await ReadEntriesForUpdateAsync(connection, transaction, request.InstanceId, cancellationToken);
+                if (instance.State == LeaderboardState.eLBS_Expired)
+                {
+                    if (HasExactEntries(existingEntries, request.Entries) == false)
+                        abort(LeaderboardStoreResult.Conflict);
+                    return;
+                }
+                if (definition.ActiveInstanceId != request.ExpectedActiveInstanceId || request.InstanceId != definition.ActiveInstanceId
+                    || instance.State != request.ExpectedState)
+                    abort(LeaderboardStoreResult.StaleState);
+                if (existingEntries.Any(existing => request.Entries.Any(requested => requested.ParticipantId == existing.ParticipantId && EntriesMatch(existing, requested)) == false))
+                    abort(LeaderboardStoreResult.Conflict);
+
+                await UpsertEntriesAsync(connection, transaction, request.InstanceId,
+                    request.Entries.Where(requested => existingEntries.All(existing => existing.ParticipantId != requested.ParticipantId)).ToArray(), false, cancellationToken);
+                if (await UpdateInstanceStateAsync(connection, transaction, request.InstanceId, request.ExpectedState, LeaderboardState.eLBS_Expired, cancellationToken) == false)
+                    abort(LeaderboardStoreResult.StaleState);
+            });
+        }
+
+        public LeaderboardStoreResult RotateActiveInstance(LeaderboardRotation request, out DBLeaderboardInstance committedInstance)
+        {
+            committedInstance = null;
+            if (request == null)
+                return LeaderboardStoreResult.InvalidData;
+
+            DBLeaderboardInstance committed = null;
+            LeaderboardStoreResult result = ExecuteLifecycleWrite("LeaderboardRotate", request.LeaderboardId, async (connection, transaction, cancellationToken, abort) =>
+            {
+                await LockRequestedDefinitionsAsync(connection, transaction, request.MetaMappings.Select(mapping => mapping.SubLeaderboardId).Append(request.LeaderboardId), cancellationToken);
+                DBLeaderboard definition = await ReadDefinitionAsync(connection, transaction, request.LeaderboardId, true, cancellationToken);
+                if (definition == null)
+                    abort(LeaderboardStoreResult.NotFound);
+                DBLeaderboardInstance previous = await ReadInstanceAsync(connection, transaction, request.ExpectedActiveInstanceId, true, cancellationToken);
+                if (previous == null)
+                    abort(LeaderboardStoreResult.NotFound);
+                if (previous.LeaderboardId != request.LeaderboardId)
+                    abort(LeaderboardStoreResult.InvalidData);
+
+                if (definition.ActiveInstanceId != request.ExpectedActiveInstanceId)
+                {
+                    if (TryGetReplayInstanceId(request, out long replayInstanceId) == false || definition.ActiveInstanceId != replayInstanceId)
+                        abort(LeaderboardStoreResult.StaleState);
+                    DBLeaderboardInstance replay = await ReadInstanceAsync(connection, transaction, replayInstanceId, true, cancellationToken);
+                    if (replay == null || replay.LeaderboardId != request.LeaderboardId || previous.State != request.PreviousState
+                        || MatchesInstance(replay, request.NextInstance) == false)
+                        abort(LeaderboardStoreResult.Conflict);
+                    if (HasExactMappings(await ReadMappingsAsync(connection, transaction, request.LeaderboardId, replayInstanceId, cancellationToken), request.MetaMappings, replayInstanceId) == false)
+                        abort(LeaderboardStoreResult.Conflict);
+                    committed = CloneInstance(replay);
+                    return;
+                }
+                if (previous.State != request.ExpectedActiveState)
+                    abort(LeaderboardStoreResult.StaleState);
+
+                List<long> instanceIds = await ReadInstanceIdsForUpdateAsync(connection, transaction, request.LeaderboardId, cancellationToken);
+                if (TryGetReplayInstanceId(request, out long generatedInstanceId) == false || LeaderboardInstanceIdGenerator.TryGetNext(request.LeaderboardId, instanceIds, out long actualInstanceId) == false
+                    || generatedInstanceId != actualInstanceId || await InstanceExistsAsync(connection, transaction, generatedInstanceId, cancellationToken)
+                    || (request.NextInstance.InstanceId != 0 && request.NextInstance.InstanceId != generatedInstanceId))
+                    abort(LeaderboardStoreResult.InvalidData);
+
+                foreach (LeaderboardMetaMapping mapping in request.MetaMappings)
+                {
+                    DBLeaderboard subDefinition = await ReadDefinitionAsync(connection, transaction, mapping.SubLeaderboardId, true, cancellationToken);
+                    DBLeaderboardInstance subInstance = await ReadInstanceAsync(connection, transaction, mapping.SubInstanceId, true, cancellationToken);
+                    if (subDefinition == null || subInstance == null || subDefinition.ActiveInstanceId != mapping.SubInstanceId
+                        || subInstance.LeaderboardId != mapping.SubLeaderboardId)
+                        abort(LeaderboardStoreResult.InvalidData);
+                }
+
+                await InsertLifecycleInstanceAsync(connection, transaction, generatedInstanceId, request.NextInstance, cancellationToken);
+                if (await UpdateInstanceStateAsync(connection, transaction, request.ExpectedActiveInstanceId, request.ExpectedActiveState, request.PreviousState, cancellationToken) == false
+                    || await UpdateActiveInstanceAsync(connection, transaction, request.LeaderboardId, request.ExpectedActiveInstanceId, generatedInstanceId, cancellationToken) == false)
+                    abort(LeaderboardStoreResult.StaleState);
+                foreach (LeaderboardMetaMapping mapping in request.MetaMappings)
+                    await InsertMappingAsync(connection, transaction, new LeaderboardMetaMapping(request.LeaderboardId, generatedInstanceId, mapping.SubLeaderboardId, mapping.SubInstanceId), cancellationToken);
+                committed = new DBLeaderboardInstance
+                {
+                    InstanceId = generatedInstanceId,
+                    LeaderboardId = request.LeaderboardId,
+                    State = request.NextState,
+                    ActivationDate = request.NextInstance.ActivationDate,
+                    Visible = request.NextInstance.Visible,
+                };
+            });
+            if (result == LeaderboardStoreResult.Success)
+                committedInstance = CloneInstance(committed);
+            return result;
+        }
         public LeaderboardStoreResult MaintainVisibility(LeaderboardVisibilityRequest request, out LeaderboardVisibilitySnapshot snapshot) { snapshot = new(); return LeaderboardStoreResult.Failed; }
         public LeaderboardStoreResult GenerateRewards(LeaderboardRewardGeneration request) => LeaderboardStoreResult.Failed;
         public LeaderboardStoreResult GetPendingRewards(long participantId, out IReadOnlyList<DBRewardEntry> rewards) { rewards = Array.Empty<DBRewardEntry>(); return LeaderboardStoreResult.Failed; }
         public RewardFinalizationResult FinalizeReward(LeaderboardRewardKey key, long rewardedDate) => RewardFinalizationResult.Failed;
+
+        private LeaderboardStoreResult ExecuteLifecycleWrite(string operation, long leaderboardId,
+            Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Action<LeaderboardStoreResult>, Task> writeAsync)
+        {
+            LeaderboardStoreResult operationResult = LeaderboardStoreResult.Failed;
+            try
+            {
+                PostgreSQLWriteResult write = _executor.ExecuteWriteAsync(operation, leaderboardId, (connection, transaction, cancellationToken) =>
+                    InvokeLifecycleWriteAsync(connection, transaction, cancellationToken, writeAsync, result =>
+                    {
+                        operationResult = result;
+                        Abort(result);
+                    })).GetAwaiter().GetResult();
+                return write.Outcome == PostgreSQLWriteOutcome.Success
+                    ? LeaderboardStoreResult.Success
+                    : write.Outcome == PostgreSQLWriteOutcome.OutcomeUncertain ? LeaderboardStoreResult.OutcomeUncertain : operationResult;
+            }
+            catch
+            {
+                return LeaderboardStoreResult.Failed;
+            }
+        }
+
+        private static async Task InvokeLifecycleWriteAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken cancellationToken,
+            Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Action<LeaderboardStoreResult>, Task> writeAsync, Action<LeaderboardStoreResult> abort)
+        {
+            await writeAsync(connection, transaction, cancellationToken, abort);
+            LifecyclePreCommitHook?.Invoke();
+        }
+
+        private static async Task<DBLeaderboard> ReadDefinitionAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long leaderboardId, bool forUpdate, CancellationToken cancellationToken)
+        {
+            await using NpgsqlCommand command = new($"SELECT leaderboard_id, prototype_name, active_instance_id, is_enabled, start_time, max_reset_count FROM {DefinitionTable} WHERE leaderboard_id = @leaderboardId{(forUpdate ? " FOR UPDATE" : string.Empty)}", connection, transaction);
+            command.Parameters.AddWithValue("leaderboardId", NpgsqlDbType.Bigint, leaderboardId);
+            await using NpgsqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
+            return await reader.ReadAsync(cancellationToken)
+                ? new DBLeaderboard { LeaderboardId = reader.GetInt64(0), PrototypeName = reader.GetString(1), ActiveInstanceId = reader.IsDBNull(2) ? 0 : reader.GetInt64(2), IsEnabled = reader.GetBoolean(3), StartTime = reader.GetInt64(4), MaxResetCount = reader.GetInt32(5) }
+                : null;
+        }
+
+        private static async Task<DBLeaderboardInstance> ReadInstanceAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long instanceId, bool forUpdate, CancellationToken cancellationToken)
+        {
+            await using NpgsqlCommand command = new($"SELECT instance_id, leaderboard_id, state, activation_date, visible FROM {InstanceTable} WHERE instance_id = @instanceId{(forUpdate ? " FOR UPDATE" : string.Empty)}", connection, transaction);
+            command.Parameters.AddWithValue("instanceId", NpgsqlDbType.Bigint, instanceId);
+            await using NpgsqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
+            return await reader.ReadAsync(cancellationToken) ? ReadInstance(reader) : null;
+        }
+
+        private static async Task<List<DBLeaderboardEntry>> ReadEntriesForUpdateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long instanceId, CancellationToken cancellationToken)
+        {
+            await using NpgsqlCommand command = new($"SELECT instance_id, participant_id, score, high_score, rule_states FROM {EntryTable} WHERE instance_id = @instanceId FOR UPDATE", connection, transaction);
+            command.Parameters.AddWithValue("instanceId", NpgsqlDbType.Bigint, instanceId);
+            return (await ReadEntriesAsync(command, cancellationToken)).ToList();
+        }
+
+        private static async Task<List<DBMetaEntry>> ReadMappingsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long leaderboardId, long instanceId, CancellationToken cancellationToken)
+        {
+            await using NpgsqlCommand command = new($"SELECT leaderboard_id, instance_id, sub_leaderboard_id, sub_instance_id FROM {MetaEntryTable} WHERE leaderboard_id = @leaderboardId AND instance_id = @instanceId FOR UPDATE", connection, transaction);
+            command.Parameters.AddWithValue("leaderboardId", NpgsqlDbType.Bigint, leaderboardId);
+            command.Parameters.AddWithValue("instanceId", NpgsqlDbType.Bigint, instanceId);
+            List<DBMetaEntry> mappings = new();
+            await using NpgsqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                mappings.Add(new DBMetaEntry { LeaderboardId = reader.GetInt64(0), InstanceId = reader.GetInt64(1), SubLeaderboardId = reader.GetInt64(2), SubInstanceId = reader.GetInt64(3) });
+            return mappings;
+        }
+
+        private static async Task<List<long>> ReadInstanceIdsForUpdateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long leaderboardId, CancellationToken cancellationToken)
+        {
+            await using NpgsqlCommand command = new($"SELECT instance_id FROM {InstanceTable} WHERE leaderboard_id = @leaderboardId FOR UPDATE", connection, transaction);
+            command.Parameters.AddWithValue("leaderboardId", NpgsqlDbType.Bigint, leaderboardId);
+            List<long> ids = new();
+            await using NpgsqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                ids.Add(reader.GetInt64(0));
+            return ids;
+        }
+
+        private static async Task<bool> InstanceExistsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long instanceId, CancellationToken cancellationToken)
+        {
+            await using NpgsqlCommand command = new($"SELECT 1 FROM {InstanceTable} WHERE instance_id = @instanceId FOR UPDATE", connection, transaction);
+            command.Parameters.AddWithValue("instanceId", NpgsqlDbType.Bigint, instanceId);
+            return await command.ExecuteScalarAsync(cancellationToken) != null;
+        }
+
+        private static async Task<bool> UpdateInstanceStateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long instanceId, LeaderboardState expectedState, LeaderboardState state, CancellationToken cancellationToken)
+        {
+            await using NpgsqlCommand command = new($"UPDATE {InstanceTable} SET state = @state WHERE instance_id = @instanceId AND state = @expectedState", connection, transaction);
+            command.Parameters.AddWithValue("instanceId", NpgsqlDbType.Bigint, instanceId);
+            command.Parameters.AddWithValue("expectedState", NpgsqlDbType.Smallint, (short)expectedState);
+            command.Parameters.AddWithValue("state", NpgsqlDbType.Smallint, (short)state);
+            return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
+        }
+
+        private static async Task<bool> UpdateActiveInstanceAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long leaderboardId, long expectedInstanceId, long instanceId, CancellationToken cancellationToken)
+        {
+            await using NpgsqlCommand command = new($"UPDATE {DefinitionTable} SET active_instance_id = @instanceId WHERE leaderboard_id = @leaderboardId AND active_instance_id = @expectedInstanceId", connection, transaction);
+            command.Parameters.AddWithValue("leaderboardId", NpgsqlDbType.Bigint, leaderboardId);
+            command.Parameters.AddWithValue("expectedInstanceId", NpgsqlDbType.Bigint, expectedInstanceId);
+            command.Parameters.AddWithValue("instanceId", NpgsqlDbType.Bigint, instanceId);
+            return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
+        }
+
+        private static async Task InsertLifecycleInstanceAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long instanceId, LeaderboardInstanceSpec instance, CancellationToken cancellationToken)
+        {
+            await using NpgsqlCommand command = new($"INSERT INTO {InstanceTable} (instance_id, leaderboard_id, state, activation_date, visible) VALUES (@instanceId, @leaderboardId, @state, @activationDate, @visible)", connection, transaction);
+            command.Parameters.AddWithValue("instanceId", NpgsqlDbType.Bigint, instanceId);
+            command.Parameters.AddWithValue("leaderboardId", NpgsqlDbType.Bigint, instance.LeaderboardId);
+            command.Parameters.AddWithValue("state", NpgsqlDbType.Smallint, (short)instance.State);
+            command.Parameters.AddWithValue("activationDate", NpgsqlDbType.Bigint, instance.ActivationDate);
+            command.Parameters.AddWithValue("visible", NpgsqlDbType.Boolean, instance.Visible);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        private static async Task UpsertEntriesAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long instanceId, IReadOnlyList<LeaderboardEntryWrite> entries, bool updateExisting, CancellationToken cancellationToken)
+        {
+            if (entries.Count == 0)
+                return;
+
+            await using NpgsqlCommand command = new($@"INSERT INTO {EntryTable} (instance_id, participant_id, score, high_score, rule_states)
+                SELECT @instanceId, input.participant_id, input.score, input.high_score, input.rule_states
+                FROM unnest(@participantIds, @scores, @highScores, @ruleStates) AS input(participant_id, score, high_score, rule_states)
+                ON CONFLICT (instance_id, participant_id) DO {(updateExisting ? "UPDATE SET score = EXCLUDED.score, high_score = EXCLUDED.high_score, rule_states = EXCLUDED.rule_states" : "NOTHING")}", connection, transaction);
+            command.Parameters.AddWithValue("instanceId", NpgsqlDbType.Bigint, instanceId);
+            command.Parameters.AddWithValue("participantIds", NpgsqlDbType.Array | NpgsqlDbType.Bigint, entries.Select(entry => entry.ParticipantId).ToArray());
+            command.Parameters.AddWithValue("scores", NpgsqlDbType.Array | NpgsqlDbType.Bigint, entries.Select(entry => entry.Score).ToArray());
+            command.Parameters.AddWithValue("highScores", NpgsqlDbType.Array | NpgsqlDbType.Bigint, entries.Select(entry => entry.HighScore).ToArray());
+            command.Parameters.AddWithValue("ruleStates", NpgsqlDbType.Array | NpgsqlDbType.Bytea, entries.Select(entry => entry.RuleStates).ToArray());
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        private static bool TryGetReplayInstanceId(LeaderboardRotation request, out long instanceId)
+        {
+            if (request.NextInstance.InstanceId != 0)
+            {
+                instanceId = request.NextInstance.InstanceId;
+                return true;
+            }
+            return LeaderboardInstanceIdGenerator.TryGetNext(request.LeaderboardId, [request.ExpectedActiveInstanceId], out instanceId);
+        }
+
+        private static bool HasExactEntries(IReadOnlyCollection<DBLeaderboardEntry> existingEntries, IReadOnlyList<LeaderboardEntryWrite> requestedEntries)
+        {
+            return existingEntries.Count == requestedEntries.Count
+                && requestedEntries.All(requested => existingEntries.Any(existing => existing.ParticipantId == requested.ParticipantId && EntriesMatch(existing, requested)));
+        }
+
+        private static bool EntriesMatch(DBLeaderboardEntry existing, LeaderboardEntryWrite requested)
+        {
+            return existing.Score == requested.Score && existing.HighScore == requested.HighScore
+                && existing.RuleStates != null && existing.RuleStates.SequenceEqual(requested.RuleStates);
+        }
+
+        private static bool MatchesInstance(DBLeaderboardInstance existing, LeaderboardInstanceSpec requested)
+        {
+            return existing.LeaderboardId == requested.LeaderboardId && existing.State == requested.State
+                && existing.ActivationDate == requested.ActivationDate && existing.Visible == requested.Visible;
+        }
+
+        private static bool HasExactMappings(IReadOnlyCollection<DBMetaEntry> existingMappings, IReadOnlyList<LeaderboardMetaMapping> requestedMappings, long instanceId)
+        {
+            return existingMappings.Count == requestedMappings.Count
+                && requestedMappings.All(requested => existingMappings.Any(existing => existing.LeaderboardId == requested.LeaderboardId
+                    && existing.InstanceId == instanceId && existing.SubLeaderboardId == requested.SubLeaderboardId && existing.SubInstanceId == requested.SubInstanceId));
+        }
+
+        private static DBLeaderboardInstance CloneInstance(DBLeaderboardInstance instance)
+        {
+            return instance == null ? null : new DBLeaderboardInstance
+            {
+                InstanceId = instance.InstanceId,
+                LeaderboardId = instance.LeaderboardId,
+                State = instance.State,
+                ActivationDate = instance.ActivationDate,
+                Visible = instance.Visible,
+            };
+        }
 
         private static void Abort(LeaderboardStoreResult result)
         {
