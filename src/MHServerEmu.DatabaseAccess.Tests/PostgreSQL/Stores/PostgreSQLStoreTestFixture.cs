@@ -14,12 +14,14 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
             AccountStore = new PostgreSQLAccountStore(provider.DataSource, provider.StoreExecutor);
             Players = new PostgreSQLPlayerStore(provider.DataSource, provider.StoreExecutor);
             Guilds = new PostgreSQLGuildStore(provider.DataSource, provider.StoreExecutor);
+            Leaderboards = new PostgreSQLLeaderboardStore(provider.DataSource, provider.StoreExecutor);
         }
 
         internal PostgreSQLProvider Provider { get; }
         internal PostgreSQLAccountStore AccountStore { get; }
         internal PostgreSQLPlayerStore Players { get; }
         internal PostgreSQLGuildStore Guilds { get; }
+        internal PostgreSQLLeaderboardStore Leaderboards { get; }
 
         internal static async Task<PostgreSQLStoreTestFixture> StartAsync(PostgreSQLTestDatabase database, PostgreSQLConfig config = null)
         {
