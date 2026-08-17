@@ -30,12 +30,31 @@ namespace MHServerEmu.Leaderboards
                 if (ValidatePrototypes(prototypes) == false)
                     return false;
 
+                Dictionary<long, LeaderboardPrototypeDefinition> definitionsById = prototypes.ToDictionary(prototype => prototype.LeaderboardId);
+                Dictionary<string, LeaderboardPrototypeDefinition> definitionsByName = prototypes.ToDictionary(prototype => prototype.PrototypeName, StringComparer.Ordinal);
                 ScheduleEntry[] entries;
                 if (File.Exists(path))
                 {
                     entries = JsonSerializer.Deserialize<ScheduleEntry[]>(File.ReadAllText(path), JsonOptions);
                     if (entries == null)
                         return false;
+
+                    if (entries.Any(entry => entry.LeaderboardId == 0))
+                    {
+                        LegacyScheduleEntry[] legacyEntries = JsonSerializer.Deserialize<LegacyScheduleEntry[]>(File.ReadAllText(path), JsonOptions);
+                        if (legacyEntries == null || legacyEntries.Any(entry => entry.LeaderboardId != 0 || string.IsNullOrWhiteSpace(entry.PrototypeName)
+                            || definitionsByName.TryGetValue(entry.PrototypeName, out _) == false))
+                            return false;
+
+                        entries = legacyEntries.Select(entry => new ScheduleEntry
+                        {
+                            LeaderboardId = definitionsByName[entry.PrototypeName].LeaderboardId,
+                            IsEnabled = entry.IsEnabled,
+                            StartTime = entry.StartTime,
+                            MaxResetCount = entry.MaxResetCount,
+                        }).ToArray();
+                        File.WriteAllText(path, JsonSerializer.Serialize(entries, JsonOptions));
+                    }
                 }
                 else
                 {
@@ -56,7 +75,6 @@ namespace MHServerEmu.Leaderboards
                     File.WriteAllText(path, JsonSerializer.Serialize(entries, JsonOptions));
                 }
 
-                Dictionary<long, LeaderboardPrototypeDefinition> definitionsById = prototypes.ToDictionary(prototype => prototype.LeaderboardId);
                 if (entries.Any(entry => IsValidScheduleEntry(entry) == false)
                     || entries.GroupBy(entry => entry.LeaderboardId).Any(group => group.Skip(1).Any())
                     || entries.Any(entry => definitionsById.ContainsKey(entry.LeaderboardId) == false))
@@ -123,6 +141,15 @@ namespace MHServerEmu.Leaderboards
         private sealed class ScheduleEntry
         {
             public long LeaderboardId { get; set; }
+            public bool IsEnabled { get; set; }
+            public DateTime StartTime { get; set; }
+            public int MaxResetCount { get; set; }
+        }
+
+        private sealed class LegacyScheduleEntry
+        {
+            public long LeaderboardId { get; set; }
+            public string PrototypeName { get; set; }
             public bool IsEnabled { get; set; }
             public DateTime StartTime { get; set; }
             public int MaxResetCount { get; set; }

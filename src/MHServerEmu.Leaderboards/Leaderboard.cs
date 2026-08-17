@@ -223,10 +223,18 @@ namespace MHServerEmu.Leaderboards
 
                         case LeaderboardState.eLBS_Expired:
 
-                            if (instance.SetState(LeaderboardState.eLBS_Rewarded)
-                                && _database.PersistVisibility(new((long)LeaderboardId, _database.Options.NormalArchiveLimit,
-                                    Clock.DateTimeToTimestamp(updateTime)), out _) != LeaderboardStoreResult.Success)
+                            if (instance.TryGenerateRewards() == false)
+                                break;
+
+                            if (_database.PersistVisibility(new((long)LeaderboardId, _database.Options.NormalArchiveLimit,
+                                Clock.DateTimeToTimestamp(updateTime)), out LeaderboardVisibilitySnapshot snapshot) != LeaderboardStoreResult.Success)
+                            {
                                 Logger.Warn($"UpdateState(): Failed to maintain visibility for {LeaderboardId}");
+                                break;
+                            }
+
+                            ApplyVisibility(snapshot);
+                            instance.PublishRewardedState();
 
                             break;
                     }
@@ -267,6 +275,19 @@ namespace MHServerEmu.Leaderboards
             ActiveInstance = instance;
             OnStateChange(instance.InstanceId, instance.State);
             return true;
+        }
+
+        private void ApplyVisibility(LeaderboardVisibilitySnapshot snapshot)
+        {
+            foreach (LeaderboardInstanceSpec archivedInstance in snapshot.NormalArchiveInstances)
+            {
+                LeaderboardInstance instance = GetInstance((ulong)archivedInstance.InstanceId);
+                if (instance != null)
+                    instance.Visible = archivedInstance.Visible;
+            }
+
+            foreach (IGrouping<long, LeaderboardMetaMapping> mappings in snapshot.MetaMappings.GroupBy(mapping => mapping.InstanceId))
+                GetInstance((ulong)mappings.Key)?.ApplyMetaMappings(mappings);
         }
 
         /// <summary>

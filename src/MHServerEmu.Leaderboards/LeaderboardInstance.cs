@@ -264,6 +264,15 @@ namespace MHServerEmu.Leaderboards
                 SetSubInstance((PrototypeGuid)dbMetaEntry.SubLeaderboardId, (ulong)dbMetaEntry.SubInstanceId);
         }
 
+        internal void ApplyMetaMappings(IEnumerable<LeaderboardMetaMapping> mappings)
+        {
+            foreach (LeaderboardMetaMapping mapping in mappings)
+            {
+                if (mapping.LeaderboardId == (long)LeaderboardId && mapping.InstanceId == (long)InstanceId)
+                    SetSubInstance((PrototypeGuid)mapping.SubLeaderboardId, (ulong)mapping.SubInstanceId);
+            }
+        }
+
         /// <summary>
         /// Writes new <see cref="DBMetaEntry"/> instances for the next instance of this metaleaderboard.
         /// </summary>
@@ -503,6 +512,21 @@ namespace MHServerEmu.Leaderboards
             return true;
         }
 
+        internal bool TryGenerateRewards()
+        {
+            return State == LeaderboardState.eLBS_Expired && GiveRewards();
+        }
+
+        internal void PublishRewardedState()
+        {
+            if (State != LeaderboardState.eLBS_Expired)
+                throw new InvalidOperationException("Only expired instances can complete reward generation.");
+
+            Logger.Info($"SetState(): {LeaderboardPrototype.DataRef.GetNameFormatted()} {InstanceId} [{State}] => [{LeaderboardState.eLBS_Rewarded}]");
+            State = LeaderboardState.eLBS_Rewarded;
+            _leaderboard.OnStateChange(InstanceId, State);
+        }
+
         /// <summary>
         /// Determines rewards for participants of this MetaLeaderboard and adds them to the provided <see cref="List{T}"/>.
         /// </summary>
@@ -511,13 +535,11 @@ namespace MHServerEmu.Leaderboards
             ulong prevScore = 0;
             int prevRank = 0;
             int entryIndex = 0;
+            bool hasPrevious = false;
 
             foreach (LeaderboardEntry entry in Entries)
             {
-                int rank = entryIndex + 1;
-
-                if (entry.Score == prevScore)
-                    rank = prevRank;
+                int rank = LeaderboardRanking.GetCompetitionRank(entryIndex, entry.Score, hasPrevious, prevScore, prevRank);
 
                 MetaLeaderboardEntry metaEntry = _metaLeaderboardEntries.Find(metaEntry => (ulong)metaEntry.SubLeaderboardId == entry.ParticipantId);
                 if (metaEntry == null || metaEntry.SubInstance == null || metaEntry.Rewards.IsNullOrEmpty()) 
@@ -536,6 +558,7 @@ namespace MHServerEmu.Leaderboards
 
                         prevScore = entry.Score;
                         prevRank = rank;
+                        hasPrevious = true;
 
                         break;
                     }
@@ -555,16 +578,14 @@ namespace MHServerEmu.Leaderboards
             ulong prevScore = 0;
             int prevRank = 0;
             int entryIndex = 0;
+            bool hasPrevious = false;
 
             foreach (LeaderboardRewardEntryPrototype rewardProto in rewards)
             {
                 while (entryIndex < count)
                 {
                     LeaderboardEntry entry = Entries[entryIndex];
-                    int rank = entryIndex + 1;
-
-                    if (entry.Score == prevScore)
-                        rank = prevRank;
+                    int rank = LeaderboardRanking.GetCompetitionRank(entryIndex, entry.Score, hasPrevious, prevScore, prevRank);
 
                     if (EvaluateReward(rewardProto, entry, rank) == false)
                         break;
@@ -576,6 +597,7 @@ namespace MHServerEmu.Leaderboards
 
                     prevScore = entry.Score;
                     prevRank = rank;
+                    hasPrevious = true;
 
                     entryIndex++;
                 }
@@ -655,10 +677,6 @@ namespace MHServerEmu.Leaderboards
                         }
                         break;
 
-                    case LeaderboardState.eLBS_Rewarded:
-
-                        changed = State == LeaderboardState.eLBS_Expired && GiveRewards();
-                        break;
                 }
 
                 if (changed)
