@@ -1,7 +1,16 @@
 using MHServerEmu.Core.Network;
+using MHServerEmu.DatabaseAccess;
+using Gazillion;
 using MHServerEmu.DatabaseAccess.Json;
+using MHServerEmu.DatabaseAccess.Models.Leaderboards;
+using MHServerEmu.DatabaseAccess.Persistence;
 using MHServerEmu.DatabaseAccess.SQLite;
+using MHServerEmu.Games.GameData;
+using MHServerEmu.Games.GameData.Prototypes;
 using MHServerEmu.Leaderboards;
+using MHServerEmu.PlayerManagement.Players;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 
 namespace MHServerEmu.Tests.Leaderboards
 {
@@ -23,28 +32,122 @@ namespace MHServerEmu.Tests.Leaderboards
         }
 
         [Fact]
-        public void Shutdown_DrainsAcceptedScoresAndSavesBeforeServiceStops()
+        public async Task Shutdown_AcceptedScorePersistsBeforeRuntimeDisposes()
         {
-            string source = File.ReadAllText(Path.Combine(FindRoot(), "src/MHServerEmu.Leaderboards/LeaderboardService.cs"));
-            int drain = source.IndexOf("_database.ProcessLeaderboardScoreUpdateQueue();", StringComparison.Ordinal);
-            int save = source.IndexOf("_database.Save();", drain, StringComparison.Ordinal);
-            int shutdown = source.IndexOf("State = GameServiceState.Shutdown;", save, StringComparison.Ordinal);
+            RecordingStore store = new();
+            LeaderboardDatabase database = CreateDatabase(store);
+            LeaderboardService service = new(database, new LeaderboardRewardManager(store, new Publisher(), () => TimeSpan.Zero, () => { }), () => true, () => true);
+            TaskCompletionSource<bool> servicesStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            TaskCompletionSource<string> consoleRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            bool disposedAfterSave = false;
+            PersistenceRuntime runtime = CreateRuntime(store, () => disposedAfterSave = store.SaveScoreBatchCount > 0);
+            ServerStartupDependencies dependencies = new(
+                (_, _) => Task.FromResult(runtime),
+                () => true,
+                (manager, _, _) => manager.RegisterGameService(service, GameServiceType.Leaderboard),
+                () => consoleRead.Task,
+                () => servicesStarted.SetResult(true));
+            ServerApp app = new(dependencies, new ServerManager());
 
-            Assert.InRange(drain, 0, save - 1);
-            Assert.InRange(save, 0, shutdown - 1);
+            Task run = app.RunAsync();
+            await servicesStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            ServiceMessage.LeaderboardScoreUpdateBatch scoreBatch = new(1);
+            scoreBatch[0] = new(1, 7, 0, 0, 1);
+            service.ReceiveServiceMessage(scoreBatch);
+            app.Shutdown();
+            await run.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Equal(1, store.SaveScoreBatchCount);
+            Assert.True(disposedAfterSave);
         }
 
-        private static string FindRoot()
+        private static PersistenceRuntime CreateRuntime(RecordingStore store, Action dispose)
         {
-            DirectoryInfo directory = new(AppContext.BaseDirectory);
-            while (directory != null)
+            JsonDBManager manager = JsonDBManager.Instance;
+            return new PersistenceRuntime(new PersistenceServices(manager, manager, manager, store, PersistenceCapabilities.Json), () =>
             {
-                if (File.Exists(Path.Combine(directory.FullName, "MHServerEmu.sln")))
-                    return directory.FullName;
-                directory = directory.Parent;
-            }
+                dispose();
+                return ValueTask.CompletedTask;
+            });
+        }
 
-            throw new DirectoryNotFoundException("Repository root not found.");
+        private static LeaderboardDatabase CreateDatabase(RecordingStore store)
+        {
+            LeaderboardDatabase database = new(store, new NameResolver(), new Catalog(), new Publisher(), new LeaderboardRuntimeOptions("unused.json", 1));
+            Leaderboard leaderboard = (Leaderboard)RuntimeHelpers.GetUninitializedObject(typeof(Leaderboard));
+            LeaderboardInstance instance = (LeaderboardInstance)RuntimeHelpers.GetUninitializedObject(typeof(LeaderboardInstance));
+            MHServerEmu.Leaderboards.LeaderboardEntry entry = new(new DBLeaderboardEntry { ParticipantId = 7, Score = 1, HighScore = 1, RuleStates = [0, 0, 0, 0] }) { SaveRequired = true };
+            SetField(leaderboard, "_lock", new object());
+            SetField(leaderboard, "_database", database);
+            SetAutoProperty(leaderboard, "LeaderboardId", (PrototypeGuid)1);
+            SetAutoProperty(leaderboard, "ActiveInstance", instance);
+            SetAutoProperty(leaderboard, "Instances", new List<LeaderboardInstance> { instance });
+            SetField(instance, "_leaderboard", leaderboard);
+            SetField(instance, "_lock", new object());
+            SetAutoProperty(instance, "InstanceId", 1UL);
+            SetAutoProperty(instance, "State", LeaderboardState.eLBS_Active);
+            SetAutoProperty(instance, "Entries", new List<MHServerEmu.Leaderboards.LeaderboardEntry> { entry });
+            instance.ActivationTime = DateTime.UtcNow;
+            instance.ExpirationTime = DateTime.UtcNow.AddDays(1);
+            SetField(typeof(LeaderboardDatabase), database, "_leaderboards", new Dictionary<PrototypeGuid, Leaderboard> { [(PrototypeGuid)1] = leaderboard });
+            return database;
+        }
+
+        private static void SetAutoProperty<T>(object target, string name, T value)
+        {
+            target.GetType().GetField($"<{name}>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(target, value);
+        }
+
+        private static void SetField(object target, string name, object value)
+        {
+            target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic).SetValue(target, value);
+        }
+
+        private static void SetField(Type type, object target, string name, object value)
+        {
+            type.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic).SetValue(target, value);
+        }
+
+        private sealed class NameResolver : ILeaderboardPlayerNameResolver
+        {
+            public string GetPlayerName(ulong participantId) => participantId.ToString();
+        }
+
+        private sealed class Catalog : ILeaderboardPrototypeCatalog
+        {
+            public IReadOnlyList<LeaderboardPrototypeDefinition> GetPublicPrototypes() => Array.Empty<LeaderboardPrototypeDefinition>();
+            public bool TryGetPrototype(long leaderboardId, out LeaderboardPrototype prototype)
+            {
+                prototype = null;
+                return false;
+            }
+        }
+
+        private sealed class Publisher : ILeaderboardPublisher
+        {
+            public void Publish(ServiceMessage.LeaderboardStateChange change) { }
+            public void Publish(IReadOnlyList<ServiceMessage.LeaderboardStateChange> changes) { }
+            public void Publish(ServiceMessage.LeaderboardRewardRequestResponse response) { }
+        }
+
+        private sealed class RecordingStore : ILeaderboardStore
+        {
+            public int SaveScoreBatchCount { get; private set; }
+
+            public LeaderboardStoreResult Initialize() => LeaderboardStoreResult.Success;
+            public LeaderboardStoreResult ReconcileSchedule(LeaderboardReconciliation request, out LeaderboardSnapshot snapshot) { snapshot = new(); return LeaderboardStoreResult.Success; }
+            public LeaderboardStoreResult LoadEntries(long instanceId, out IReadOnlyList<DBLeaderboardEntry> entries) { entries = Array.Empty<DBLeaderboardEntry>(); return LeaderboardStoreResult.Success; }
+            public LeaderboardStoreResult LoadInstance(long leaderboardId, long instanceId, out DBLeaderboardInstance instance) { instance = null; return LeaderboardStoreResult.NotFound; }
+            public LeaderboardStoreResult LoadMetaMappings(long leaderboardId, long instanceId, out IReadOnlyList<LeaderboardMetaMapping> mappings) { mappings = Array.Empty<LeaderboardMetaMapping>(); return LeaderboardStoreResult.Success; }
+            public LeaderboardStoreResult LoadVisibleInstances(long leaderboardId, long beforeInstanceId, int limit, out IReadOnlyList<DBLeaderboardInstance> instances) { instances = Array.Empty<DBLeaderboardInstance>(); return LeaderboardStoreResult.Success; }
+            public LeaderboardStoreResult ActivateInstance(LeaderboardActivation request) => LeaderboardStoreResult.Success;
+            public LeaderboardStoreResult SaveScoreBatch(LeaderboardScoreBatch request) { SaveScoreBatchCount++; return LeaderboardStoreResult.Success; }
+            public LeaderboardStoreResult ExpireInstance(LeaderboardExpiration request) => LeaderboardStoreResult.Success;
+            public LeaderboardStoreResult RotateActiveInstance(LeaderboardRotation request, out DBLeaderboardInstance committedInstance) { committedInstance = null; return LeaderboardStoreResult.Success; }
+            public LeaderboardStoreResult MaintainVisibility(LeaderboardVisibilityRequest request, out LeaderboardVisibilitySnapshot snapshot) { snapshot = new(); return LeaderboardStoreResult.Success; }
+            public LeaderboardStoreResult GenerateRewards(LeaderboardRewardGeneration request) => LeaderboardStoreResult.Success;
+            public LeaderboardStoreResult GetPendingRewards(long participantId, out IReadOnlyList<DBRewardEntry> rewards) { rewards = Array.Empty<DBRewardEntry>(); return LeaderboardStoreResult.Success; }
+            public RewardFinalizationResult FinalizeReward(LeaderboardRewardKey key, long rewardedDate) => RewardFinalizationResult.Finalized;
         }
     }
 }
