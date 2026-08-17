@@ -59,6 +59,9 @@ namespace MHServerEmu.Leaderboards
             if (_isEnabled == false)
             {
                 State = GameServiceState.Running;
+                while (State == GameServiceState.Running)
+                    Thread.Sleep(UpdateTimeMS);
+                State = GameServiceState.Shutdown;
                 return;
             }
 
