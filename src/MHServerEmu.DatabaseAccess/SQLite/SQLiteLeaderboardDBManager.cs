@@ -496,7 +496,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                     return LeaderboardStoreResult.NotFound;
 
                 if (target.LeaderboardId != request.LeaderboardId)
-                    return definition.ActiveInstanceId == request.InstanceId ? LeaderboardStoreResult.InvalidData : LeaderboardStoreResult.Conflict;
+                    return LeaderboardStoreResult.InvalidData;
 
                 if (definition.ActiveInstanceId != request.ExpectedActiveInstanceId)
                     return LeaderboardStoreResult.StaleState;
