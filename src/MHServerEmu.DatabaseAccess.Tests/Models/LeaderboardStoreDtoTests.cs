@@ -187,6 +187,50 @@ namespace MHServerEmu.DatabaseAccess.Tests.Models
         }
 
         [Fact]
+        public void Rotation_RejectsExpectedStateBeforeExpiration()
+        {
+            LeaderboardInstanceSpec nextInstance = new(12, 10, LeaderboardState.eLBS_Created, 100, true);
+
+            Assert.Throws<ArgumentException>(() => CreateRotation(LeaderboardState.eLBS_Active, LeaderboardState.eLBS_Expired, LeaderboardState.eLBS_Created, nextInstance));
+        }
+
+        [Fact]
+        public void Rotation_RejectsPreviousStateThatContradictsExpiration()
+        {
+            LeaderboardInstanceSpec nextInstance = new(12, 10, LeaderboardState.eLBS_Created, 100, true);
+
+            Assert.Throws<ArgumentException>(() => CreateRotation(LeaderboardState.eLBS_Expired, LeaderboardState.eLBS_Active, LeaderboardState.eLBS_Created, nextInstance));
+        }
+
+        [Fact]
+        public void Rotation_RejectsNextStateOtherThanCreated()
+        {
+            LeaderboardInstanceSpec nextInstance = new(12, 10, LeaderboardState.eLBS_Active, 100, true);
+
+            Assert.Throws<ArgumentException>(() => CreateRotation(LeaderboardState.eLBS_Expired, LeaderboardState.eLBS_Expired, LeaderboardState.eLBS_Active, nextInstance));
+        }
+
+        [Fact]
+        public void Rotation_RejectsNextInstanceStateThatDiffersFromRequestedState()
+        {
+            LeaderboardInstanceSpec nextInstance = new(12, 10, LeaderboardState.eLBS_Active, 100, true);
+
+            Assert.Throws<ArgumentException>(() => CreateRotation(LeaderboardState.eLBS_Expired, LeaderboardState.eLBS_Expired, LeaderboardState.eLBS_Created, nextInstance));
+        }
+
+        [Fact]
+        public void Rotation_AllowsExpiredPreviousInstanceAndCreatedNextInstance()
+        {
+            LeaderboardInstanceSpec nextInstance = new(12, 10, LeaderboardState.eLBS_Created, 100, true);
+
+            LeaderboardRotation rotation = CreateRotation(nextInstance);
+
+            Assert.Equal(LeaderboardState.eLBS_Expired, rotation.ExpectedActiveState);
+            Assert.Equal(LeaderboardState.eLBS_Expired, rotation.PreviousState);
+            Assert.Equal(LeaderboardState.eLBS_Created, rotation.NextState);
+        }
+
+        [Fact]
         public void RewardGeneration_RejectsDuplicateParticipantRewards()
         {
             LeaderboardRewardWrite reward = new(10, 11, 12, 13, 1, 14);
@@ -262,7 +306,12 @@ namespace MHServerEmu.DatabaseAccess.Tests.Models
 
         private static LeaderboardRotation CreateRotation(LeaderboardInstanceSpec nextInstance, params LeaderboardMetaMapping[] metaMappings)
         {
-            return new LeaderboardRotation(10, 11, LeaderboardState.eLBS_Active, LeaderboardState.eLBS_Expired, nextInstance, LeaderboardState.eLBS_Created, metaMappings);
+            return CreateRotation(LeaderboardState.eLBS_Expired, LeaderboardState.eLBS_Expired, LeaderboardState.eLBS_Created, nextInstance, metaMappings);
+        }
+
+        private static LeaderboardRotation CreateRotation(LeaderboardState expectedActiveState, LeaderboardState previousState, LeaderboardState nextState, LeaderboardInstanceSpec nextInstance, params LeaderboardMetaMapping[] metaMappings)
+        {
+            return new LeaderboardRotation(10, 11, expectedActiveState, previousState, nextInstance, nextState, metaMappings);
         }
 
         private static DBLeaderboardInstance TestInstance(long instanceId, long leaderboardId)

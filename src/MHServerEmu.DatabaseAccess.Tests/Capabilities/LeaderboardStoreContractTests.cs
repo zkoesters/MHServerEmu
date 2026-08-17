@@ -56,6 +56,17 @@ namespace MHServerEmu.DatabaseAccess.Tests.Capabilities
             AssertMethod(methods, nameof(ILeaderboardStore.FinalizeReward), typeof(RewardFinalizationResult), new[] { typeof(LeaderboardRewardKey), typeof(long) });
         }
 
+        [Fact]
+        public void ILeaderboardStore_DeclaresDetachedOutputContract()
+        {
+            LeaderboardStoreOutputContractAttribute contract = typeof(ILeaderboardStore).GetCustomAttribute<LeaderboardStoreOutputContractAttribute>();
+
+            Assert.NotNull(contract);
+            Assert.True(contract.ReturnsDetachedRows);
+            Assert.True(contract.CopiesRuleStates);
+            Assert.True(contract.EmptyOutputsOnFailure);
+        }
+
         [Theory]
         [InlineData(0)]
         [InlineData(101)]
@@ -70,6 +81,20 @@ namespace MHServerEmu.DatabaseAccess.Tests.Capabilities
         public void ValidateVisibleInstancesLimit_AcceptsPageBoundaries(int limit)
         {
             LeaderboardStoreValidator.ValidateVisibleInstancesLimit(limit);
+        }
+
+        [Fact]
+        public void LoadVisibleInstances_DeclaresPaginationContract()
+        {
+            MethodInfo method = typeof(ILeaderboardStore).GetMethod(nameof(ILeaderboardStore.LoadVisibleInstances));
+            LeaderboardPaginationContractAttribute contract = method.GetCustomAttribute<LeaderboardPaginationContractAttribute>();
+
+            Assert.NotNull(contract);
+            Assert.Equal(1, contract.MinimumLimit);
+            Assert.Equal(100, contract.MaximumLimit);
+            Assert.True(contract.RequiresValidationBeforeConnection);
+            Assert.Equal(LeaderboardStoreResult.InvalidData, contract.InvalidLimitResult);
+            Assert.True(contract.EmptyOutputOnInvalidLimit);
         }
 
         [Theory]
