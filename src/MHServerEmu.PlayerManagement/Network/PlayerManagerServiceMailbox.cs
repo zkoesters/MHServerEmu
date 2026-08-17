@@ -205,7 +205,11 @@ namespace MHServerEmu.PlayerManagement.Network
                     break;
 
                 case GameInstanceClientOpType.RemoveResponse:
-                    player.FinishRemoveFromGame(gameId);
+                    if (player.FinishRemoveFromGame(gameId) == PlayerStoreResult.OutcomeUncertain)
+                    {
+                        Logger.Error($"OnGameInstanceClientOp(): Player save outcome is uncertain; disconnecting client [{player.Client}]");
+                        _playerManager.ClientManager.DisconnectAndDiscardPlayer(player);
+                    }
                     break;
 
                 default:

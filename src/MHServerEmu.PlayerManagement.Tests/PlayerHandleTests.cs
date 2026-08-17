@@ -7,6 +7,7 @@ using MHServerEmu.DatabaseAccess.Models;
 using MHServerEmu.Games.GameData;
 using MHServerEmu.Games.Network;
 using MHServerEmu.PlayerManagement.Players;
+using MHServerEmu.PlayerManagement.Games;
 
 namespace MHServerEmu.PlayerManagement.Tests
 {
@@ -52,6 +53,20 @@ namespace MHServerEmu.PlayerManagement.Tests
         }
 
         [Fact]
+        public void FinishRemoveFromGame_OutcomeUncertain_IsPropagated()
+        {
+            StubDBManager store = new() { SavePlayerDataStoreResult = PlayerStoreResult.OutcomeUncertain };
+            DBAccount account = new("player@example.com", "Player", "password") { Id = 1 };
+            PlayerHandle player = new(new FakeFrontendClient(account), store, () => true, PrototypeId.Invalid);
+            Assert.True(player.LoadPlayerData());
+            SetAutoProperty(player, "State", PlayerHandleState.PendingRemoveFromGame);
+            SetAutoProperty(player, "CurrentGame", new GameHandle(1));
+            SetField(player, "_saveNeeded", true);
+
+            Assert.Equal(PlayerStoreResult.OutcomeUncertain, player.FinishRemoveFromGame(1));
+        }
+
+        [Fact]
         public void TryStoreSerializedPlayerData_TransferSucceeds_StoresArchiveAndMetadata()
         {
             MethodInfo tryStoreSerializedPlayerData = typeof(PlayerConnection).GetMethod("TryStoreSerializedPlayerData", BindingFlags.NonPublic | BindingFlags.Static);
@@ -93,6 +108,16 @@ namespace MHServerEmu.PlayerManagement.Tests
                 int value = 42;
                 return archive.Transfer(ref value) && success;
             }
+        }
+
+        private static void SetAutoProperty<T>(PlayerHandle player, string name, T value)
+        {
+            typeof(PlayerHandle).GetField($"<{name}>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(player, value);
+        }
+
+        private static void SetField<T>(PlayerHandle player, string name, T value)
+        {
+            typeof(PlayerHandle).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic).SetValue(player, value);
         }
 
         private sealed class FakeFrontendClient : IFrontendClient, IDBAccountOwner

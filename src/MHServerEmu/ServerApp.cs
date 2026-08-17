@@ -101,7 +101,7 @@ namespace MHServerEmu
             PrintBanner();
             PrintVersionInfo();
             Console.ResetColor();
-            InitLoggers();
+            InitLoggers(_startupDependencies.ConfigManager);
             Logger.Info("MHServerEmu starting...");
             MetricsManager.Instance.Initialize();
 
@@ -130,7 +130,15 @@ namespace MHServerEmu
                 while (_state == State.Running)
                 {
                     Task<string> readTask = _startupDependencies.ReadConsoleLineAsync();
-                    if (await Task.WhenAny(readTask, _shutdownSignal.Task) != readTask)
+                    Task completed = await Task.WhenAny(readTask, _shutdownSignal.Task, _serverManager.WaitForFaultAsync());
+                    if (completed == _serverManager.WaitForFaultAsync())
+                    {
+                        Exception exception = await _serverManager.WaitForFaultAsync();
+                        Logger.FatalException(exception, "A game service terminated unexpectedly.");
+                        RequestShutdown();
+                        break;
+                    }
+                    if (completed != readTask)
                         break;
 
                     string input = await readTask;
@@ -241,9 +249,9 @@ namespace MHServerEmu
         /// <summary>
         /// Initializes log targets.
         /// </summary>
-        private void InitLoggers()
+        private void InitLoggers(ConfigManager configManager)
         {
-            var config = ConfigManager.Instance.GetConfig<LoggingConfig>();
+            var config = configManager.GetConfig<LoggingConfig>();
 
             LogManager.Enabled = config.EnableLogging;
 

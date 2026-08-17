@@ -83,6 +83,20 @@ namespace MHServerEmu.Tests.Leaderboards
             Assert.InRange(drainScores, 0, updateLifecycle - 1);
         }
 
+        [Fact]
+        public void ShutdownAdmissionGate_CoversScoreAndRewardMessages()
+        {
+            string source = File.ReadAllText(Path.Combine(FindRoot(), "src/MHServerEmu.Leaderboards/LeaderboardService.cs"));
+            int score = source.IndexOf("case ServiceMessage.LeaderboardScoreUpdateBatch", StringComparison.Ordinal);
+            int request = source.IndexOf("case ServiceMessage.LeaderboardRewardRequest", StringComparison.Ordinal);
+            int confirmation = source.IndexOf("case ServiceMessage.LeaderboardRewardConfirmation", StringComparison.Ordinal);
+            int nextCase = source.IndexOf("default:", StringComparison.Ordinal);
+
+            Assert.Contains("lock (_workLock)", source[score..request], StringComparison.Ordinal);
+            Assert.Contains("lock (_workLock)", source[request..confirmation], StringComparison.Ordinal);
+            Assert.Contains("lock (_workLock)", source[confirmation..nextCase], StringComparison.Ordinal);
+        }
+
         private static string FindRoot()
         {
             DirectoryInfo directory = new(AppContext.BaseDirectory);

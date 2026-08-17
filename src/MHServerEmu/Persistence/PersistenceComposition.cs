@@ -17,14 +17,20 @@ namespace MHServerEmu.Persistence
 
         public static Task<PersistenceRuntime> CreateAsync(Action<PersistenceFatalFailure> fatalCallback = null, CancellationToken cancellationToken = default)
         {
+            return CreateAsync(ConfigManager.Instance, fatalCallback, cancellationToken);
+        }
+
+        public static Task<PersistenceRuntime> CreateAsync(ConfigManager configManager, Action<PersistenceFatalFailure> fatalCallback = null, CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(configManager);
             fatalCallback ??= _ => { };
 
-            PersistenceConfig persistenceConfig = ConfigManager.Instance.GetConfig<PersistenceConfig>();
-            PlayerManagerConfig playerManagerConfig = ConfigManager.Instance.GetConfig<PlayerManagerConfig>();
+            PersistenceConfig persistenceConfig = configManager.GetConfig<PersistenceConfig>();
+            PlayerManagerConfig playerManagerConfig = configManager.GetConfig<PlayerManagerConfig>();
             if (PersistenceProviderSelector.TrySelect(persistenceConfig.Provider, playerManagerConfig.UseJsonDBManager, out PersistenceProvider provider, out string error) == false)
                 return Task.FromException<PersistenceRuntime>(new InvalidOperationException(error));
 
-            if (provider == PersistenceProvider.PostgreSQL && ConfigManager.Instance.HasUnsafeUnixOverrideFilePermissions())
+            if (provider == PersistenceProvider.PostgreSQL && configManager.HasUnsafeUnixOverrideFilePermissions())
                 return Task.FromException<PersistenceRuntime>(new InvalidOperationException("PostgreSQL persistence startup failed: UnsafeOverrideFilePermissions."));
 
             return CreateAsync(
@@ -32,8 +38,8 @@ namespace MHServerEmu.Persistence
                 () => CreateRuntimeAsync(CreateJsonServices),
                 () => CreateRuntimeAsync(CreateSQLiteServices),
                 () => PostgreSQLPersistenceFacade.StartAsync(
-                    ConfigManager.Instance.GetConfig<PostgreSQLConfig>(),
-                    ConfigManager.Instance.GetOverrideString("PostgreSQL", "ConnectionString"),
+                    configManager.GetConfig<PostgreSQLConfig>(),
+                    configManager.GetOverrideString("PostgreSQL", "ConnectionString"),
                     fatalCallback,
                     cancellationToken));
         }

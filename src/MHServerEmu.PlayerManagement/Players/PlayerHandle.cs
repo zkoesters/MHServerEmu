@@ -300,11 +300,11 @@ namespace MHServerEmu.PlayerManagement.Players
             return true;
         }
 
-        public bool FinishRemoveFromGame(ulong gameId)
+        public PlayerStoreResult FinishRemoveFromGame(ulong gameId)
         {
             // Include PendingAddToGame because we can also get here when GIS fails to add a client to a game for whatever reason.
             if (State != PlayerHandleState.PendingAddToGame && State != PlayerHandleState.PendingRemoveFromGame)
-                return Logger.WarnReturn(false, $"FinishRemoveFromGame(): Invalid state {State} for player [{this}]");
+                return Logger.WarnReturn(PlayerStoreResult.Failed, $"FinishRemoveFromGame(): Invalid state {State} for player [{this}]");
 
             if (CurrentGame.Id != gameId)
                 Logger.Warn($"FinishRemoveFromGame(): GameId mismatch (expected 0x{CurrentGame.Id:X}, got 0x{gameId:X})");
@@ -314,13 +314,14 @@ namespace MHServerEmu.PlayerManagement.Players
 
             Logger.Info($"Player [{this}] removed from game 0x{gameId:X}");
 
+            PlayerStoreResult saveResult = PlayerStoreResult.Success;
             if (_saveNeeded)
             {
-                SavePlayerData();
+                saveResult = SavePlayerDataResult();
                 _saveNeeded = false;
             }
 
-            return true;
+            return saveResult;
         }
 
         public void TryJoinGame()

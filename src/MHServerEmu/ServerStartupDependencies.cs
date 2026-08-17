@@ -22,13 +22,15 @@ namespace MHServerEmu
             Func<bool> initializeSystems,
             Action<ServerManager, PersistenceServices, AccountManager> registerServices,
             Func<Task<string>> readConsoleLineAsync,
-            Action notifyServicesStarted = null)
+            Action notifyServicesStarted = null,
+            ConfigManager configManager = null)
         {
             CreatePersistenceAsync = createPersistenceAsync ?? throw new ArgumentNullException(nameof(createPersistenceAsync));
             InitializeSystems = initializeSystems ?? throw new ArgumentNullException(nameof(initializeSystems));
             RegisterServices = registerServices ?? throw new ArgumentNullException(nameof(registerServices));
             ReadConsoleLineAsync = readConsoleLineAsync ?? throw new ArgumentNullException(nameof(readConsoleLineAsync));
             NotifyServicesStarted = notifyServicesStarted ?? (() => { });
+            ConfigManager = configManager ?? ConfigManager.Instance;
         }
 
         public Func<Action<PersistenceFatalFailure>, CancellationToken, Task<PersistenceRuntime>> CreatePersistenceAsync { get; }
@@ -36,6 +38,7 @@ namespace MHServerEmu
         public Action<ServerManager, PersistenceServices, AccountManager> RegisterServices { get; }
         public Func<Task<string>> ReadConsoleLineAsync { get; }
         public Action NotifyServicesStarted { get; }
+        public ConfigManager ConfigManager { get; }
 
         public static ServerStartupDependencies CreateProduction()
         {
@@ -44,7 +47,8 @@ namespace MHServerEmu
                 ServerApp.InitializeProductionSystems,
                 RegisterProductionServices,
                 Console.In.ReadLineAsync,
-                () => LiveTuningEventScheduler.Instance.SendEventMessageTextToGroupingManager());
+                () => LiveTuningEventScheduler.Instance.SendEventMessageTextToGroupingManager(),
+                ConfigManager.Instance);
         }
 
         private static void RegisterProductionServices(ServerManager serverManager, PersistenceServices persistence, AccountManager accountManager)
