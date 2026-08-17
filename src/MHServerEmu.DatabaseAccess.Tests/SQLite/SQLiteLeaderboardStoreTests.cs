@@ -260,7 +260,7 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
         }
 
         [Fact]
-        public void SaveScoreBatch_PersistsLargeSignedBatchAndExactReplay()
+        public void SaveScoreBatch_PersistsLargeSignedBatchAndUpdatesExistingRows()
         {
             using SQLiteLeaderboardStoreFixture fixture = new();
             fixture.InsertDefinition(1, activeInstanceId: 10);
@@ -279,25 +279,28 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
             Assert.Equal(long.MaxValue, fixture.ReadScalar("SELECT HighScore FROM Entries WHERE InstanceId = @instanceId AND ParticipantId = @participantId",
                 ("@instanceId", 10L), ("@participantId", highBitParticipantId)));
             Assert.Equal(new byte[] { 246, 3 }, fixture.ReadEntryRuleStates(10, highBitParticipantId));
-            Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.SaveScoreBatch(request));
+
+            LeaderboardScoreBatch replacement = new(1, 10, LeaderboardState.eLBS_Active,
+                new[] { new LeaderboardEntryWrite(10, highBitParticipantId, long.MaxValue, long.MinValue, new byte[] { 9, 8, 7 }) });
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.SaveScoreBatch(replacement));
+            Assert.Equal(1000, fixture.ReadScalar("SELECT COUNT(*) FROM Entries WHERE InstanceId = 10"));
+            Assert.Equal(long.MaxValue, fixture.ReadScalar("SELECT Score FROM Entries WHERE InstanceId = @instanceId AND ParticipantId = @participantId",
+                ("@instanceId", 10L), ("@participantId", highBitParticipantId)));
+            Assert.Equal(long.MinValue, fixture.ReadScalar("SELECT HighScore FROM Entries WHERE InstanceId = @instanceId AND ParticipantId = @participantId",
+                ("@instanceId", 10L), ("@participantId", highBitParticipantId)));
+            Assert.Equal(new byte[] { 9, 8, 7 }, fixture.ReadEntryRuleStates(10, highBitParticipantId));
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.SaveScoreBatch(replacement));
         }
 
         [Fact]
-        public void SaveScoreBatch_RejectsReplayMismatchAndInvalidBatchWithoutPartialWrites()
+        public void SaveScoreBatch_RejectsInvalidBatchWithoutPartialWrites()
         {
             using SQLiteLeaderboardStoreFixture fixture = new();
             fixture.InsertDefinition(1, activeInstanceId: 10);
             fixture.InsertInstance(10, 1, visible: true, state: (int)LeaderboardState.eLBS_Active);
-            LeaderboardEntryWrite entry = new(10, 20, 30, 40, new byte[] { 1, 2 });
-
-            Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.SaveScoreBatch(new(1, 10, LeaderboardState.eLBS_Active, new[] { entry })));
-            Assert.Equal(LeaderboardStoreResult.Conflict, fixture.Store.SaveScoreBatch(new(1, 10, LeaderboardState.eLBS_Active,
-                new[] { new LeaderboardEntryWrite(10, 20, 30, 40, new byte[] { 1, 3 }) })));
-            Assert.Equal(new byte[] { 1, 2 }, fixture.ReadEntryRuleStates(10, 20));
-
             Assert.Equal(LeaderboardStoreResult.InvalidData, fixture.Store.SaveScoreBatch(new(1, 10, LeaderboardState.eLBS_Active,
                 new[] { new LeaderboardEntryWrite(10, 21, 1, 1, new byte[] { 1 }), new LeaderboardEntryWrite(10, 21, 2, 2, new byte[] { 2 }) })));
-            Assert.Equal(1, fixture.ReadScalar("SELECT COUNT(*) FROM Entries WHERE InstanceId = 10"));
+            Assert.Equal(0, fixture.ReadScalar("SELECT COUNT(*) FROM Entries WHERE InstanceId = 10"));
         }
 
         [Fact]
@@ -313,11 +316,24 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
 
             fixture.InsertDefinition(2, activeInstanceId: 20);
             fixture.InsertInstance(20, 2, visible: true, state: (int)LeaderboardState.eLBS_Active);
-            Assert.Equal(LeaderboardStoreResult.Conflict, fixture.Store.SaveScoreBatch(new(1, 20, LeaderboardState.eLBS_Active, Array.Empty<LeaderboardEntryWrite>())));
+            Assert.Equal(LeaderboardStoreResult.InvalidData, fixture.Store.SaveScoreBatch(new(1, 20, LeaderboardState.eLBS_Active, Array.Empty<LeaderboardEntryWrite>())));
 
             fixture.Store.UpdateInstanceState(10, (int)LeaderboardState.eLBS_Active);
             Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.SaveScoreBatch(new(1, 10, LeaderboardState.eLBS_Active, Array.Empty<LeaderboardEntryWrite>())));
             Assert.Equal(0, fixture.ReadScalar("SELECT COUNT(*) FROM Entries WHERE InstanceId = 10"));
+        }
+
+        [Fact]
+        public void SaveScoreBatch_ReturnsInvalidDataForPersistedNullRuleStates()
+        {
+            using SQLiteLeaderboardStoreFixture fixture = new();
+            fixture.InsertDefinition(1, activeInstanceId: 10);
+            fixture.InsertInstance(10, 1, visible: true, state: (int)LeaderboardState.eLBS_Active);
+            fixture.InsertEntry(10, 20, null);
+
+            Assert.Equal(LeaderboardStoreResult.InvalidData, fixture.Store.SaveScoreBatch(new(1, 10, LeaderboardState.eLBS_Active,
+                new[] { new LeaderboardEntryWrite(10, 20, 30, 40, new byte[] { 1 }) })));
+            Assert.Null(fixture.ReadEntryRuleStatesOrNull(10, 20));
         }
 
         [Fact]
@@ -374,6 +390,25 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
             Assert.Equal(LeaderboardStoreResult.Conflict, fixture.Store.ExpireInstance(new(1, 10, 10, LeaderboardState.eLBS_Active,
                 new[] { new LeaderboardEntryWrite(10, 20, 30, 41, new byte[] { 1 }) })));
             Assert.Equal(40, fixture.ReadScalar("SELECT HighScore FROM Entries WHERE InstanceId = 10 AND ParticipantId = 20"));
+        }
+
+        [Fact]
+        public void ExpireInstance_ReturnsInvalidDataForCrossLeaderboardOwnershipAndPersistedNullRuleStates()
+        {
+            using SQLiteLeaderboardStoreFixture ownership = new();
+            ownership.InsertDefinition(1, activeInstanceId: 10);
+            ownership.InsertDefinition(2, activeInstanceId: 20);
+            ownership.InsertInstance(10, 1, visible: true, state: (int)LeaderboardState.eLBS_Active);
+            ownership.InsertInstance(20, 2, visible: true, state: (int)LeaderboardState.eLBS_Active);
+            Assert.Equal(LeaderboardStoreResult.InvalidData, ownership.Store.ExpireInstance(new(1, 10, 20, LeaderboardState.eLBS_Active,
+                Array.Empty<LeaderboardEntryWrite>())));
+
+            using SQLiteLeaderboardStoreFixture nullRuleStates = new();
+            nullRuleStates.InsertDefinition(1, activeInstanceId: 10);
+            nullRuleStates.InsertInstance(10, 1, visible: true, state: (int)LeaderboardState.eLBS_Expired);
+            nullRuleStates.InsertEntry(10, 20, null);
+            Assert.Equal(LeaderboardStoreResult.InvalidData, nullRuleStates.Store.ExpireInstance(new(1, 10, 10, LeaderboardState.eLBS_Active,
+                new[] { new LeaderboardEntryWrite(10, 20, 3, 4, new byte[] { 1 }) })));
         }
 
         [Fact]
@@ -496,6 +531,25 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
 
             Assert.Equal(LeaderboardStoreResult.InvalidData, overflow.Store.RotateActiveInstance(overflowRequest, out _));
             Assert.Equal(maximumInstanceId, overflow.ReadScalar("SELECT ActiveInstanceId FROM Leaderboards WHERE LeaderboardId = @leaderboardId", ("@leaderboardId", leaderboardId)));
+        }
+
+        [Fact]
+        public void RotateActiveInstance_RejectsZeroIdReplayForSameShapedDifferentActiveInstance()
+        {
+            using SQLiteLeaderboardStoreFixture fixture = new();
+            fixture.InsertDefinition(1, activeInstanceId: 1);
+            fixture.InsertInstance(1, 1, visible: true, state: (int)LeaderboardState.eLBS_Expired);
+            LeaderboardRotation request = new(1, 1, LeaderboardState.eLBS_Expired, LeaderboardState.eLBS_Expired,
+                new LeaderboardInstanceSpec(0, 1, LeaderboardState.eLBS_Created, 200, true), LeaderboardState.eLBS_Created,
+                Array.Empty<LeaderboardMetaMapping>());
+
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.RotateActiveInstance(request, out DBLeaderboardInstance committed));
+            Assert.Equal(2, committed.InstanceId);
+            fixture.InsertInstance(3, 1, visible: true, state: (int)LeaderboardState.eLBS_Created, activationDate: 200);
+            fixture.UpdateActiveInstance(1, 3);
+
+            Assert.Equal(LeaderboardStoreResult.StaleState, fixture.Store.RotateActiveInstance(request, out DBLeaderboardInstance replay));
+            Assert.Null(replay);
         }
 
         [Fact]
@@ -843,6 +897,15 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
             command.Parameters.AddWithValue("@instanceId", instanceId);
             command.Parameters.AddWithValue("@participantId", participantId);
             return (byte[])command.ExecuteScalar();
+        }
+
+        public byte[] ReadEntryRuleStatesOrNull(long instanceId, long participantId)
+        {
+            using SQLiteConnection connection = OpenConnection();
+            using SQLiteCommand command = new("SELECT RuleStates FROM Entries WHERE InstanceId = @instanceId AND ParticipantId = @participantId", connection);
+            command.Parameters.AddWithValue("@instanceId", instanceId);
+            command.Parameters.AddWithValue("@participantId", participantId);
+            return command.ExecuteScalar() as byte[];
         }
 
         public bool ReadInstanceVisible(long instanceId)
