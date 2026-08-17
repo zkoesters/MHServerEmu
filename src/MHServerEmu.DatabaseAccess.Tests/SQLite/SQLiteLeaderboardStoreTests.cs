@@ -131,6 +131,25 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
             Assert.Empty(emptyEntries);
         }
 
+        [Fact]
+        public void LoadMetaMappings_ReturnsOwnedParentMappingsAndEmptyForMissingOrMismatchedParents()
+        {
+            using SQLiteLeaderboardStoreFixture fixture = new();
+            fixture.InsertDefinition(1, activeInstanceId: 10);
+            fixture.InsertDefinition(2, activeInstanceId: 20);
+            fixture.InsertInstance(10, 1, visible: true);
+            fixture.InsertInstance(20, 2, visible: true);
+            fixture.InsertMetaMapping(1, 10, 2, 20);
+
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.LoadMetaMappings(1, 10, out IReadOnlyList<LeaderboardMetaMapping> mappings));
+            Assert.Equal(new[] { new LeaderboardMetaMapping(1, 10, 2, 20) }, mappings);
+
+            Assert.Equal(LeaderboardStoreResult.NotFound, fixture.Store.LoadMetaMappings(1, 999, out IReadOnlyList<LeaderboardMetaMapping> missing));
+            Assert.Empty(missing);
+            Assert.Equal(LeaderboardStoreResult.NotFound, fixture.Store.LoadMetaMappings(2, 10, out IReadOnlyList<LeaderboardMetaMapping> mismatched));
+            Assert.Empty(mismatched);
+        }
+
         [Theory]
         [InlineData(0)]
         [InlineData(101)]

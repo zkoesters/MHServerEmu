@@ -374,7 +374,8 @@ namespace MHServerEmu.Leaderboards
                     continue;
                 }
 
-                var leaderboard = new Leaderboard(proto, dbLeaderboard);
+                var leaderboard = new Leaderboard(this, proto, dbLeaderboard,
+                    DBManager.GetInstances(dbLeaderboard.LeaderboardId, proto.MaxArchivedInstances));
                 if (proto.IsMetaLeaderboard)
                     _metaLeaderboards.Add(leaderboardId, leaderboard);
                 else
@@ -505,6 +506,77 @@ namespace MHServerEmu.Leaderboards
 
             entries = DBManager.GetEntries(instanceId, false);
             return true;
+        }
+
+        internal bool TryLoadInstance(long leaderboardId, long instanceId, out DBLeaderboardInstance instance)
+        {
+            if (_store != null)
+                return _store.LoadInstance(leaderboardId, instanceId, out instance) == LeaderboardStoreResult.Success;
+            instance = DBManager.GetInstance(leaderboardId, instanceId);
+            return instance != null;
+        }
+
+        internal bool ActivateInstance(long leaderboardId, long instanceId, LeaderboardState state)
+        {
+            if (_store != null)
+                return state == LeaderboardState.eLBS_Active && _store.ActivateInstance(new LeaderboardActivation(leaderboardId, instanceId, instanceId)) == LeaderboardStoreResult.Success;
+            return DBManager.UpdateActiveInstanceState(leaderboardId, instanceId, (int)state);
+        }
+
+        internal void SaveEntries(long leaderboardId, long instanceId, IEnumerable<DBLeaderboardEntry> entries)
+        {
+            if (_store != null)
+                _store.SaveScoreBatch(new LeaderboardScoreBatch(leaderboardId, instanceId, LeaderboardState.eLBS_Active, entries));
+            else
+                DBManager.UpdateOrInsertEntries(entries.ToList());
+        }
+
+        internal void UpdateInstanceState(long leaderboardId, long instanceId, LeaderboardState state)
+        {
+            if (_store == null)
+                DBManager.UpdateInstanceState(instanceId, (int)state);
+        }
+
+        internal void InsertInstance(DBLeaderboardInstance instance)
+        {
+            if (_store == null)
+                DBManager.InsertInstance(instance);
+        }
+
+        internal void InsertMetaEntries(IEnumerable<DBMetaEntry> entries)
+        {
+            if (_store == null)
+                DBManager.InsertMetaEntries(entries.ToList());
+        }
+
+        internal IReadOnlyList<DBMetaEntry> GetMetaEntries(long leaderboardId, long instanceId)
+        {
+            if (_store == null)
+                return DBManager.GetMetaEntries(leaderboardId, instanceId);
+
+            return _store.LoadMetaMappings(leaderboardId, instanceId, out IReadOnlyList<LeaderboardMetaMapping> mappings) == LeaderboardStoreResult.Success
+                ? mappings.Select(mapping => new DBMetaEntry
+                {
+                    LeaderboardId = mapping.LeaderboardId,
+                    InstanceId = mapping.InstanceId,
+                    SubLeaderboardId = mapping.SubLeaderboardId,
+                    SubInstanceId = mapping.SubInstanceId,
+                }).ToArray()
+                : Array.Empty<DBMetaEntry>();
+        }
+
+        internal void GenerateRewards(long leaderboardId, long instanceId, IEnumerable<DBRewardEntry> rewards)
+        {
+            if (_store == null)
+                DBManager.InsertRewards(rewards.ToList());
+        }
+
+        internal void Publish(ServiceMessage.LeaderboardStateChange change)
+        {
+            if (_publisher != null)
+                _publisher.Publish(change);
+            else
+                ServerManager.Instance.SendMessageToService(GameServiceType.GameInstance, change);
         }
 
         /// <summary>

@@ -115,6 +115,48 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
             return LeaderboardStoreResult.Failed;
         }
 
+        public LeaderboardStoreResult LoadMetaMappings(long leaderboardId, long instanceId, out IReadOnlyList<LeaderboardMetaMapping> mappings)
+        {
+            mappings = Array.Empty<LeaderboardMetaMapping>();
+            try
+            {
+                PostgreSQLReadResult<(bool Found, IReadOnlyList<LeaderboardMetaMapping> Mappings)> read = _executor.ExecuteReadAsync("LeaderboardLoadMetaMappings", async (connection, deadline, cancellationToken) =>
+                {
+                    await using NpgsqlCommand parent = new($"SELECT 1 FROM {InstanceTable} WHERE leaderboard_id = @leaderboardId AND instance_id = @instanceId", connection)
+                    {
+                        CommandTimeout = deadline.RemainingCommandTimeoutSeconds,
+                    };
+                    parent.Parameters.AddWithValue("leaderboardId", NpgsqlDbType.Bigint, leaderboardId);
+                    parent.Parameters.AddWithValue("instanceId", NpgsqlDbType.Bigint, instanceId);
+                    if (await parent.ExecuteScalarAsync(cancellationToken) == null)
+                        return (false, (IReadOnlyList<LeaderboardMetaMapping>)Array.Empty<LeaderboardMetaMapping>());
+
+                    await using NpgsqlCommand command = new($@"SELECT leaderboard_id, instance_id, sub_leaderboard_id, sub_instance_id FROM {MetaEntryTable}
+                        WHERE leaderboard_id = @leaderboardId AND instance_id = @instanceId
+                        ORDER BY sub_leaderboard_id", connection)
+                    {
+                        CommandTimeout = deadline.RemainingCommandTimeoutSeconds,
+                    };
+                    command.Parameters.AddWithValue("leaderboardId", NpgsqlDbType.Bigint, leaderboardId);
+                    command.Parameters.AddWithValue("instanceId", NpgsqlDbType.Bigint, instanceId);
+                    List<LeaderboardMetaMapping> loaded = new();
+                    await using NpgsqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
+                    while (await reader.ReadAsync(cancellationToken))
+                        loaded.Add(new LeaderboardMetaMapping(reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3)));
+                    return (true, (IReadOnlyList<LeaderboardMetaMapping>)loaded.ToArray());
+                }).GetAwaiter().GetResult();
+                if (read.Succeeded)
+                {
+                    mappings = read.Value.Mappings;
+                    return read.Value.Found ? LeaderboardStoreResult.Success : LeaderboardStoreResult.NotFound;
+                }
+            }
+            catch
+            {
+            }
+            return LeaderboardStoreResult.Failed;
+        }
+
         public LeaderboardStoreResult LoadVisibleInstances(long leaderboardId, long beforeInstanceId, int limit, out IReadOnlyList<DBLeaderboardInstance> instances)
         {
             instances = Array.Empty<DBLeaderboardInstance>();

@@ -40,11 +40,12 @@ namespace MHServerEmu.DatabaseAccess.Tests.Capabilities
             Type storeType = typeof(ILeaderboardStore);
             MethodInfo[] methods = storeType.GetMethods();
 
-            Assert.Equal(13, methods.Length);
+            Assert.Equal(14, methods.Length);
             AssertMethod(methods, nameof(ILeaderboardStore.Initialize), typeof(LeaderboardStoreResult));
             AssertMethod(methods, nameof(ILeaderboardStore.ReconcileSchedule), typeof(LeaderboardStoreResult), new[] { typeof(LeaderboardReconciliation), typeof(LeaderboardSnapshot).MakeByRefType() }, 1);
             AssertMethod(methods, nameof(ILeaderboardStore.LoadEntries), typeof(LeaderboardStoreResult), new[] { typeof(long), typeof(IReadOnlyList<DBLeaderboardEntry>).MakeByRefType() }, 1);
             AssertMethod(methods, nameof(ILeaderboardStore.LoadInstance), typeof(LeaderboardStoreResult), new[] { typeof(long), typeof(long), typeof(DBLeaderboardInstance).MakeByRefType() }, 2);
+            AssertMethod(methods, "LoadMetaMappings", typeof(LeaderboardStoreResult), new[] { typeof(long), typeof(long), typeof(IReadOnlyList<LeaderboardMetaMapping>).MakeByRefType() }, 2);
             AssertMethod(methods, nameof(ILeaderboardStore.LoadVisibleInstances), typeof(LeaderboardStoreResult), new[] { typeof(long), typeof(long), typeof(int), typeof(IReadOnlyList<DBLeaderboardInstance>).MakeByRefType() }, 3);
             AssertMethod(methods, nameof(ILeaderboardStore.ActivateInstance), typeof(LeaderboardStoreResult), new[] { typeof(LeaderboardActivation) });
             AssertMethod(methods, nameof(ILeaderboardStore.SaveScoreBatch), typeof(LeaderboardStoreResult), new[] { typeof(LeaderboardScoreBatch) });

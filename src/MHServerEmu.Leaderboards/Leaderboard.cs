@@ -27,12 +27,6 @@ namespace MHServerEmu.Leaderboards
         /// <summary>
         /// Constructs a <see cref="Leaderboard"/> for the provided <see cref="LeaderboardPrototype"/>.
         /// </summary>
-        public Leaderboard(LeaderboardPrototype proto, DBLeaderboard dbLeaderboard)
-            : this(LeaderboardDatabase.Instance, proto, dbLeaderboard,
-                LeaderboardDatabase.Instance.DBManager.GetInstances(dbLeaderboard.LeaderboardId, proto.MaxArchivedInstances))
-        {
-        }
-
         internal Leaderboard(LeaderboardDatabase database, LeaderboardPrototype proto, DBLeaderboard dbLeaderboard, IEnumerable<DBLeaderboardInstance> instances)
         {
             _database = database;
@@ -79,8 +73,7 @@ namespace MHServerEmu.Leaderboards
         /// </summary>
         public bool SetActiveInstance(ulong activeInstanceId, LeaderboardState state, bool savePreviousActiveInstance = false)
         {
-            var dbManager = LeaderboardDatabase.Instance.DBManager;
-            bool activate = dbManager.UpdateActiveInstanceState((long)LeaderboardId, (long)activeInstanceId, (int)state);
+            bool activate = _database.ActivateInstance((long)LeaderboardId, (long)activeInstanceId, state);
 
             if (savePreviousActiveInstance && ActiveInstance != null && ActiveInstance.InstanceId != activeInstanceId)
                 ActiveInstance.SaveEntries();
@@ -136,9 +129,7 @@ namespace MHServerEmu.Leaderboards
             if (instance == null && loadFromDb)
             {
                 // If not found, this instance may not be loaded from the database
-                var dbManager = LeaderboardDatabase.Instance.DBManager;
-                DBLeaderboardInstance dbInstance = dbManager.GetInstance((long)LeaderboardId, (long)instanceId);
-                if (dbInstance == null)
+                if (_database.TryLoadInstance((long)LeaderboardId, (long)instanceId, out DBLeaderboardInstance dbInstance) == false)
                     return Logger.WarnReturn(instance, $"GetInstance(): Failed to find instance for id {instanceId}");
 
                 instance = AddInstance(dbInstance, true);
@@ -266,8 +257,7 @@ namespace MHServerEmu.Leaderboards
         private void AddNewInstance(DBLeaderboardInstance dbInstance, LeaderboardInstance previousInstance)
         {
             Logger.Info($"AddNewInstance(): {Prototype.DataRef.GetNameFormatted()} {dbInstance.InstanceId}");
-            var dbManager = LeaderboardDatabase.Instance.DBManager;
-            dbManager.InsertInstance(dbInstance);
+            _database.InsertInstance(dbInstance);
 
             // add new SubInstances
             previousInstance?.AddNewMetaEntries((ulong)dbInstance.InstanceId);
@@ -287,7 +277,7 @@ namespace MHServerEmu.Leaderboards
                 return;
 
             var changeMessage = instance.BuildLeaderboardStateChange(state);
-            ServerManager.Instance.SendMessageToService(GameServiceType.GameInstance, changeMessage);
+            _database.Publish(changeMessage);
         }
 
         /// <summary>

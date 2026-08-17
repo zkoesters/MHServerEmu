@@ -18,6 +18,13 @@ namespace MHServerEmu.DatabaseAccess
         LeaderboardStoreResult LoadEntries(long instanceId, out IReadOnlyList<DBLeaderboardEntry> entries);
         LeaderboardStoreResult LoadInstance(long leaderboardId, long instanceId, out DBLeaderboardInstance instance);
         /// <summary>
+        /// Loads detached metadata mappings for one owned leaderboard instance.
+        /// </summary>
+        /// <remarks>
+        /// Missing or mismatched parents return <see cref="LeaderboardStoreResult.NotFound"/> with an empty <paramref name="mappings"/> output.
+        /// </remarks>
+        LeaderboardStoreResult LoadMetaMappings(long leaderboardId, long instanceId, out IReadOnlyList<LeaderboardMetaMapping> mappings);
+        /// <summary>
         /// Loads one bounded page of visible instances in descending instance-ID order.
         /// </summary>
         /// <remarks>

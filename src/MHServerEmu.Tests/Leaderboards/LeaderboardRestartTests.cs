@@ -35,6 +35,25 @@ namespace MHServerEmu.Tests.Leaderboards
             Assert.NotSame(first.GetLeaderboards(), second.GetLeaderboards());
         }
 
+        [Fact]
+        public void GetMetaEntries_LoadsPersistedMappingsFromStore()
+        {
+            RecordingStore store = new(null)
+            {
+                MetaMappings = [new LeaderboardMetaMapping(1, 10, 2, 20)],
+            };
+            LeaderboardDatabase database = CreateDatabase(store, "mappings.json");
+
+            IReadOnlyList<DBMetaEntry> mappings = Assert.IsAssignableFrom<IReadOnlyList<DBMetaEntry>>(typeof(LeaderboardDatabase)
+                .GetMethod("GetMetaEntries", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                .Invoke(database, [1L, 10L]));
+
+            DBMetaEntry mapping = Assert.Single(mappings);
+            Assert.Equal(2, mapping.SubLeaderboardId);
+            Assert.Equal(20, mapping.SubInstanceId);
+            Assert.Contains("LoadMetaMappings", store.Calls);
+        }
+
         private static LeaderboardDatabase CreateDatabase(ILeaderboardStore store, string schedulePath)
         {
             return new LeaderboardDatabase(store, new NameResolver(), new TestCatalog(
@@ -62,6 +81,7 @@ namespace MHServerEmu.Tests.Leaderboards
         private sealed class RecordingStore(string schedulePath) : ILeaderboardStore
         {
             public List<string> Calls { get; } = new();
+            public IReadOnlyList<LeaderboardMetaMapping> MetaMappings { get; init; } = Array.Empty<LeaderboardMetaMapping>();
 
             public LeaderboardStoreResult Initialize()
             {
@@ -78,6 +98,7 @@ namespace MHServerEmu.Tests.Leaderboards
 
             public LeaderboardStoreResult LoadEntries(long instanceId, out IReadOnlyList<DBLeaderboardEntry> entries) { entries = Array.Empty<DBLeaderboardEntry>(); return LeaderboardStoreResult.NotFound; }
             public LeaderboardStoreResult LoadInstance(long leaderboardId, long instanceId, out DBLeaderboardInstance instance) { instance = null; return LeaderboardStoreResult.NotFound; }
+            public LeaderboardStoreResult LoadMetaMappings(long leaderboardId, long instanceId, out IReadOnlyList<LeaderboardMetaMapping> mappings) { Calls.Add("LoadMetaMappings"); mappings = MetaMappings; return LeaderboardStoreResult.Success; }
             public LeaderboardStoreResult LoadVisibleInstances(long leaderboardId, long beforeInstanceId, int limit, out IReadOnlyList<DBLeaderboardInstance> instances) { instances = Array.Empty<DBLeaderboardInstance>(); return LeaderboardStoreResult.Success; }
             public LeaderboardStoreResult ActivateInstance(LeaderboardActivation request) => LeaderboardStoreResult.Failed;
             public LeaderboardStoreResult SaveScoreBatch(LeaderboardScoreBatch request) => LeaderboardStoreResult.Failed;

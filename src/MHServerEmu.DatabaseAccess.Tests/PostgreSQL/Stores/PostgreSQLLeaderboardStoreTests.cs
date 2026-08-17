@@ -59,6 +59,25 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
         }
 
         [PostgreSQLIntegrationFact]
+        public async Task LoadMetaMappings_ReturnsOwnedParentMappingsAndEmptyForMissingOrMismatchedParents()
+        {
+            await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
+            await InsertDefinitionAsync(fixture, 1);
+            await InsertDefinitionAsync(fixture, 2);
+            await InsertInstanceAsync(fixture, 10, 1, true);
+            await InsertInstanceAsync(fixture, 20, 2, true);
+            await InsertMappingAsync(fixture, 10, 1, 2, 20);
+
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Leaderboards.LoadMetaMappings(1, 10, out IReadOnlyList<LeaderboardMetaMapping> mappings));
+            Assert.Equal(new[] { new LeaderboardMetaMapping(1, 10, 2, 20) }, mappings);
+
+            Assert.Equal(LeaderboardStoreResult.NotFound, fixture.Leaderboards.LoadMetaMappings(1, 999, out IReadOnlyList<LeaderboardMetaMapping> missing));
+            Assert.Empty(missing);
+            Assert.Equal(LeaderboardStoreResult.NotFound, fixture.Leaderboards.LoadMetaMappings(2, 10, out IReadOnlyList<LeaderboardMetaMapping> mismatched));
+            Assert.Empty(mismatched);
+        }
+
+        [PostgreSQLIntegrationFact]
         public async Task LoadVisibleInstances_ValidatesBoundsAndPaginatesUnsignedIds()
         {
             await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);

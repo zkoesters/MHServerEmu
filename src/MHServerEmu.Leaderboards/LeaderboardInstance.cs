@@ -48,14 +48,6 @@ namespace MHServerEmu.Leaderboards
             InstanceId = (ulong)dbInstance.InstanceId;
             State = dbInstance.State;
 
-            if (dbInstance.ActivationDate == 0 && leaderboard.CanReset)
-            {
-                DateTime activationDate = _leaderboard.Scheduler.CalcNextUtcActivationDate();
-                dbInstance.SetActivationDateTime(activationDate);
-                var dbManager = LeaderboardDatabase.Instance.DBManager;
-                dbManager.UpdateInstanceActivationDate(dbInstance);
-            }
-
             ActivationTime = dbInstance.GetActivationDateTime();
             ExpirationTime = _leaderboard.Scheduler.CalcExpirationTime(ActivationTime);
             Visible = dbInstance.Visible;
@@ -254,8 +246,7 @@ namespace MHServerEmu.Leaderboards
             // Query the subleaderboard's instance id from the database if we don't have one
             if (metaEntry.SubInstanceId == 0)
             {
-                var dbManager = LeaderboardDatabase.Instance.DBManager;
-                metaEntry.SubInstanceId = (ulong)dbManager.GetSubInstanceId((long)LeaderboardId, (long)InstanceId, (long)metaEntry.SubLeaderboardId);
+                return false;
             }
 
             if (metaEntry.SubInstanceId == 0)
@@ -270,8 +261,7 @@ namespace MHServerEmu.Leaderboards
         /// </summary>
         public void LoadMetaEntries()
         {
-            var dbManager = LeaderboardDatabase.Instance.DBManager;
-            foreach (DBMetaEntry dbMetaEntry in dbManager.GetMetaEntries((long)LeaderboardId, (long)InstanceId))
+            foreach (DBMetaEntry dbMetaEntry in _leaderboard.Database.GetMetaEntries((long)LeaderboardId, (long)InstanceId))
                 SetSubInstance((PrototypeGuid)dbMetaEntry.SubLeaderboardId, (ulong)dbMetaEntry.SubInstanceId);
         }
 
@@ -295,8 +285,7 @@ namespace MHServerEmu.Leaderboards
                     });
             }
 
-            var dbManager = LeaderboardDatabase.Instance.DBManager;
-            dbManager.InsertMetaEntries(metaEntries);
+            _leaderboard.Database.InsertMetaEntries(metaEntries);
         }
 
         /// <summary>
@@ -306,7 +295,7 @@ namespace MHServerEmu.Leaderboards
         {
             lock (_lock)
             {
-                Leaderboard leaderboard = LeaderboardDatabase.Instance.GetLeaderboard(subLeaderboardId);
+                Leaderboard leaderboard = _leaderboard.Database.GetLeaderboard(subLeaderboardId);
                 if (leaderboard == null)
                     return;
                 
@@ -407,8 +396,7 @@ namespace MHServerEmu.Leaderboards
                     }
                 }
 
-                var dbManager = LeaderboardDatabase.Instance.DBManager;
-                dbManager.UpdateOrInsertEntries(dbEntries);
+                _leaderboard.Database.SaveEntries((long)LeaderboardId, (long)InstanceId, dbEntries);
 
                 ScheduleNextAutoSave();
             }
@@ -446,7 +434,7 @@ namespace MHServerEmu.Leaderboards
                 ulong participantId = update.ParticipantId;
                 if (_entryMap.TryGetValue(participantId, out LeaderboardEntry entry) == false)   
                 {
-                    entry = new(ref update);
+                    entry = new(ref update, _leaderboard.Database.GetPlayerNameById);
                     Entries.Add(entry);
                     _entryMap.Add(participantId, entry);
                 }
@@ -497,8 +485,7 @@ namespace MHServerEmu.Leaderboards
                 if (LeaderboardPrototype.IsMetaLeaderboard)
                     GetMetaRewards(rewardsList);
 
-                var dbManager = LeaderboardDatabase.Instance.DBManager;
-                dbManager.InsertRewards(rewardsList);
+                _leaderboard.Database.GenerateRewards((long)LeaderboardId, (long)InstanceId, rewardsList);
             }
 
             return true;
@@ -687,8 +674,7 @@ namespace MHServerEmu.Leaderboards
         /// </summary>
         public void UpdateDBState(LeaderboardState state)
         {
-            var dbManager = LeaderboardDatabase.Instance.DBManager;
-            dbManager.UpdateInstanceState((long)InstanceId, (int)state);
+            _leaderboard.Database.UpdateInstanceState((long)LeaderboardId, (long)InstanceId, state);
         }
 
         /// <summary>
