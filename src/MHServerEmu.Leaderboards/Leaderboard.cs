@@ -2,6 +2,8 @@
 using Gazillion;
 using MHServerEmu.Core.Logging;
 using MHServerEmu.Core.Network;
+using MHServerEmu.Core.System.Time;
+using MHServerEmu.DatabaseAccess;
 using MHServerEmu.DatabaseAccess.Models.Leaderboards;
 using MHServerEmu.Games.GameData;
 using MHServerEmu.Games.GameData.Prototypes;
@@ -74,13 +76,19 @@ namespace MHServerEmu.Leaderboards
         /// </summary>
         public bool SetActiveInstance(ulong activeInstanceId, LeaderboardState state, bool savePreviousActiveInstance = false)
         {
-            bool activate = _database.ActivateInstance((long)LeaderboardId, (long)activeInstanceId, state);
+            if (state != LeaderboardState.eLBS_Active)
+                return false;
 
             if (savePreviousActiveInstance && ActiveInstance != null && ActiveInstance.InstanceId != activeInstanceId)
-                ActiveInstance.SaveEntries();
+                if (ActiveInstance.SaveEntries() == false)
+                    return false;
+
+            long expectedActiveInstanceId = (long)(ActiveInstance?.InstanceId ?? activeInstanceId);
+            if (_database.PersistActivation(new((long)LeaderboardId, expectedActiveInstanceId, (long)activeInstanceId)) != LeaderboardStoreResult.Success)
+                return false;
 
             ActiveInstance = GetInstance(activeInstanceId);
-            return activate;
+            return ActiveInstance != null;
         }
 
         /// <summary>
@@ -172,7 +180,8 @@ namespace MHServerEmu.Leaderboards
 
                             if (instance.IsExpired(updateTime))
                             {
-                                instance.SetState(LeaderboardState.eLBS_Expired);
+                                if (instance.SetState(LeaderboardState.eLBS_Expired) == false)
+                                    break;
 
                                 if (CanReset && newInstanceDb == null && Scheduler.IsEnabled)
                                 {
@@ -190,8 +199,7 @@ namespace MHServerEmu.Leaderboards
 
                                     newInstanceDb.SetActivationDateTime(nextActivationTime);
 
-                                    if (Prototype.IsMetaLeaderboard)
-                                        previousInstance = instance;
+                                    previousInstance = instance;
                                 }
                             }
                             else
@@ -204,8 +212,6 @@ namespace MHServerEmu.Leaderboards
                                     }
                                     else
                                     {
-                                        instance.UpdateDBState(LeaderboardState.eLBS_Rewarded);
-                                        instance.SetState(LeaderboardState.eLBS_Rewarded);
                                         break;
                                     }
                                 }
@@ -217,19 +223,10 @@ namespace MHServerEmu.Leaderboards
 
                         case LeaderboardState.eLBS_Expired:
 
-                            if (CanReset)
-                                instance.SetState(LeaderboardState.eLBS_Reward);
-
-                            break;
-
-                        case LeaderboardState.eLBS_Reward:
-
-                            if (instance.SetState(LeaderboardState.eLBS_RewardsPending))
-                                if (instance.GiveRewards())
-                                {
-                                    instance.UpdateDBState(LeaderboardState.eLBS_Rewarded);
-                                    instance.SetState(LeaderboardState.eLBS_Rewarded);
-                                }
+                            if (instance.SetState(LeaderboardState.eLBS_Rewarded)
+                                && _database.PersistVisibility(new((long)LeaderboardId, _database.Options.NormalArchiveLimit,
+                                    Clock.DateTimeToTimestamp(updateTime)), out _) != LeaderboardStoreResult.Success)
+                                Logger.Warn($"UpdateState(): Failed to maintain visibility for {LeaderboardId}");
 
                             break;
                     }
@@ -253,19 +250,21 @@ namespace MHServerEmu.Leaderboards
         }
 
         /// <summary>
-        /// Inserts the provided <see cref="DBLeaderboardInstance"/> into the database.
+        /// Commits the next instance and its meta mappings before exposing it to runtime callers.
         /// </summary>
-        private void AddNewInstance(DBLeaderboardInstance dbInstance, LeaderboardInstance previousInstance)
+        private bool AddNewInstance(DBLeaderboardInstance dbInstance, LeaderboardInstance previousInstance)
         {
-            Logger.Info($"AddNewInstance(): {Prototype.DataRef.GetNameFormatted()} {dbInstance.InstanceId}");
-            _database.InsertInstance(dbInstance);
+            Logger.Info($"AddNewInstance(): {LeaderboardId} {dbInstance.InstanceId}");
+            IEnumerable<DBMetaEntry> metaEntries = previousInstance?.GetNewMetaEntries((ulong)dbInstance.InstanceId) ?? Array.Empty<DBMetaEntry>();
+            if (_database.PersistRotation(new((long)LeaderboardId, (long)previousInstance.InstanceId,
+                LeaderboardState.eLBS_Expired, LeaderboardState.eLBS_Expired, dbInstance,
+                LeaderboardState.eLBS_Created, metaEntries), out DBLeaderboardInstance committedInstance) != LeaderboardStoreResult.Success)
+                return false;
 
-            // add new SubInstances
-            previousInstance?.AddNewMetaEntries((ulong)dbInstance.InstanceId);
-
-            AddInstance(dbInstance, true);
-            OnStateChange((ulong)dbInstance.InstanceId, dbInstance.State);
-            SetActiveInstance((ulong)dbInstance.InstanceId, dbInstance.State, true);
+            LeaderboardInstance instance = AddInstance(committedInstance, true);
+            ActiveInstance = instance;
+            OnStateChange(instance.InstanceId, instance.State);
+            return true;
         }
 
         /// <summary>

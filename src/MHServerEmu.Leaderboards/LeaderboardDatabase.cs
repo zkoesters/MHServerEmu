@@ -118,6 +118,7 @@ namespace MHServerEmu.Leaderboards
                 }
             }
 
+            PublishInitialState();
             IsInitialized = true;
             return true;
         }
@@ -556,16 +557,50 @@ namespace MHServerEmu.Leaderboards
         internal bool ActivateInstance(long leaderboardId, long instanceId, LeaderboardState state)
         {
             if (_store != null)
-                return state == LeaderboardState.eLBS_Active && _store.ActivateInstance(new LeaderboardActivation(leaderboardId, instanceId, instanceId)) == LeaderboardStoreResult.Success;
+                return state == LeaderboardState.eLBS_Active && PersistActivation(new LeaderboardActivation(leaderboardId, instanceId, instanceId)) == LeaderboardStoreResult.Success;
             return DBManager.UpdateActiveInstanceState(leaderboardId, instanceId, (int)state);
         }
 
-        internal void SaveEntries(long leaderboardId, long instanceId, IEnumerable<DBLeaderboardEntry> entries)
+        internal LeaderboardStoreResult PersistActivation(LeaderboardActivation request)
+        {
+            return _store?.ActivateInstance(request) ?? LeaderboardStoreResult.Failed;
+        }
+
+        internal LeaderboardStoreResult PersistExpiration(LeaderboardExpiration request)
+        {
+            return _store?.ExpireInstance(request) ?? LeaderboardStoreResult.Failed;
+        }
+
+        internal LeaderboardStoreResult PersistRotation(LeaderboardRotation request, out DBLeaderboardInstance committedInstance)
         {
             if (_store != null)
-                _store.SaveScoreBatch(new LeaderboardScoreBatch(leaderboardId, instanceId, LeaderboardState.eLBS_Active, entries));
-            else
-                DBManager.UpdateOrInsertEntries(entries.ToList());
+                return _store.RotateActiveInstance(request, out committedInstance);
+
+            committedInstance = null;
+            return LeaderboardStoreResult.Failed;
+        }
+
+        internal LeaderboardStoreResult PersistRewards(LeaderboardRewardGeneration request)
+        {
+            return _store?.GenerateRewards(request) ?? LeaderboardStoreResult.Failed;
+        }
+
+        internal LeaderboardStoreResult PersistVisibility(LeaderboardVisibilityRequest request, out LeaderboardVisibilitySnapshot snapshot)
+        {
+            if (_store != null)
+                return _store.MaintainVisibility(request, out snapshot);
+
+            snapshot = new();
+            return LeaderboardStoreResult.Failed;
+        }
+
+        internal LeaderboardStoreResult SaveEntries(long leaderboardId, long instanceId, IEnumerable<DBLeaderboardEntry> entries)
+        {
+            if (_store != null)
+                return _store.SaveScoreBatch(new LeaderboardScoreBatch(leaderboardId, instanceId, LeaderboardState.eLBS_Active, entries));
+
+            DBManager.UpdateOrInsertEntries(entries.ToList());
+            return LeaderboardStoreResult.Success;
         }
 
         internal void UpdateInstanceState(long leaderboardId, long instanceId, LeaderboardState state)
@@ -602,10 +637,15 @@ namespace MHServerEmu.Leaderboards
                 : Array.Empty<DBMetaEntry>();
         }
 
-        internal void GenerateRewards(long leaderboardId, long instanceId, IEnumerable<DBRewardEntry> rewards)
+        internal LeaderboardStoreResult GenerateRewards(long leaderboardId, long expectedActiveInstanceId, long instanceId,
+            IEnumerable<DBRewardEntry> rewards)
         {
-            if (_store == null)
-                DBManager.InsertRewards(rewards.ToList());
+            if (_store != null)
+                return PersistRewards(new LeaderboardRewardGeneration(leaderboardId, expectedActiveInstanceId, instanceId,
+                    LeaderboardState.eLBS_Expired, rewards));
+
+            DBManager.InsertRewards(rewards.ToList());
+            return LeaderboardStoreResult.Success;
         }
 
         internal void Publish(ServiceMessage.LeaderboardStateChange change)
@@ -614,6 +654,14 @@ namespace MHServerEmu.Leaderboards
                 _publisher.Publish(change);
             else
                 ServerManager.Instance.SendMessageToService(GameServiceType.GameInstance, change);
+        }
+
+        private void PublishInitialState()
+        {
+            List<ServiceMessage.LeaderboardStateChange> changes = new();
+            foreach (Leaderboard leaderboard in GetLeaderboards())
+                leaderboard.GetInstanceInfos(changes);
+            _publisher.Publish(changes);
         }
 
         /// <summary>
