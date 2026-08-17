@@ -24,10 +24,10 @@ namespace MHServerEmu.Leaderboards
             dbEntry.GetRuleStates(RuleStates);
         }
 
-        public LeaderboardEntry(ref ServiceMessage.LeaderboardScoreUpdate update)
+        public LeaderboardEntry(ref ServiceMessage.LeaderboardScoreUpdate update, Func<ulong, string> resolvePlayerName)
         {
             ParticipantId = update.ParticipantId;
-            Name = LeaderboardDatabase.Instance.GetPlayerNameById(ParticipantId);
+            Name = resolvePlayerName(ParticipantId);
         }
 
         public LeaderboardEntry(PrototypeGuid subLeaderboardId)

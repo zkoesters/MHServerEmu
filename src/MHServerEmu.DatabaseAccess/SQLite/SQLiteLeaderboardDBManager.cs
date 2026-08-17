@@ -189,6 +189,31 @@ namespace MHServerEmu.DatabaseAccess.SQLite
             }
         }
 
+        public LeaderboardStoreResult LoadMetaMappings(long leaderboardId, long instanceId, out IReadOnlyList<LeaderboardMetaMapping> mappings)
+        {
+            mappings = Array.Empty<LeaderboardMetaMapping>();
+            try
+            {
+                using SQLiteConnection connection = GetConnection();
+                if (connection.QuerySingleOrDefault<long?>("SELECT InstanceId FROM Instances WHERE LeaderboardId = @LeaderboardId AND InstanceId = @InstanceId",
+                    new { LeaderboardId = leaderboardId, InstanceId = instanceId }) == null)
+                    return LeaderboardStoreResult.NotFound;
+
+                mappings = connection.Query<DBMetaEntry>(@"
+                    SELECT LeaderboardId, InstanceId, SubLeaderboardId, SubInstanceId FROM MetaEntries
+                    WHERE LeaderboardId = @LeaderboardId AND InstanceId = @InstanceId
+                    ORDER BY SubLeaderboardId", new { LeaderboardId = leaderboardId, InstanceId = instanceId })
+                    .Select(LeaderboardMetaMapping.From)
+                    .ToArray();
+                return LeaderboardStoreResult.Success;
+            }
+            catch (Exception e)
+            {
+                Logger.Error($"LoadMetaMappings(): {e.Message}");
+                return LeaderboardStoreResult.Failed;
+            }
+        }
+
         public LeaderboardStoreResult LoadVisibleInstances(long leaderboardId, long beforeInstanceId, int limit, out IReadOnlyList<DBLeaderboardInstance> instances)
         {
             instances = Array.Empty<DBLeaderboardInstance>();
