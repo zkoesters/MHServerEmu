@@ -455,7 +455,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
         public LeaderboardStoreResult GenerateRewards(LeaderboardRewardGeneration request)
         {
             if (request == null || request.Rewards == null || request.Rewards.GroupBy(reward => reward.ParticipantId).Any(group => group.Skip(1).Any())
-                || request.Rewards.Any(reward => reward.LeaderboardId != request.LeaderboardId || reward.InstanceId != request.InstanceId))
+                || request.Rewards.Any(reward => reward.LeaderboardId != request.LeaderboardId || reward.InstanceId != request.InstanceId || reward.Rank <= 0))
                 return LeaderboardStoreResult.InvalidData;
 
             return ExecuteLifecycleWrite("LeaderboardGenerateRewards", request.LeaderboardId, async (connection, transaction, cancellationToken, abort) =>
