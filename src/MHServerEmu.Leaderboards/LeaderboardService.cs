@@ -102,6 +102,7 @@ namespace MHServerEmu.Leaderboards
 
             _database.ProcessLeaderboardScoreUpdateQueue();
             _database.Save();
+            _rewardManager.Update();
             _rewardManager.Shutdown();
             State = GameServiceState.Shutdown;
         }

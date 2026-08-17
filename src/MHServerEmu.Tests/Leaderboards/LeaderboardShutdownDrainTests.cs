@@ -63,6 +63,47 @@ namespace MHServerEmu.Tests.Leaderboards
             Assert.True(disposedAfterSave);
         }
 
+        [Fact]
+        public async Task Shutdown_AcceptedRewardMessagesProcessBeforeRewardManagerStops()
+        {
+            RecordingStore store = new();
+            LeaderboardDatabase database = CreateDatabase(store);
+            TaskCompletionSource<bool> rewardManagerUpdated = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            using ManualResetEventSlim resumeServiceUpdate = new(false);
+            LeaderboardRewardManager rewardManager = new(store, new Publisher(), () =>
+            {
+                rewardManagerUpdated.TrySetResult(true);
+                resumeServiceUpdate.Wait();
+                return TimeSpan.Zero;
+            }, () => { });
+            LeaderboardService service = new(database, rewardManager, () => true, () => true);
+            TaskCompletionSource<bool> servicesStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            TaskCompletionSource<string> consoleRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            PersistenceRuntime runtime = CreateRuntime(store, () => { });
+            ServerStartupDependencies dependencies = new(
+                (_, _) => Task.FromResult(runtime),
+                () => true,
+                (manager, _, _) => manager.RegisterGameService(service, GameServiceType.Leaderboard),
+                () => consoleRead.Task,
+                () => servicesStarted.SetResult(true));
+            ServerApp app = new(dependencies, new ServerManager());
+
+            Task run = app.RunAsync();
+            await servicesStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await rewardManagerUpdated.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            service.ReceiveServiceMessage(new ServiceMessage.LeaderboardRewardRequest(9001));
+            service.ReceiveServiceMessage(new ServiceMessage.LeaderboardRewardConfirmation(1, 1, 9002));
+            app.Shutdown();
+            Assert.True(await Task.Run(() => SpinWait.SpinUntil(() => service.State == GameServiceState.ShuttingDown, TimeSpan.FromSeconds(5))));
+            Assert.Empty(store.RewardRequestParticipants);
+            Assert.Empty(store.FinalizedRewards);
+            resumeServiceUpdate.Set();
+            await run.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Contains(9001L, store.RewardRequestParticipants);
+            Assert.Contains(store.FinalizedRewards, key => key == new LeaderboardRewardKey(1, 1, 9002));
+        }
+
         private static PersistenceRuntime CreateRuntime(RecordingStore store, Action dispose)
         {
             JsonDBManager manager = JsonDBManager.Instance;
@@ -159,6 +200,8 @@ namespace MHServerEmu.Tests.Leaderboards
         {
             public int SaveScoreBatchCount { get; private set; }
             public IReadOnlyList<LeaderboardEntryWrite> SavedEntries { get; private set; } = Array.Empty<LeaderboardEntryWrite>();
+            public List<long> RewardRequestParticipants { get; } = new();
+            public List<LeaderboardRewardKey> FinalizedRewards { get; } = new();
 
             public LeaderboardStoreResult Initialize() => LeaderboardStoreResult.Success;
             public LeaderboardStoreResult ReconcileSchedule(LeaderboardReconciliation request, out LeaderboardSnapshot snapshot) { snapshot = new(); return LeaderboardStoreResult.Success; }
@@ -172,8 +215,8 @@ namespace MHServerEmu.Tests.Leaderboards
             public LeaderboardStoreResult RotateActiveInstance(LeaderboardRotation request, out DBLeaderboardInstance committedInstance) { committedInstance = null; return LeaderboardStoreResult.Success; }
             public LeaderboardStoreResult MaintainVisibility(LeaderboardVisibilityRequest request, out LeaderboardVisibilitySnapshot snapshot) { snapshot = new(); return LeaderboardStoreResult.Success; }
             public LeaderboardStoreResult GenerateRewards(LeaderboardRewardGeneration request) => LeaderboardStoreResult.Success;
-            public LeaderboardStoreResult GetPendingRewards(long participantId, out IReadOnlyList<DBRewardEntry> rewards) { rewards = Array.Empty<DBRewardEntry>(); return LeaderboardStoreResult.Success; }
-            public RewardFinalizationResult FinalizeReward(LeaderboardRewardKey key, long rewardedDate) => RewardFinalizationResult.Finalized;
+            public LeaderboardStoreResult GetPendingRewards(long participantId, out IReadOnlyList<DBRewardEntry> rewards) { RewardRequestParticipants.Add(participantId); rewards = Array.Empty<DBRewardEntry>(); return LeaderboardStoreResult.Success; }
+            public RewardFinalizationResult FinalizeReward(LeaderboardRewardKey key, long rewardedDate) { FinalizedRewards.Add(key); return RewardFinalizationResult.Finalized; }
         }
     }
 }
