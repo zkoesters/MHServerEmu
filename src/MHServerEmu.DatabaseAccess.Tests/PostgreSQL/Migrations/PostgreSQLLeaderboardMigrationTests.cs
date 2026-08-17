@@ -64,6 +64,21 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations
         }
 
         [PostgreSQLIntegrationFact]
+        public async Task RunAsync_LeaderboardPersistenceCascadesMetaEntryWhenReferencedSubInstanceIsDeleted()
+        {
+            NpgsqlDataSource dataSource = await MigrateAsync();
+            await ExecuteAsync(dataSource, "INSERT INTO mhserveremu.leaderboard (leaderboard_id, prototype_name, is_enabled, start_time, max_reset_count) VALUES (1, 'parent', true, 0, 0), (2, 'sub', true, 0, 0)");
+            await ExecuteAsync(dataSource, "INSERT INTO mhserveremu.leaderboard_instance (instance_id, leaderboard_id, state, activation_date, visible) VALUES (11, 1, 0, 0, true), (22, 2, 0, 0, true)");
+            await ExecuteAsync(dataSource, "INSERT INTO mhserveremu.leaderboard_meta_entry (leaderboard_id, instance_id, sub_leaderboard_id, sub_instance_id) VALUES (1, 11, 2, 22)");
+
+            await ExecuteAsync(dataSource, "DELETE FROM mhserveremu.leaderboard_instance WHERE instance_id = 22");
+
+            Assert.Equal(1L, await ScalarAsync<long>(dataSource, "SELECT COUNT(*) FROM mhserveremu.leaderboard_instance WHERE instance_id = 11"));
+            Assert.Equal(1L, await ScalarAsync<long>(dataSource, "SELECT COUNT(*) FROM mhserveremu.leaderboard WHERE leaderboard_id = 1"));
+            Assert.Equal(0L, await ScalarAsync<long>(dataSource, "SELECT COUNT(*) FROM mhserveremu.leaderboard_meta_entry WHERE leaderboard_id = 1 AND instance_id = 11"));
+        }
+
+        [PostgreSQLIntegrationFact]
         public async Task RunAsync_LeaderboardPersistenceRejectsCrossLeaderboardPointerMalformedStateAndRank()
         {
             NpgsqlDataSource dataSource = await MigrateAsync();
