@@ -174,8 +174,8 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
         {
             await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
             DBAccount persisted = fixture.CreateAccount(1, "persisted@example.test", "PersistedPlayer");
-            persisted.PasswordHash = [0x01, 0x02];
-            persisted.Salt = [0x03, 0x04];
+            persisted.PasswordHash = Enumerable.Repeat((byte)0x01, 64).ToArray();
+            persisted.Salt = Enumerable.Repeat((byte)0x03, 64).ToArray();
             persisted.UserLevel = AccountUserLevel.Admin;
             persisted.Flags = AccountFlags.IsBanned;
             persisted.EmailVerifiedAtUtc = new DateTime(2025, 1, 2, 3, 4, 5, DateTimeKind.Utc);
