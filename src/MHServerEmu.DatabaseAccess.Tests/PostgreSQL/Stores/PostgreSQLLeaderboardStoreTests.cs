@@ -362,11 +362,9 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
             await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
             await InsertDefinitionAsync(fixture, 1);
             await InsertInstanceAsync(fixture, 10, 1, true, LeaderboardState.eLBS_Created);
-            FieldInfo hookField = typeof(PostgreSQLLeaderboardStore).GetField("LifecyclePreCommitHook", BindingFlags.Static | BindingFlags.NonPublic);
-            Assert.NotNull(hookField);
             try
             {
-                hookField.SetValue(null, (Action)(() => throw new NpgsqlException("injected pre-commit disconnect")));
+                PostgreSQLLeaderboardStore.SetLifecyclePreCommitHookForTest(() => throw new NpgsqlException("injected pre-commit disconnect"));
 
                 Assert.Equal(LeaderboardStoreResult.Failed, fixture.Leaderboards.ActivateInstance(new(1, 10, 10)));
                 Assert.Equal((short)LeaderboardState.eLBS_Created, await ScalarAsync(fixture,
@@ -375,7 +373,7 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
             }
             finally
             {
-                hookField.SetValue(null, null);
+                PostgreSQLLeaderboardStore.SetLifecyclePreCommitHookForTest(null);
             }
         }
 
