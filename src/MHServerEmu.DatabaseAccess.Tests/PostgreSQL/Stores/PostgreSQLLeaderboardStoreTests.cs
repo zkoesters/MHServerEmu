@@ -424,11 +424,156 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
                 Array.Empty<LeaderboardMetaMapping>()), out _));
         }
 
+        [PostgreSQLIntegrationFact]
+        public async Task MaintainVisibility_FencesBoundedNormalWindowAndRetainsRewardBearingArchives()
+        {
+            await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
+            await InsertDefinitionAsync(fixture, 1);
+            await InsertInstanceAsync(fixture, 1, 1, true, LeaderboardState.eLBS_Active);
+            await InsertInstanceAsync(fixture, 10, 1, true, LeaderboardState.eLBS_Rewarded, false);
+            await InsertInstanceAsync(fixture, 11, 1, true, LeaderboardState.eLBS_Rewarded, false);
+            await InsertInstanceAsync(fixture, 12, 1, false, LeaderboardState.eLBS_Rewarded, false);
+            await InsertInstanceAsync(fixture, 13, 1, false, LeaderboardState.eLBS_Rewarded, false);
+            await InsertEntryAsync(fixture, 10, 100, [1]);
+            await InsertEntryAsync(fixture, 11, 101, [1]);
+            await InsertEntryAsync(fixture, 13, 103, [1]);
+            await InsertRewardAsync(fixture, 1, 12, 102, 1, 300, null);
+            await InsertRewardAsync(fixture, 1, 13, 103, 1, 301, 400);
+            await InsertDefinitionAsync(fixture, 2);
+            await InsertInstanceAsync(fixture, 20, 2, true, LeaderboardState.eLBS_Active);
+            await InsertMappingAsync(fixture, 11, 1, 2, 20);
+            await InsertMappingAsync(fixture, 12, 1, 2, 20);
+
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Leaderboards.MaintainVisibility(new(1, 1, 500), out LeaderboardVisibilitySnapshot snapshot));
+
+            Assert.False(await ReadInstanceVisibleAsync(fixture, 10));
+            Assert.True(await ReadInstanceVisibleAsync(fixture, 11));
+            Assert.True(await ReadInstanceVisibleAsync(fixture, 12));
+            Assert.True(await ReadInstanceVisibleAsync(fixture, 13));
+            Assert.Equal(new[] { 11L }, snapshot.NormalArchiveInstances.Select(instance => instance.InstanceId));
+            Assert.Equal(new[] { (1L, 11L, 2L, 20L) }, snapshot.MetaMappings.Select(mapping =>
+                (mapping.LeaderboardId, mapping.InstanceId, mapping.SubLeaderboardId, mapping.SubInstanceId)));
+        }
+
+        [PostgreSQLIntegrationFact]
+        public async Task GenerateRewards_PersistsCompleteSetWithExactReplayAndPreservedCreationDates()
+        {
+            await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
+            await InsertDefinitionAsync(fixture, 1);
+            await InsertInstanceAsync(fixture, 10, 1, true, LeaderboardState.eLBS_Expired);
+            LeaderboardRewardGeneration request = Rewards(1, 10,
+                new LeaderboardRewardWrite(1, 10, 100, 20, 1, 300),
+                new LeaderboardRewardWrite(1, 10, 101, 21, 2, 301));
+
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Leaderboards.GenerateRewards(request));
+            Assert.Equal((short)LeaderboardState.eLBS_Rewarded, await ScalarAsync(fixture,
+                "SELECT state FROM mhserveremu.leaderboard_instance WHERE instance_id = 10"));
+            Assert.Equal(2L, await ScalarAsync(fixture,
+                "SELECT COUNT(*) FROM mhserveremu.leaderboard_reward WHERE leaderboard_id = 1 AND instance_id = 10"));
+
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Leaderboards.GenerateRewards(Rewards(1, 10,
+                new LeaderboardRewardWrite(1, 10, 101, 21, 2, 901),
+                new LeaderboardRewardWrite(1, 10, 100, 20, 1, 900))));
+            Assert.Equal(300L, await ScalarAsync(fixture,
+                "SELECT creation_date FROM mhserveremu.leaderboard_reward WHERE participant_id = 20"));
+
+            Assert.Equal(LeaderboardStoreResult.Conflict, fixture.Leaderboards.GenerateRewards(Rewards(1, 10,
+                new LeaderboardRewardWrite(1, 10, 100, 20, 1, 300))));
+            Assert.Equal(LeaderboardStoreResult.Conflict, fixture.Leaderboards.GenerateRewards(Rewards(1, 10,
+                new LeaderboardRewardWrite(1, 10, 999, 20, 1, 300),
+                new LeaderboardRewardWrite(1, 10, 101, 21, 2, 301))));
+        }
+
+        [PostgreSQLIntegrationFact]
+        public async Task GenerateRewards_RejectsDuplicateParticipantsWithoutTransitioningState()
+        {
+            await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
+            await InsertDefinitionAsync(fixture, 1);
+            await InsertInstanceAsync(fixture, 10, 1, true, LeaderboardState.eLBS_Expired);
+            LeaderboardRewardGeneration request = Rewards(1, 10, new LeaderboardRewardWrite(1, 10, 100, 20, 1, 300));
+            FieldInfo rewards = typeof(LeaderboardRewardGeneration).GetField("<Rewards>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.NotNull(rewards);
+            rewards.SetValue(request, new[]
+            {
+                new LeaderboardRewardWrite(1, 10, 100, 20, 1, 300),
+                new LeaderboardRewardWrite(1, 10, 101, 20, 2, 301),
+            });
+
+            Assert.Equal(LeaderboardStoreResult.InvalidData, fixture.Leaderboards.GenerateRewards(request));
+            Assert.Equal((short)LeaderboardState.eLBS_Expired, await ScalarAsync(fixture,
+                "SELECT state FROM mhserveremu.leaderboard_instance WHERE instance_id = 10"));
+            Assert.Equal(0L, await ScalarAsync(fixture,
+                "SELECT COUNT(*) FROM mhserveremu.leaderboard_reward WHERE instance_id = 10"));
+        }
+
+        [PostgreSQLIntegrationFact]
+        public async Task PendingRewards_AreDetachedAndFinalizationUsesFullKeyWithoutTimestampOverwrite()
+        {
+            await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
+            await InsertDefinitionAsync(fixture, 1);
+            await InsertInstanceAsync(fixture, 10, 1, true, LeaderboardState.eLBS_Rewarded);
+            await InsertInstanceAsync(fixture, 11, 1, false, LeaderboardState.eLBS_Rewarded, false);
+            await InsertRewardAsync(fixture, 1, 10, 20, 1, 300, null);
+            await InsertRewardAsync(fixture, 1, 11, 20, 2, 301, 400);
+
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Leaderboards.GetPendingRewards(20, out IReadOnlyList<DBRewardEntry> pending));
+            DBRewardEntry reward = Assert.Single(pending);
+            reward.RewardId = 999;
+            Assert.Equal(1020L, await ScalarAsync(fixture,
+                "SELECT reward_id FROM mhserveremu.leaderboard_reward WHERE leaderboard_id = 1 AND instance_id = 10 AND participant_id = 20"));
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Leaderboards.GetPendingRewards(999, out IReadOnlyList<DBRewardEntry> missing));
+            Assert.Empty(missing);
+
+            LeaderboardRewardKey key = new(1, 10, 20);
+            Assert.Equal(RewardFinalizationResult.Failed, fixture.Leaderboards.FinalizeReward(key, 0));
+            Assert.Equal(RewardFinalizationResult.Finalized, fixture.Leaderboards.FinalizeReward(key, 500));
+            Assert.Equal(RewardFinalizationResult.AlreadyFinalized, fixture.Leaderboards.FinalizeReward(key, 600));
+            Assert.Equal(500L, await ScalarAsync(fixture,
+                "SELECT rewarded_date FROM mhserveremu.leaderboard_reward WHERE leaderboard_id = 1 AND instance_id = 10 AND participant_id = 20"));
+            Assert.Equal(RewardFinalizationResult.NotFound, fixture.Leaderboards.FinalizeReward(new(2, 10, 20), 700));
+            Assert.Equal(RewardFinalizationResult.NotFound, fixture.Leaderboards.FinalizeReward(new(1, 10, 999), 700));
+        }
+
+        [PostgreSQLIntegrationFact]
+        public async Task ScoreAndRewardWrites_ClassifyPreCommitAndCommitConnectionLosses()
+        {
+            await AssertPreCommitTerminationAsync(async fixture =>
+            {
+                await InsertDefinitionAsync(fixture, 1);
+                await InsertInstanceAsync(fixture, 10, 1, true, LeaderboardState.eLBS_Active);
+            }, fixture => fixture.Leaderboards.SaveScoreBatch(new(1, 10, LeaderboardState.eLBS_Active,
+                [new LeaderboardEntryWrite(10, 20, 1, 2, [1])])), 1);
+            await AssertPreCommitTerminationAsync(async fixture =>
+            {
+                await InsertDefinitionAsync(fixture, 2);
+                await InsertInstanceAsync(fixture, 20, 2, true, LeaderboardState.eLBS_Expired);
+            }, fixture => fixture.Leaderboards.GenerateRewards(Rewards(2, 20,
+                new LeaderboardRewardWrite(2, 20, 100, 30, 1, 300))), 2);
+
+            await AssertCommitTerminationAsync("score_reward_boundary", "leaderboard_entry", "INSERT", async fixture =>
+            {
+                await InsertDefinitionAsync(fixture, 4);
+                await InsertInstanceAsync(fixture, 40, 4, true, LeaderboardState.eLBS_Active);
+            }, fixture => fixture.Leaderboards.SaveScoreBatch(new(4, 40, LeaderboardState.eLBS_Active,
+                [new LeaderboardEntryWrite(40, 50, 1, 2, [1])])));
+            await AssertCommitTerminationAsync("reward", "leaderboard_reward", "INSERT", async fixture =>
+            {
+                await InsertDefinitionAsync(fixture, 5);
+                await InsertInstanceAsync(fixture, 50, 5, true, LeaderboardState.eLBS_Expired);
+            }, fixture => fixture.Leaderboards.GenerateRewards(Rewards(5, 50,
+                new LeaderboardRewardWrite(5, 50, 100, 60, 1, 300))));
+        }
+
         private static LeaderboardReconciliation Reconciliation(long leaderboardId, bool enabled = true, long startTime = 100, int maxResetCount = 0, long activationDate = 300, long currentTime = 500, int normalArchiveLimit = 2)
         {
             return new([new LeaderboardDefinitionSpec(leaderboardId, $"Leaderboard{leaderboardId}", enabled, startTime, maxResetCount)],
                 [new LeaderboardInstanceSpec(0, leaderboardId, enabled ? LeaderboardState.eLBS_Created : LeaderboardState.eLBS_Rewarded, activationDate, enabled)],
                 Array.Empty<LeaderboardMetaMapping>(), currentTime, normalArchiveLimit);
+        }
+
+        private static LeaderboardRewardGeneration Rewards(long leaderboardId, long instanceId, params LeaderboardRewardWrite[] rewards)
+        {
+            return new(leaderboardId, instanceId, instanceId, LeaderboardState.eLBS_Expired, rewards);
         }
 
         private static async Task<LeaderboardStoreResult[]> ReconcileBehindGlobalLockAsync(PostgreSQLStoreTestFixture fixture, params LeaderboardReconciliation[] requests)
@@ -516,6 +661,17 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
                 ("instanceId", NpgsqlDbType.Bigint, instanceId), ("participantId", NpgsqlDbType.Bigint, participantId), ("ruleStates", NpgsqlDbType.Bytea, ruleStates));
         }
 
+        private static Task InsertRewardAsync(PostgreSQLStoreTestFixture fixture, long leaderboardId, long instanceId, long participantId, int rank,
+            long creationDate, long? rewardedDate)
+        {
+            return ExecuteAsync(fixture, @"INSERT INTO mhserveremu.leaderboard_reward (leaderboard_id, instance_id, participant_id, reward_id, rank, creation_date, rewarded_date)
+                VALUES (@leaderboardId, @instanceId, @participantId, @rewardId, @rank, @creationDate, @rewardedDate)",
+                ("leaderboardId", NpgsqlDbType.Bigint, leaderboardId), ("instanceId", NpgsqlDbType.Bigint, instanceId),
+                ("participantId", NpgsqlDbType.Bigint, participantId), ("rewardId", NpgsqlDbType.Bigint, 1000 + participantId),
+                ("rank", NpgsqlDbType.Integer, rank), ("creationDate", NpgsqlDbType.Bigint, creationDate),
+                ("rewardedDate", NpgsqlDbType.Bigint, rewardedDate ?? (object)DBNull.Value));
+        }
+
         private static Task InsertMappingAsync(PostgreSQLStoreTestFixture fixture, long instanceId, long leaderboardId, long subLeaderboardId, long subInstanceId)
         {
             return ExecuteAsync(fixture, @"INSERT INTO mhserveremu.leaderboard_meta_entry (leaderboard_id, instance_id, sub_leaderboard_id, sub_instance_id)
@@ -568,6 +724,32 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
             await TerminateBackendAsync(connection.ProcessID);
             await using NpgsqlCommand command = new("SELECT 1", connection, transaction);
             await command.ExecuteScalarAsync();
+        }
+
+        private async Task AssertPreCommitTerminationAsync(Func<PostgreSQLStoreTestFixture, Task> setup,
+            Func<PostgreSQLStoreTestFixture, LeaderboardStoreResult> write, long leaderboardId)
+        {
+            List<PostgreSQLPersistenceFailure> failures = new();
+            await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database, fatalCallback: failures.Add);
+            await setup(fixture);
+            bool hookInvoked = false;
+            try
+            {
+                PostgreSQLLeaderboardStore.SetLifecyclePreCommitHookForTest(async (connection, transaction) =>
+                {
+                    hookInvoked = true;
+                    await TerminateBackendBeforeCommitAsync(connection, transaction);
+                });
+                Assert.Equal(LeaderboardStoreResult.Failed, write(fixture));
+            }
+            finally
+            {
+                PostgreSQLLeaderboardStore.SetLifecyclePreCommitHookForTest(null);
+            }
+
+            Assert.True(hookInvoked);
+            Assert.Empty(failures);
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Leaderboards.LoadVisibleInstances(leaderboardId, 0, 1, out _));
         }
 
         private static async Task CreateDeferredBackendTerminationAsync(NpgsqlDataSource dataSource, string name, string table, string operation)

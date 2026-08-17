@@ -408,10 +408,159 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
                 committedInstance = CloneInstance(committed);
             return result;
         }
-        public LeaderboardStoreResult MaintainVisibility(LeaderboardVisibilityRequest request, out LeaderboardVisibilitySnapshot snapshot) { snapshot = new(); return LeaderboardStoreResult.Failed; }
-        public LeaderboardStoreResult GenerateRewards(LeaderboardRewardGeneration request) => LeaderboardStoreResult.Failed;
-        public LeaderboardStoreResult GetPendingRewards(long participantId, out IReadOnlyList<DBRewardEntry> rewards) { rewards = Array.Empty<DBRewardEntry>(); return LeaderboardStoreResult.Failed; }
-        public RewardFinalizationResult FinalizeReward(LeaderboardRewardKey key, long rewardedDate) => RewardFinalizationResult.Failed;
+        public LeaderboardStoreResult MaintainVisibility(LeaderboardVisibilityRequest request, out LeaderboardVisibilitySnapshot snapshot)
+        {
+            snapshot = new();
+            if (request == null || request.ArchiveLimit < 0)
+                return LeaderboardStoreResult.InvalidData;
+
+            LeaderboardVisibilitySnapshot committedSnapshot = new();
+            LeaderboardStoreResult result = ExecuteLifecycleWrite("LeaderboardMaintainVisibility", request.LeaderboardId, async (connection, transaction, cancellationToken, abort) =>
+            {
+                await LockRequestedDefinitionsAsync(connection, transaction, [request.LeaderboardId], cancellationToken);
+                DBLeaderboard definition = await ReadDefinitionAsync(connection, transaction, request.LeaderboardId, true, cancellationToken);
+                if (definition == null)
+                    abort(LeaderboardStoreResult.NotFound);
+                DBLeaderboardInstance active = await ReadInstanceAsync(connection, transaction, definition.ActiveInstanceId, true, cancellationToken);
+                if (active == null)
+                    abort(LeaderboardStoreResult.NotFound);
+                if (active.LeaderboardId != request.LeaderboardId)
+                    abort(LeaderboardStoreResult.InvalidData);
+
+                List<DBLeaderboardInstance> archives = await ReadTerminalInstancesForUpdateAsync(connection, transaction, request.LeaderboardId, cancellationToken);
+                HashSet<long> rewardBearingIds = await ReadRewardBearingInstanceIdsAsync(connection, transaction, request.LeaderboardId, cancellationToken);
+                HashSet<long> entryBearingIds = await ReadEntryBearingInstanceIdsAsync(connection, transaction, archives.Select(archive => archive.InstanceId), cancellationToken);
+                List<DBLeaderboardInstance> normalArchives = archives
+                    .Where(archive => entryBearingIds.Contains(archive.InstanceId) && rewardBearingIds.Contains(archive.InstanceId) == false)
+                    .OrderByDescending(archive => unchecked((ulong)archive.InstanceId))
+                    .Take(request.ArchiveLimit)
+                    .ToList();
+                HashSet<long> normalArchiveIds = normalArchives.Select(archive => archive.InstanceId).ToHashSet();
+
+                foreach (DBLeaderboardInstance archive in archives)
+                {
+                    bool visible = rewardBearingIds.Contains(archive.InstanceId) || normalArchiveIds.Contains(archive.InstanceId);
+                    await UpdateInstanceVisibilityAsync(connection, transaction, archive.InstanceId, visible, cancellationToken);
+                    archive.Visible = visible;
+                }
+
+                List<DBMetaEntry> mappings = await ReadMappingsForInstancesAsync(connection, transaction, request.LeaderboardId, normalArchiveIds, cancellationToken);
+                committedSnapshot = new(normalArchives, mappings);
+            });
+            if (result == LeaderboardStoreResult.Success)
+                snapshot = committedSnapshot;
+            return result;
+        }
+
+        public LeaderboardStoreResult GenerateRewards(LeaderboardRewardGeneration request)
+        {
+            if (request == null || request.Rewards == null || request.Rewards.GroupBy(reward => reward.ParticipantId).Any(group => group.Skip(1).Any())
+                || request.Rewards.Any(reward => reward.LeaderboardId != request.LeaderboardId || reward.InstanceId != request.InstanceId))
+                return LeaderboardStoreResult.InvalidData;
+
+            return ExecuteLifecycleWrite("LeaderboardGenerateRewards", request.LeaderboardId, async (connection, transaction, cancellationToken, abort) =>
+            {
+                await LockRequestedDefinitionsAsync(connection, transaction, [request.LeaderboardId], cancellationToken);
+                DBLeaderboard definition = await ReadDefinitionAsync(connection, transaction, request.LeaderboardId, true, cancellationToken);
+                if (definition == null)
+                    abort(LeaderboardStoreResult.NotFound);
+                DBLeaderboardInstance instance = await ReadInstanceAsync(connection, transaction, request.InstanceId, true, cancellationToken);
+                if (instance == null)
+                    abort(LeaderboardStoreResult.NotFound);
+                if (instance.LeaderboardId != request.LeaderboardId)
+                    abort(LeaderboardStoreResult.InvalidData);
+
+                List<DBRewardEntry> existingRewards = await ReadRewardsForUpdateAsync(connection, transaction, request.LeaderboardId, request.InstanceId, cancellationToken);
+                if (instance.State == LeaderboardState.eLBS_Rewarded)
+                {
+                    if (HasExactRewards(existingRewards, request.Rewards) == false)
+                        abort(LeaderboardStoreResult.Conflict);
+                    return;
+                }
+                if (definition.ActiveInstanceId != request.ExpectedActiveInstanceId || request.InstanceId != definition.ActiveInstanceId
+                    || instance.State != request.ExpectedState)
+                    abort(LeaderboardStoreResult.StaleState);
+                if (existingRewards.Count != 0)
+                    abort(LeaderboardStoreResult.Conflict);
+
+                await InsertRewardsAsync(connection, transaction, request.Rewards, cancellationToken);
+                if (await UpdateInstanceStateAsync(connection, transaction, request.InstanceId, request.ExpectedState, LeaderboardState.eLBS_Rewarded, cancellationToken) == false)
+                    abort(LeaderboardStoreResult.StaleState);
+            });
+        }
+
+        public LeaderboardStoreResult GetPendingRewards(long participantId, out IReadOnlyList<DBRewardEntry> rewards)
+        {
+            rewards = Array.Empty<DBRewardEntry>();
+            try
+            {
+                PostgreSQLReadResult<IReadOnlyList<DBRewardEntry>> read = _executor.ExecuteReadAsync("LeaderboardGetPendingRewards", async (connection, deadline, cancellationToken) =>
+                {
+                    await using NpgsqlCommand command = new($@"SELECT leaderboard_id, instance_id, participant_id, reward_id, rank, creation_date, rewarded_date
+                        FROM {RewardTable}
+                        WHERE participant_id = @participantId AND (rewarded_date IS NULL OR rewarded_date = 0)
+                        ORDER BY leaderboard_id, instance_id", connection)
+                    {
+                        CommandTimeout = deadline.RemainingCommandTimeoutSeconds,
+                    };
+                    command.Parameters.AddWithValue("participantId", NpgsqlDbType.Bigint, participantId);
+                    return await ReadRewardsAsync(command, cancellationToken);
+                }).GetAwaiter().GetResult();
+                if (read.Succeeded)
+                {
+                    rewards = read.Value;
+                    return LeaderboardStoreResult.Success;
+                }
+            }
+            catch
+            {
+            }
+            return LeaderboardStoreResult.Failed;
+        }
+
+        public RewardFinalizationResult FinalizeReward(LeaderboardRewardKey key, long rewardedDate)
+        {
+            if (rewardedDate == 0)
+                return RewardFinalizationResult.Failed;
+
+            RewardFinalizationResult operationResult = RewardFinalizationResult.Failed;
+            try
+            {
+                PostgreSQLWriteResult write = _executor.ExecuteWriteAsync("LeaderboardFinalizeReward", key.LeaderboardId, async (connection, transaction, cancellationToken) =>
+                {
+                    await using NpgsqlCommand update = new($@"UPDATE {RewardTable} SET rewarded_date = @rewardedDate
+                        WHERE leaderboard_id = @leaderboardId AND instance_id = @instanceId AND participant_id = @participantId
+                          AND (rewarded_date IS NULL OR rewarded_date = 0)", connection, transaction);
+                    update.Parameters.AddWithValue("leaderboardId", NpgsqlDbType.Bigint, key.LeaderboardId);
+                    update.Parameters.AddWithValue("instanceId", NpgsqlDbType.Bigint, key.InstanceId);
+                    update.Parameters.AddWithValue("participantId", NpgsqlDbType.Bigint, key.ParticipantId);
+                    update.Parameters.AddWithValue("rewardedDate", NpgsqlDbType.Bigint, rewardedDate);
+                    if (await update.ExecuteNonQueryAsync(cancellationToken) == 1)
+                    {
+                        operationResult = RewardFinalizationResult.Finalized;
+                    }
+                    else
+                    {
+                        await using NpgsqlCommand existing = new($"SELECT rewarded_date FROM {RewardTable} WHERE leaderboard_id = @leaderboardId AND instance_id = @instanceId AND participant_id = @participantId", connection, transaction);
+                        existing.Parameters.AddWithValue("leaderboardId", NpgsqlDbType.Bigint, key.LeaderboardId);
+                        existing.Parameters.AddWithValue("instanceId", NpgsqlDbType.Bigint, key.InstanceId);
+                        existing.Parameters.AddWithValue("participantId", NpgsqlDbType.Bigint, key.ParticipantId);
+                        operationResult = await existing.ExecuteScalarAsync(cancellationToken) == null
+                            ? RewardFinalizationResult.NotFound
+                            : RewardFinalizationResult.AlreadyFinalized;
+                    }
+                    if (LifecyclePreCommitHook.Value != null)
+                        await LifecyclePreCommitHook.Value(connection, transaction);
+                }, notifyFatalOnOutcomeUncertain: true).GetAwaiter().GetResult();
+                return write.Outcome == PostgreSQLWriteOutcome.Success
+                    ? operationResult
+                    : write.Outcome == PostgreSQLWriteOutcome.OutcomeUncertain ? RewardFinalizationResult.OutcomeUncertain : RewardFinalizationResult.Failed;
+            }
+            catch
+            {
+                return RewardFinalizationResult.Failed;
+            }
+        }
 
         private LeaderboardStoreResult ExecuteLifecycleWrite(string operation, long leaderboardId,
             Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Action<LeaderboardStoreResult>, Task> writeAsync)
@@ -466,6 +615,100 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
             await using NpgsqlCommand command = new($"SELECT instance_id, participant_id, score, high_score, rule_states FROM {EntryTable} WHERE instance_id = @instanceId FOR UPDATE", connection, transaction);
             command.Parameters.AddWithValue("instanceId", NpgsqlDbType.Bigint, instanceId);
             return (await ReadEntriesAsync(command, cancellationToken)).ToList();
+        }
+
+        private static async Task<List<DBLeaderboardInstance>> ReadTerminalInstancesForUpdateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+            long leaderboardId, CancellationToken cancellationToken)
+        {
+            await using NpgsqlCommand command = new($"SELECT instance_id, leaderboard_id, state, activation_date, visible FROM {InstanceTable} WHERE leaderboard_id = @leaderboardId AND state >= @terminalState FOR UPDATE", connection, transaction);
+            command.Parameters.AddWithValue("leaderboardId", NpgsqlDbType.Bigint, leaderboardId);
+            command.Parameters.AddWithValue("terminalState", NpgsqlDbType.Smallint, (short)LeaderboardState.eLBS_Rewarded);
+            return (await ReadInstancesAsync(command, cancellationToken)).ToList();
+        }
+
+        private static async Task<HashSet<long>> ReadRewardBearingInstanceIdsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+            long leaderboardId, CancellationToken cancellationToken)
+        {
+            await using NpgsqlCommand command = new($"SELECT DISTINCT instance_id FROM {RewardTable} WHERE leaderboard_id = @leaderboardId", connection, transaction);
+            command.Parameters.AddWithValue("leaderboardId", NpgsqlDbType.Bigint, leaderboardId);
+            HashSet<long> instanceIds = new();
+            await using NpgsqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                instanceIds.Add(reader.GetInt64(0));
+            return instanceIds;
+        }
+
+        private static async Task<HashSet<long>> ReadEntryBearingInstanceIdsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+            IEnumerable<long> instanceIds, CancellationToken cancellationToken)
+        {
+            long[] ids = instanceIds.ToArray();
+            if (ids.Length == 0)
+                return new();
+
+            await using NpgsqlCommand command = new($"SELECT DISTINCT instance_id FROM {EntryTable} WHERE instance_id = ANY(@instanceIds)", connection, transaction);
+            command.Parameters.AddWithValue("instanceIds", NpgsqlDbType.Array | NpgsqlDbType.Bigint, ids);
+            HashSet<long> result = new();
+            await using NpgsqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                result.Add(reader.GetInt64(0));
+            return result;
+        }
+
+        private static async Task UpdateInstanceVisibilityAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long instanceId, bool visible,
+            CancellationToken cancellationToken)
+        {
+            await using NpgsqlCommand command = new($"UPDATE {InstanceTable} SET visible = @visible WHERE instance_id = @instanceId", connection, transaction);
+            command.Parameters.AddWithValue("instanceId", NpgsqlDbType.Bigint, instanceId);
+            command.Parameters.AddWithValue("visible", NpgsqlDbType.Boolean, visible);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        private static async Task<List<DBMetaEntry>> ReadMappingsForInstancesAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long leaderboardId,
+            IEnumerable<long> instanceIds, CancellationToken cancellationToken)
+        {
+            long[] ids = instanceIds.ToArray();
+            if (ids.Length == 0)
+                return new();
+
+            await using NpgsqlCommand command = new($@"SELECT leaderboard_id, instance_id, sub_leaderboard_id, sub_instance_id FROM {MetaEntryTable}
+                WHERE leaderboard_id = @leaderboardId AND instance_id = ANY(@instanceIds)
+                ORDER BY instance_id, sub_leaderboard_id FOR UPDATE", connection, transaction);
+            command.Parameters.AddWithValue("leaderboardId", NpgsqlDbType.Bigint, leaderboardId);
+            command.Parameters.AddWithValue("instanceIds", NpgsqlDbType.Array | NpgsqlDbType.Bigint, ids);
+            List<DBMetaEntry> mappings = new();
+            await using NpgsqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                mappings.Add(new DBMetaEntry { LeaderboardId = reader.GetInt64(0), InstanceId = reader.GetInt64(1), SubLeaderboardId = reader.GetInt64(2), SubInstanceId = reader.GetInt64(3) });
+            return mappings;
+        }
+
+        private static async Task<List<DBRewardEntry>> ReadRewardsForUpdateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long leaderboardId,
+            long instanceId, CancellationToken cancellationToken)
+        {
+            await using NpgsqlCommand command = new($@"SELECT leaderboard_id, instance_id, participant_id, reward_id, rank, creation_date, rewarded_date
+                FROM {RewardTable} WHERE leaderboard_id = @leaderboardId AND instance_id = @instanceId FOR UPDATE", connection, transaction);
+            command.Parameters.AddWithValue("leaderboardId", NpgsqlDbType.Bigint, leaderboardId);
+            command.Parameters.AddWithValue("instanceId", NpgsqlDbType.Bigint, instanceId);
+            return (await ReadRewardsAsync(command, cancellationToken)).ToList();
+        }
+
+        private static async Task InsertRewardsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, IReadOnlyList<LeaderboardRewardWrite> rewards,
+            CancellationToken cancellationToken)
+        {
+            if (rewards.Count == 0)
+                return;
+
+            await using NpgsqlCommand command = new($@"INSERT INTO {RewardTable} (leaderboard_id, instance_id, participant_id, reward_id, rank, creation_date, rewarded_date)
+                SELECT input.leaderboard_id, input.instance_id, input.participant_id, input.reward_id, input.rank, input.creation_date, NULL
+                FROM unnest(@leaderboardIds, @instanceIds, @participantIds, @rewardIds, @ranks, @creationDates)
+                    AS input(leaderboard_id, instance_id, participant_id, reward_id, rank, creation_date)", connection, transaction);
+            command.Parameters.AddWithValue("leaderboardIds", NpgsqlDbType.Array | NpgsqlDbType.Bigint, rewards.Select(reward => reward.LeaderboardId).ToArray());
+            command.Parameters.AddWithValue("instanceIds", NpgsqlDbType.Array | NpgsqlDbType.Bigint, rewards.Select(reward => reward.InstanceId).ToArray());
+            command.Parameters.AddWithValue("participantIds", NpgsqlDbType.Array | NpgsqlDbType.Bigint, rewards.Select(reward => reward.ParticipantId).ToArray());
+            command.Parameters.AddWithValue("rewardIds", NpgsqlDbType.Array | NpgsqlDbType.Bigint, rewards.Select(reward => reward.RewardId).ToArray());
+            command.Parameters.AddWithValue("ranks", NpgsqlDbType.Array | NpgsqlDbType.Integer, rewards.Select(reward => reward.Rank).ToArray());
+            command.Parameters.AddWithValue("creationDates", NpgsqlDbType.Array | NpgsqlDbType.Bigint, rewards.Select(reward => reward.CreationDate).ToArray());
+            await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
         private static async Task<List<DBMetaEntry>> ReadMappingsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long leaderboardId, long instanceId, CancellationToken cancellationToken)
@@ -558,6 +801,13 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
         {
             return existingEntries.Count == requestedEntries.Count
                 && requestedEntries.All(requested => existingEntries.Any(existing => existing.ParticipantId == requested.ParticipantId && EntriesMatch(existing, requested)));
+        }
+
+        private static bool HasExactRewards(IReadOnlyCollection<DBRewardEntry> existingRewards, IReadOnlyList<LeaderboardRewardWrite> requestedRewards)
+        {
+            return existingRewards.Count == requestedRewards.Count
+                && requestedRewards.All(requested => existingRewards.Any(existing => existing.ParticipantId == requested.ParticipantId
+                    && existing.RewardId == requested.RewardId && existing.Rank == requested.Rank));
         }
 
         private static bool EntriesMatch(DBLeaderboardEntry existing, LeaderboardEntryWrite requested)
@@ -732,6 +982,26 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
             while (await reader.ReadAsync(cancellationToken))
                 entries.Add(new DBLeaderboardEntry { InstanceId = reader.GetInt64(0), ParticipantId = reader.GetInt64(1), Score = reader.GetInt64(2), HighScore = reader.GetInt64(3), RuleStates = reader.GetFieldValue<byte[]>(4).ToArray() });
             return entries;
+        }
+
+        private static async Task<IReadOnlyList<DBRewardEntry>> ReadRewardsAsync(NpgsqlCommand command, CancellationToken cancellationToken)
+        {
+            List<DBRewardEntry> rewards = new();
+            await using NpgsqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                rewards.Add(new DBRewardEntry
+                {
+                    LeaderboardId = reader.GetInt64(0),
+                    InstanceId = reader.GetInt64(1),
+                    ParticipantId = reader.GetInt64(2),
+                    RewardId = reader.GetInt64(3),
+                    Rank = reader.GetInt32(4),
+                    CreationDate = reader.GetInt64(5),
+                    RewardedDate = reader.IsDBNull(6) ? 0 : reader.GetInt64(6),
+                });
+            }
+            return rewards;
         }
 
         private static async Task<IReadOnlyList<DBLeaderboardInstance>> ReadInstancesAsync(NpgsqlCommand command, CancellationToken cancellationToken)
