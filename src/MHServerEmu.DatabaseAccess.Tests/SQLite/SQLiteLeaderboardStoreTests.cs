@@ -49,6 +49,21 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
         }
 
         [Fact]
+        public void Initialize_VersionOneDatabaseWithMalformedSchemaReturnsFailedWithoutRewritingIt()
+        {
+            using TemporaryDirectory directory = new();
+            string databasePath = Path.Combine(directory.Path, "Leaderboards.db");
+            SQLiteConnection.CreateFile(databasePath);
+            Execute(databasePath, "PRAGMA user_version = 1; CREATE TABLE Sentinel (Id INTEGER NOT NULL PRIMARY KEY); INSERT INTO Sentinel VALUES (7);");
+            SQLiteLeaderboardDBManager store = new(databasePath);
+
+            Assert.Equal(LeaderboardStoreResult.Failed, store.Initialize());
+            Assert.Equal(1L, ReadScalar(databasePath, "PRAGMA user_version"));
+            Assert.Equal(7L, ReadScalar(databasePath, "SELECT Id FROM Sentinel"));
+            Assert.Equal(0L, ReadScalar(databasePath, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'Leaderboards'"));
+        }
+
+        [Fact]
         public void LoadEntriesAndInstance_ReturnDetachedRowsAndExpectedMissingResults()
         {
             using SQLiteLeaderboardStoreFixture fixture = new();
@@ -113,6 +128,22 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
         }
 
         [Fact]
+        public void LoadVisibleInstances_PaginatesMixedSignedIdsAsExclusiveUnsignedCursor()
+        {
+            using SQLiteLeaderboardStoreFixture fixture = new();
+            fixture.InsertDefinition(1, activeInstanceId: -1);
+            long[] expected = { -1, -2, long.MinValue, 7, 1 };
+            foreach (long instanceId in expected)
+                fixture.InsertInstance(instanceId, 1, visible: true);
+
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.LoadVisibleInstances(1, 0, 3, out IReadOnlyList<DBLeaderboardInstance> first));
+            Assert.Equal(expected.Take(3), first.Select(instance => instance.InstanceId));
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.LoadVisibleInstances(1, first[^1].InstanceId, 3, out IReadOnlyList<DBLeaderboardInstance> second));
+            Assert.Equal(expected.Skip(3), second.Select(instance => instance.InstanceId));
+            Assert.Equal(expected, first.Concat(second).Select(instance => instance.InstanceId));
+        }
+
+        [Fact]
         public void ReconcileSchedule_FreshRequestCreatesGeneratedInitialInstanceAndNoOpReplay()
         {
             using SQLiteLeaderboardStoreFixture fixture = new();
@@ -128,6 +159,34 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
             Assert.Equal(first.NormalArchiveInstances, replay.NormalArchiveInstances);
             Assert.Equal(first.MetaMappings, replay.MetaMappings);
             Assert.Equal(1L, fixture.ReadScalar("SELECT COUNT(*) FROM Instances"));
+        }
+
+        [Fact]
+        public void ReconcileSchedule_RejectsInitialInstanceWithInvalidStateBeforeWriting()
+        {
+            using SQLiteLeaderboardStoreFixture fixture = new();
+            LeaderboardReconciliation invalid = new(
+                new[] { new LeaderboardDefinitionSpec(1, "Leaderboard1", true, 100, 0) },
+                new[] { new LeaderboardInstanceSpec(0, 1, LeaderboardState.eLBS_Rewarded, 300, true) },
+                Array.Empty<LeaderboardMetaMapping>(), 500, 2);
+
+            Assert.Equal(LeaderboardStoreResult.InvalidData, fixture.Store.ReconcileSchedule(invalid, out LeaderboardSnapshot snapshot));
+            Assert.Empty(snapshot.Definitions);
+            Assert.Equal(0, fixture.ReadScalar("SELECT COUNT(*) FROM Leaderboards"));
+        }
+
+        [Fact]
+        public void ReconcileSchedule_RejectsInvisibleInitialInstanceForEnabledDefinitionBeforeWriting()
+        {
+            using SQLiteLeaderboardStoreFixture fixture = new();
+            LeaderboardReconciliation invalid = new(
+                new[] { new LeaderboardDefinitionSpec(1, "Leaderboard1", true, 100, 0) },
+                new[] { new LeaderboardInstanceSpec(0, 1, LeaderboardState.eLBS_Created, 300, false) },
+                Array.Empty<LeaderboardMetaMapping>(), 500, 2);
+
+            Assert.Equal(LeaderboardStoreResult.InvalidData, fixture.Store.ReconcileSchedule(invalid, out LeaderboardSnapshot snapshot));
+            Assert.Empty(snapshot.Definitions);
+            Assert.Equal(0, fixture.ReadScalar("SELECT COUNT(*) FROM Leaderboards"));
         }
 
         [Fact]
@@ -172,6 +231,32 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
             Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.LoadInstance(1, 1, out DBLeaderboardInstance repaired));
             Assert.Equal(LeaderboardState.eLBS_Rewarded, repaired.State);
             Assert.False(repaired.Visible);
+        }
+
+        [Fact]
+        public void ReconcileSchedule_RejectsCrossLeaderboardActivePointerBeforeTerminalizing()
+        {
+            using SQLiteLeaderboardStoreFixture fixture = new();
+            fixture.InsertDefinition(1, activeInstanceId: 2, enabled: true);
+            fixture.InsertDefinition(2, activeInstanceId: 2, enabled: true);
+            fixture.InsertInstance(2, 2, visible: true, state: (int)LeaderboardState.eLBS_Created);
+            LeaderboardReconciliation invalid = new(
+                new[]
+                {
+                    new LeaderboardDefinitionSpec(1, "Leaderboard1", false, 100, 0),
+                    new LeaderboardDefinitionSpec(2, "Leaderboard2", true, 100, 0),
+                },
+                new[]
+                {
+                    new LeaderboardInstanceSpec(0, 1, LeaderboardState.eLBS_Rewarded, 300, false),
+                    new LeaderboardInstanceSpec(0, 2, LeaderboardState.eLBS_Created, 300, true),
+                },
+                Array.Empty<LeaderboardMetaMapping>(), 500, 2);
+
+            Assert.Equal(LeaderboardStoreResult.InvalidData, fixture.Store.ReconcileSchedule(invalid, out LeaderboardSnapshot snapshot));
+            Assert.Empty(snapshot.Definitions);
+            Assert.Equal(1, fixture.ReadScalar("SELECT IsEnabled FROM Leaderboards WHERE LeaderboardId = 1"));
+            Assert.Equal((int)LeaderboardState.eLBS_Created, fixture.ReadScalar("SELECT State FROM Instances WHERE InstanceId = 2"));
         }
 
         [Fact]
@@ -269,7 +354,7 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
         {
             return new(
                 new[] { new LeaderboardDefinitionSpec(leaderboardId, $"Leaderboard{leaderboardId}", enabled, startTime, maxResetCount) },
-                new[] { new LeaderboardInstanceSpec(0, leaderboardId, LeaderboardState.eLBS_Created, activationDate, true) },
+                new[] { new LeaderboardInstanceSpec(0, leaderboardId, enabled ? LeaderboardState.eLBS_Created : LeaderboardState.eLBS_Rewarded, activationDate, enabled) },
                 Array.Empty<LeaderboardMetaMapping>(), currentTime, normalArchiveLimit);
         }
 
