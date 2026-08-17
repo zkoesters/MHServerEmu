@@ -93,9 +93,13 @@ namespace MHServerEmu.PlayerManagement.Players
             return true;
         }
 
-        internal void DiscardPlayerHandle(PlayerHandle player)
+        internal void DisconnectAndDiscardPlayer(PlayerHandle player)
         {
             ArgumentNullException.ThrowIfNull(player);
+            IFrontendSession session = player.Client.Session;
+            if (session != null)
+                _playerManager.SessionManager.RemoveActiveSession(session.Id);
+            player.Disconnect();
             RemovePlayerHandle(player.Client);
         }
 
