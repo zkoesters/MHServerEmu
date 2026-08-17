@@ -15,6 +15,8 @@ namespace MHServerEmu.DatabaseAccess.SQLite
         private static readonly Logger Logger = LogManager.CreateLogger();
         private static readonly Lazy<IReadOnlyDictionary<string, string>> SchemaVersionOneMetadata = new(CreateSchemaVersionOneMetadata);
         [ThreadStatic] private static Action ReconciliationStateReadHook;
+        [ThreadStatic] private static Action LifecyclePreCommitHook;
+        [ThreadStatic] private static Action LifecycleCommitHook;
         public static SQLiteLeaderboardDBManager Instance { get; } = new();
 
         private string _dbFilePath;
@@ -23,6 +25,8 @@ namespace MHServerEmu.DatabaseAccess.SQLite
         static SQLiteLeaderboardDBManager()
         {
             ReconciliationStateReadHook = null;
+            LifecyclePreCommitHook = null;
+            LifecycleCommitHook = null;
         }
 
         private SQLiteLeaderboardDBManager() { }
@@ -481,6 +485,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
             if (request == null)
                 return LeaderboardStoreResult.InvalidData;
 
+            bool commitStarted = false;
             try
             {
                 using SQLiteConnection connection = GetConnection();
@@ -502,7 +507,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                     return LeaderboardStoreResult.StaleState;
 
                 if (request.InstanceId != definition.ActiveInstanceId)
-                    return LeaderboardStoreResult.Conflict;
+                    return LeaderboardStoreResult.StaleState;
 
                 if (target.State == LeaderboardState.eLBS_Active)
                     return LeaderboardStoreResult.Success;
@@ -512,13 +517,13 @@ namespace MHServerEmu.DatabaseAccess.SQLite
 
                 connection.Execute("UPDATE Instances SET State = @State WHERE InstanceId = @InstanceId",
                     new { State = (int)LeaderboardState.eLBS_Active, request.InstanceId }, transaction);
-                transaction.Commit();
+                CommitLifecycleTransaction(transaction, ref commitStarted);
                 return LeaderboardStoreResult.Success;
             }
             catch (Exception e)
             {
                 Logger.Error($"ActivateInstance(): {e.Message}");
-                return LeaderboardStoreResult.Failed;
+                return commitStarted ? LeaderboardStoreResult.OutcomeUncertain : LeaderboardStoreResult.Failed;
             }
         }
 
@@ -527,6 +532,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
             if (request == null || request.Entries.GroupBy(entry => entry.ParticipantId).Any(group => group.Skip(1).Any()))
                 return LeaderboardStoreResult.InvalidData;
 
+            bool commitStarted = false;
             try
             {
                 using SQLiteConnection connection = GetConnection();
@@ -582,13 +588,13 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                         new { entry.InstanceId, entry.ParticipantId, entry.Score, entry.HighScore, RuleStates = entry.RuleStates }, transaction);
                 }
 
-                transaction.Commit();
+                CommitLifecycleTransaction(transaction, ref commitStarted);
                 return LeaderboardStoreResult.Success;
             }
             catch (Exception e)
             {
                 Logger.Error($"SaveScoreBatch(): {e.Message}");
-                return LeaderboardStoreResult.Failed;
+                return commitStarted ? LeaderboardStoreResult.OutcomeUncertain : LeaderboardStoreResult.Failed;
             }
         }
 
@@ -597,6 +603,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
             if (request == null || request.Entries.GroupBy(entry => entry.ParticipantId).Any(group => group.Skip(1).Any()))
                 return LeaderboardStoreResult.InvalidData;
 
+            bool commitStarted = false;
             try
             {
                 using SQLiteConnection connection = GetConnection();
@@ -640,13 +647,13 @@ namespace MHServerEmu.DatabaseAccess.SQLite
 
                 connection.Execute("UPDATE Instances SET State = @State WHERE InstanceId = @InstanceId",
                     new { State = (int)LeaderboardState.eLBS_Expired, request.InstanceId }, transaction);
-                transaction.Commit();
+                CommitLifecycleTransaction(transaction, ref commitStarted);
                 return LeaderboardStoreResult.Success;
             }
             catch (Exception e)
             {
                 Logger.Error($"ExpireInstance(): {e.Message}");
-                return LeaderboardStoreResult.Failed;
+                return commitStarted ? LeaderboardStoreResult.OutcomeUncertain : LeaderboardStoreResult.Failed;
             }
         }
 
@@ -656,6 +663,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
             if (request == null)
                 return LeaderboardStoreResult.InvalidData;
 
+            bool commitStarted = false;
             try
             {
                 using SQLiteConnection connection = GetConnection();
@@ -753,14 +761,14 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                     ActivationDate = request.NextInstance.ActivationDate,
                     Visible = request.NextInstance.Visible
                 };
-                transaction.Commit();
+                CommitLifecycleTransaction(transaction, ref commitStarted);
                 return LeaderboardStoreResult.Success;
             }
             catch (Exception e)
             {
                 Logger.Error($"RotateActiveInstance(): {e.Message}");
                 committedInstance = null;
-                return LeaderboardStoreResult.Failed;
+                return commitStarted ? LeaderboardStoreResult.OutcomeUncertain : LeaderboardStoreResult.Failed;
             }
         }
 
@@ -803,6 +811,14 @@ namespace MHServerEmu.DatabaseAccess.SQLite
             return existingMappings.Count == requestedMappings.Count
                 && requestedMappings.All(requested => existingMappings.Any(existing => existing.LeaderboardId == requested.LeaderboardId
                     && existing.InstanceId == instanceId && existing.SubLeaderboardId == requested.SubLeaderboardId && existing.SubInstanceId == requested.SubInstanceId));
+        }
+
+        private static void CommitLifecycleTransaction(SQLiteTransaction transaction, ref bool commitStarted)
+        {
+            LifecyclePreCommitHook?.Invoke();
+            commitStarted = true;
+            transaction.Commit();
+            LifecycleCommitHook?.Invoke();
         }
 
         private static DBLeaderboardEntry CloneEntry(DBLeaderboardEntry entry)

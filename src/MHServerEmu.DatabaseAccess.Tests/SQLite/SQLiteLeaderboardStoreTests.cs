@@ -226,6 +226,14 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
             Assert.Equal(LeaderboardStoreResult.StaleState, stalePointer.Store.ActivateInstance(new(1, 10, 10)));
             Assert.Equal((int)LeaderboardState.eLBS_Created, stalePointer.ReadScalar("SELECT State FROM Instances WHERE InstanceId = 10"));
 
+            using SQLiteLeaderboardStoreFixture targetMismatch = new();
+            targetMismatch.InsertDefinition(1, activeInstanceId: 10);
+            targetMismatch.InsertInstance(10, 1, visible: true, state: (int)LeaderboardState.eLBS_Created);
+            targetMismatch.InsertInstance(11, 1, visible: true, state: (int)LeaderboardState.eLBS_Created);
+
+            Assert.Equal(LeaderboardStoreResult.StaleState, targetMismatch.Store.ActivateInstance(new(1, 10, 11)));
+            Assert.Equal((int)LeaderboardState.eLBS_Created, targetMismatch.ReadScalar("SELECT State FROM Instances WHERE InstanceId = 11"));
+
             using SQLiteLeaderboardStoreFixture staleState = new();
             staleState.InsertDefinition(1, activeInstanceId: 10);
             staleState.InsertInstance(10, 1, visible: true, state: (int)LeaderboardState.eLBS_Expired);
@@ -553,6 +561,13 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
         }
 
         [Fact]
+        public void LifecycleWrites_ClassifyPreCommitAndCommitStageFailures()
+        {
+            AssertLifecycleWriteFailure("LifecyclePreCommitHook", LeaderboardStoreResult.Failed, verifyRollback: true);
+            AssertLifecycleWriteFailure("LifecycleCommitHook", LeaderboardStoreResult.OutcomeUncertain, verifyRollback: false);
+        }
+
+        [Fact]
         public void ReconcileSchedule_FreshRequestCreatesGeneratedInitialInstanceAndNoOpReplay()
         {
             using SQLiteLeaderboardStoreFixture fixture = new();
@@ -833,6 +848,69 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
                 new[] { new LeaderboardDefinitionSpec(leaderboardId, $"Leaderboard{leaderboardId}", enabled, startTime, maxResetCount) },
                 new[] { new LeaderboardInstanceSpec(0, leaderboardId, enabled ? LeaderboardState.eLBS_Created : LeaderboardState.eLBS_Rewarded, activationDate, enabled) },
                 Array.Empty<LeaderboardMetaMapping>(), currentTime, normalArchiveLimit);
+        }
+
+        private static void AssertLifecycleWriteFailure(string hookName, LeaderboardStoreResult expectedResult, bool verifyRollback)
+        {
+            FieldInfo hookField = typeof(SQLiteLeaderboardDBManager).GetField(hookName, BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.NotNull(hookField);
+
+            try
+            {
+                hookField.SetValue(null, (Action)(() => throw new InvalidOperationException("injected lifecycle failure")));
+
+                using (SQLiteLeaderboardStoreFixture activation = new())
+                {
+                    activation.InsertDefinition(1, activeInstanceId: 10);
+                    activation.InsertInstance(10, 1, visible: true, state: (int)LeaderboardState.eLBS_Created);
+                    Assert.Equal(expectedResult, activation.Store.ActivateInstance(new(1, 10, 10)));
+                    if (verifyRollback)
+                        Assert.Equal((int)LeaderboardState.eLBS_Created, activation.ReadScalar("SELECT State FROM Instances WHERE InstanceId = 10"));
+                }
+
+                using (SQLiteLeaderboardStoreFixture scores = new())
+                {
+                    scores.InsertDefinition(1, activeInstanceId: 10);
+                    scores.InsertInstance(10, 1, visible: true, state: (int)LeaderboardState.eLBS_Active);
+                    Assert.Equal(expectedResult, scores.Store.SaveScoreBatch(new(1, 10, LeaderboardState.eLBS_Active,
+                        new[] { new LeaderboardEntryWrite(10, 20, 30, 40, new byte[] { 1 }) })));
+                    if (verifyRollback)
+                        Assert.Equal(0, scores.ReadScalar("SELECT COUNT(*) FROM Entries WHERE InstanceId = 10"));
+                }
+
+                using (SQLiteLeaderboardStoreFixture expiration = new())
+                {
+                    expiration.InsertDefinition(1, activeInstanceId: 10);
+                    expiration.InsertInstance(10, 1, visible: true, state: (int)LeaderboardState.eLBS_Active);
+                    Assert.Equal(expectedResult, expiration.Store.ExpireInstance(new(1, 10, 10, LeaderboardState.eLBS_Active,
+                        new[] { new LeaderboardEntryWrite(10, 20, 30, 40, new byte[] { 1 }) })));
+                    if (verifyRollback)
+                    {
+                        Assert.Equal((int)LeaderboardState.eLBS_Active, expiration.ReadScalar("SELECT State FROM Instances WHERE InstanceId = 10"));
+                        Assert.Equal(0, expiration.ReadScalar("SELECT COUNT(*) FROM Entries WHERE InstanceId = 10"));
+                    }
+                }
+
+                using (SQLiteLeaderboardStoreFixture rotation = new())
+                {
+                    rotation.InsertDefinition(1, activeInstanceId: 10);
+                    rotation.InsertInstance(10, 1, visible: true, state: (int)LeaderboardState.eLBS_Expired);
+                    LeaderboardRotation request = new(1, 10, LeaderboardState.eLBS_Expired, LeaderboardState.eLBS_Expired,
+                        new LeaderboardInstanceSpec(11, 1, LeaderboardState.eLBS_Created, 200, true), LeaderboardState.eLBS_Created,
+                        Array.Empty<LeaderboardMetaMapping>());
+                    Assert.Equal(expectedResult, rotation.Store.RotateActiveInstance(request, out DBLeaderboardInstance committed));
+                    Assert.Null(committed);
+                    if (verifyRollback)
+                    {
+                        Assert.Equal(10, rotation.ReadScalar("SELECT ActiveInstanceId FROM Leaderboards WHERE LeaderboardId = 1"));
+                        Assert.Equal(0, rotation.ReadScalar("SELECT COUNT(*) FROM Instances WHERE InstanceId = 11"));
+                    }
+                }
+            }
+            finally
+            {
+                hookField.SetValue(null, null);
+            }
         }
 
         private static void Execute(string databasePath, string sql)
