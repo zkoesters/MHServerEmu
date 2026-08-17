@@ -14,6 +14,7 @@ namespace MHServerEmu.PlayerManagement.Tests
         public bool SavePlayerDataResult { get; set; } = true;
         public AccountStoreResult InsertAccountStoreResult { get; set; } = AccountStoreResult.Success;
         public AccountStoreResult AccountChangeStoreResult { get; set; } = AccountStoreResult.Success;
+        public AccountStoreResult ReconcileAccountStoreResult { get; set; } = AccountStoreResult.Success;
         public PlayerStoreResult LoadPlayerDataStoreResult { get; set; } = PlayerStoreResult.Success;
         public PlayerStoreResult SavePlayerDataStoreResult { get; set; } = PlayerStoreResult.Success;
         public GuildStoreResult CreateGuildStoreResult { get; set; } = GuildStoreResult.Success;
@@ -23,6 +24,8 @@ namespace MHServerEmu.PlayerManagement.Tests
         public GuildStoreResult DeleteGuildStoreResult { get; set; } = GuildStoreResult.Success;
         public bool ThrowOnUpdateAccount { get; set; }
         public int UpdateAccountCallCount { get; private set; }
+        public int ReconcileAccountCallCount { get; private set; }
+        public Action<DBAccount> ReconcileAccountAction { get; set; }
         public int TryGetPlayerNameCallCount { get; private set; }
         public int TryGetPlayerDbIdByNameCallCount { get; private set; }
         public int LoadPlayerDataCallCount { get; private set; }
@@ -121,6 +124,18 @@ namespace MHServerEmu.PlayerManagement.Tests
         public AccountStoreResult ChangeFlags(DBAccount account, AccountFlags flags)
         {
             return StoreAccountChange();
+        }
+
+        public AccountStoreResult ReconcileAccount(DBAccount account)
+        {
+            ReconcileAccountCallCount++;
+            if (ReconcileAccountStoreResult == AccountStoreResult.Success)
+            {
+                ReconcileAccountAction?.Invoke(account);
+                account.PersistenceState = PersistenceState.Clean;
+            }
+
+            return ReconcileAccountStoreResult;
         }
 
         private AccountStoreResult StoreAccountChange()

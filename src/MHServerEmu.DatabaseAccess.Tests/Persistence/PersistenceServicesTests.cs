@@ -58,6 +58,7 @@ namespace MHServerEmu.DatabaseAccess.Tests.Persistence
             public AccountStoreResult ChangePassword(DBAccount account, byte[] passwordHash, byte[] salt) => AccountStoreResult.Failed;
             public AccountStoreResult ChangeUserLevel(DBAccount account, AccountUserLevel userLevel) => AccountStoreResult.Failed;
             public AccountStoreResult ChangeFlags(DBAccount account, AccountFlags flags) => AccountStoreResult.Failed;
+            public AccountStoreResult ReconcileAccount(DBAccount account) => AccountStoreResult.Failed;
         }
 
         private class PlayerStore : IPlayerStore

@@ -10,5 +10,6 @@ namespace MHServerEmu.DatabaseAccess
         public AccountStoreResult ChangePassword(DBAccount account, byte[] passwordHash, byte[] salt);
         public AccountStoreResult ChangeUserLevel(DBAccount account, AccountUserLevel userLevel);
         public AccountStoreResult ChangeFlags(DBAccount account, AccountFlags flags);
+        public AccountStoreResult ReconcileAccount(DBAccount account);
     }
 }

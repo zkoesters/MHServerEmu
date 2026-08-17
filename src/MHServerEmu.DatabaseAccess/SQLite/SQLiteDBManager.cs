@@ -298,6 +298,31 @@ namespace MHServerEmu.DatabaseAccess.SQLite
             }
         }
 
+        public AccountStoreResult ReconcileAccount(DBAccount account)
+        {
+            if (account == null)
+                return AccountStoreResult.InvalidData;
+            if (account.PersistenceState == PersistenceState.Clean)
+                return AccountStoreResult.Success;
+
+            try
+            {
+                using SQLiteConnection connection = GetConnection();
+                DBAccount persisted = connection.QueryFirstOrDefault<DBAccount>("SELECT * FROM Account WHERE Id = @Id", new { account.Id });
+                if (persisted == null)
+                    return AccountStoreResult.AccountNotFound;
+
+                ApplyReconciledScalars(account, persisted);
+                account.PersistenceState = PersistenceState.Clean;
+                return AccountStoreResult.Success;
+            }
+            catch (Exception e)
+            {
+                Logger.ErrorException(e, nameof(ReconcileAccount));
+                return AccountStoreResult.Failed;
+            }
+        }
+
         public PlayerStoreResult LoadPlayerData(DBAccount account)
         {
             using SQLiteConnection connection = GetConnection();
@@ -633,6 +658,26 @@ namespace MHServerEmu.DatabaseAccess.SQLite
         {
             account.PersistenceRevision = 0;
             account.PersistenceState = PersistenceState.Clean;
+        }
+
+        private static void ApplyReconciledScalars(DBAccount account, DBAccount persisted)
+        {
+            account.Email = persisted.Email;
+            account.PlayerName = persisted.PlayerName;
+            account.PasswordHash = persisted.PasswordHash;
+            account.Salt = persisted.Salt;
+            account.UserLevel = persisted.UserLevel;
+            account.Flags = persisted.Flags;
+            account.PasswordAlgorithm = persisted.PasswordAlgorithm;
+            account.PasswordFormatVersion = persisted.PasswordFormatVersion;
+            account.PasswordIterations = persisted.PasswordIterations;
+            account.PasswordKeySize = persisted.PasswordKeySize;
+            account.CredentialVersion = persisted.CredentialVersion;
+            account.GameSecurityVersion = persisted.GameSecurityVersion;
+            account.PersistenceRevision = persisted.PersistenceRevision;
+            account.EmailVerifiedAtUtc = persisted.EmailVerifiedAtUtc;
+            account.CreatedAtUtc = persisted.CreatedAtUtc;
+            account.UpdatedAtUtc = persisted.UpdatedAtUtc;
         }
 
         private static void SetPersistenceMetadata(DBGuild guild)

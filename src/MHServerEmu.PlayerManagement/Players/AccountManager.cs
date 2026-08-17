@@ -141,6 +141,9 @@ namespace MHServerEmu.PlayerManagement.Players
             if (_accounts.TryQueryAccountByEmail(email, out DBAccount account) == false)
                 return AccountOperationResult.EmailNotFound;
 
+            if (TryReconcileAccount(account) != AccountStoreResult.Success)
+                return AccountOperationResult.DatabaseError;
+
             if (_players.TryGetPlayerDbIdByName(newPlayerName, out _, out _))
                 return AccountOperationResult.PlayerNameAlreadyUsed;
 
@@ -169,6 +172,9 @@ namespace MHServerEmu.PlayerManagement.Players
             if (_accounts.TryQueryAccountByEmail(email, out DBAccount account) == false)
                 return AccountOperationResult.EmailNotFound;
 
+            if (TryReconcileAccount(account) != AccountStoreResult.Success)
+                return AccountOperationResult.DatabaseError;
+
             byte[] passwordHash = CryptographyHelper.HashPassword(newPassword, out byte[] salt);
             AccountStoreResult storeResult = TryStoreAccountChange(() => _accounts.ChangePassword(account, passwordHash, salt));
             if (storeResult != AccountStoreResult.Success)
@@ -187,6 +193,9 @@ namespace MHServerEmu.PlayerManagement.Players
             // Make sure the specified account exists
             if (_accounts.TryQueryAccountByEmail(email, out DBAccount account) == false)
                 return AccountOperationResult.EmailNotFound;
+
+            if (TryReconcileAccount(account) != AccountStoreResult.Success)
+                return AccountOperationResult.DatabaseError;
 
             AccountStoreResult storeResult = TryStoreAccountChange(() => _accounts.ChangeUserLevel(account, userLevel));
             if (storeResult != AccountStoreResult.Success)
@@ -213,6 +222,9 @@ namespace MHServerEmu.PlayerManagement.Players
         /// </summary>
         public AccountOperationResult SetFlag(DBAccount account, AccountFlags flag)
         {
+            if (TryReconcileAccount(account) != AccountStoreResult.Success)
+                return AccountOperationResult.DatabaseError;
+
             if (account.Flags.HasFlag(flag))
                 return AccountOperationResult.FlagAlreadySet;
 
@@ -242,6 +254,9 @@ namespace MHServerEmu.PlayerManagement.Players
         /// </summary>
         public AccountOperationResult ClearFlag(DBAccount account, AccountFlags flag)
         {
+            if (TryReconcileAccount(account) != AccountStoreResult.Success)
+                return AccountOperationResult.DatabaseError;
+
             if (account.Flags.HasFlag(flag) == false)
                 return AccountOperationResult.FlagNotSet;
 
@@ -346,6 +361,13 @@ namespace MHServerEmu.PlayerManagement.Players
                 Logger.ErrorException(e, nameof(TryStoreAccountChange));
                 return AccountStoreResult.Failed;
             }
+        }
+
+        private AccountStoreResult TryReconcileAccount(DBAccount account)
+        {
+            return account?.PersistenceState == PersistenceState.OutcomeUncertain
+                ? TryStoreAccountChange(() => _accounts.ReconcileAccount(account))
+                : AccountStoreResult.Success;
         }
     }
 }

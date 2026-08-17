@@ -88,6 +88,55 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
         }
 
         [Fact]
+        public void ReconcileAccount_UncertainObject_ReplacesPersistedScalarsButPreservesPlayerAggregate()
+        {
+            using TemporaryDirectory temporaryDirectory = new();
+            SQLiteDBManager manager = InitializeManager(temporaryDirectory);
+            DBAccount persisted = CreateAccount(1, "persisted@example.com", "PersistedPlayer");
+            persisted.PasswordHash = [0x01, 0x02];
+            persisted.Salt = [0x03, 0x04];
+            persisted.UserLevel = AccountUserLevel.Admin;
+            persisted.Flags = AccountFlags.IsBanned;
+            Assert.Equal(AccountStoreResult.Success, manager.InsertAccount(persisted));
+
+            DBAccount uncertain = CreateAccount(persisted.Id, "stale@example.com", "StalePlayer");
+            uncertain.PasswordHash = [0x10];
+            uncertain.Salt = [0x11];
+            uncertain.UserLevel = AccountUserLevel.User;
+            uncertain.Flags = AccountFlags.IsArchived;
+            uncertain.PersistenceRevision = 94;
+            uncertain.PersistenceState = PersistenceState.OutcomeUncertain;
+            DBPlayer player = new(uncertain.Id);
+            uncertain.Player = player;
+            Assert.True(uncertain.Avatars.Add(new() { DbGuid = 2, ContainerDbGuid = uncertain.Id }));
+
+            Assert.Equal(AccountStoreResult.Success, manager.ReconcileAccount(uncertain));
+
+            Assert.Equal(persisted.Email, uncertain.Email);
+            Assert.Equal(persisted.PlayerName, uncertain.PlayerName);
+            Assert.Equal(persisted.PasswordHash, uncertain.PasswordHash);
+            Assert.Equal(persisted.Salt, uncertain.Salt);
+            Assert.Equal(persisted.UserLevel, uncertain.UserLevel);
+            Assert.Equal(persisted.Flags, uncertain.Flags);
+            Assert.Equal(0, uncertain.PersistenceRevision);
+            Assert.Same(player, uncertain.Player);
+            Assert.Single(uncertain.Avatars.Entries);
+            Assert.Equal(PersistenceState.Clean, uncertain.PersistenceState);
+        }
+
+        [Fact]
+        public void AccountStoreConformance_ReconciliationNoOpAndMissingAccount()
+        {
+            using TemporaryDirectory temporaryDirectory = new();
+            SQLiteDBManager manager = InitializeManager(temporaryDirectory);
+
+            AccountStoreConformanceTests.AssertReconciliationNoOpAndMissingAccount(
+                manager,
+                CreateAccount(1, "clean@example.com", "CleanPlayer"),
+                CreateAccount(2, "missing@example.com", "MissingPlayer"));
+        }
+
+        [Fact]
         public void LoadPlayerData_AbsentAccount_ReturnsAccountNotFoundWithoutMutatingAggregate()
         {
             using TemporaryDirectory temporaryDirectory = new();
