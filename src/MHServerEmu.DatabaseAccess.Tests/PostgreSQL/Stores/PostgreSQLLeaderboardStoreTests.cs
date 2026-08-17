@@ -1,5 +1,4 @@
 using MHServerEmu.DatabaseAccess.PostgreSQL;
-using MHServerEmu.DatabaseAccess.PostgreSQL.Locking;
 using MHServerEmu.DatabaseAccess.Models.Leaderboards;
 using MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations;
 using System.Reflection;
@@ -357,41 +356,72 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
         }
 
         [PostgreSQLIntegrationFact]
-        public async Task LifecycleWrites_PreCommitDisconnectRollsBackWithoutFatalFailure()
+        public async Task LifecycleWrites_PreCommitBackendTerminationRollsBackWithoutFatalFailureAndRecoversPool()
         {
-            await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
+            List<PostgreSQLPersistenceFailure> failures = new();
+            await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database, fatalCallback: failures.Add);
             await InsertDefinitionAsync(fixture, 1);
             await InsertInstanceAsync(fixture, 10, 1, true, LeaderboardState.eLBS_Created);
+            await InsertDefinitionAsync(fixture, 2);
+            await InsertInstanceAsync(fixture, 20, 2, true, LeaderboardState.eLBS_Active);
+            await InsertDefinitionAsync(fixture, 3);
+            await InsertInstanceAsync(fixture, 30, 3, true, LeaderboardState.eLBS_Active);
+            await InsertDefinitionAsync(fixture, 4);
+            await InsertInstanceAsync(fixture, 40, 4, true, LeaderboardState.eLBS_Expired);
             try
             {
-                PostgreSQLLeaderboardStore.SetLifecyclePreCommitHookForTest(() => throw new NpgsqlException("injected pre-commit disconnect"));
+                PostgreSQLLeaderboardStore.SetLifecyclePreCommitHookForTest(TerminateBackendBeforeCommitAsync);
 
                 Assert.Equal(LeaderboardStoreResult.Failed, fixture.Leaderboards.ActivateInstance(new(1, 10, 10)));
-                Assert.Equal((short)LeaderboardState.eLBS_Created, await ScalarAsync(fixture,
-                    "SELECT state FROM mhserveremu.leaderboard_instance WHERE instance_id = 10"));
-                Assert.False(fixture.Provider.IsFenced);
+                Assert.Equal(LeaderboardStoreResult.Failed, fixture.Leaderboards.SaveScoreBatch(new(2, 20, LeaderboardState.eLBS_Active,
+                    [new LeaderboardEntryWrite(20, 200, 1, 2, [1])])));
+                Assert.Equal(LeaderboardStoreResult.Failed, fixture.Leaderboards.ExpireInstance(new(3, 30, 30, LeaderboardState.eLBS_Active,
+                    [new LeaderboardEntryWrite(30, 300, 1, 2, [1])])));
+                Assert.Equal(LeaderboardStoreResult.Failed, fixture.Leaderboards.RotateActiveInstance(new(4, 40, LeaderboardState.eLBS_Expired, LeaderboardState.eLBS_Expired,
+                    new LeaderboardInstanceSpec(41, 4, LeaderboardState.eLBS_Created, 400, true), LeaderboardState.eLBS_Created,
+                    Array.Empty<LeaderboardMetaMapping>()), out _));
             }
             finally
             {
                 PostgreSQLLeaderboardStore.SetLifecyclePreCommitHookForTest(null);
             }
+
+            Assert.Empty(failures);
+            Assert.Equal((short)LeaderboardState.eLBS_Created, await ScalarAsync(fixture, "SELECT state FROM mhserveremu.leaderboard_instance WHERE instance_id = 10"));
+            Assert.Equal(0L, await ScalarAsync(fixture, "SELECT COUNT(*) FROM mhserveremu.leaderboard_entry WHERE instance_id IN (20, 30)"));
+            Assert.Equal((short)LeaderboardState.eLBS_Active, await ScalarAsync(fixture, "SELECT state FROM mhserveremu.leaderboard_instance WHERE instance_id = 30"));
+            Assert.Equal(40L, await ScalarAsync(fixture, "SELECT active_instance_id FROM mhserveremu.leaderboard WHERE leaderboard_id = 4"));
+            Assert.Equal(0L, await ScalarAsync(fixture, "SELECT COUNT(*) FROM mhserveremu.leaderboard_instance WHERE instance_id = 41"));
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Leaderboards.LoadInstance(1, 10, out _));
         }
 
         [PostgreSQLIntegrationFact]
-        public async Task LifecycleWrites_CommitDisconnectReturnsOutcomeUncertainAfterExactlyOneCommit()
+        public async Task LifecycleWrites_CommitBackendTerminationReportsOneSanitizedFatalFailurePerWrite()
         {
-            await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
-            await InsertDefinitionAsync(fixture, 1);
-            await InsertInstanceAsync(fixture, 10, 1, true, LeaderboardState.eLBS_Created);
-            CommitThenDisconnectCommitter committer = new();
-            PostgreSQLLeaderboardStore store = CreateStore(fixture, committer);
-            LeaderboardActivation request = new(1, 10, 10);
-
-            Assert.Equal(LeaderboardStoreResult.OutcomeUncertain, store.ActivateInstance(request));
-            Assert.Equal(1, committer.CommitCount);
-            Assert.Equal((short)LeaderboardState.eLBS_Active, await ScalarAsync(fixture,
-                "SELECT state FROM mhserveremu.leaderboard_instance WHERE instance_id = 10"));
-            Assert.Equal(LeaderboardStoreResult.Success, fixture.Leaderboards.ActivateInstance(request));
+            await AssertCommitTerminationAsync("activation", "leaderboard_instance", "UPDATE", async fixture =>
+            {
+                await InsertDefinitionAsync(fixture, 1);
+                await InsertInstanceAsync(fixture, 10, 1, true, LeaderboardState.eLBS_Created);
+            }, fixture => fixture.Leaderboards.ActivateInstance(new(1, 10, 10)));
+            await AssertCommitTerminationAsync("score", "leaderboard_entry", "INSERT", async fixture =>
+            {
+                await InsertDefinitionAsync(fixture, 2);
+                await InsertInstanceAsync(fixture, 20, 2, true, LeaderboardState.eLBS_Active);
+            }, fixture => fixture.Leaderboards.SaveScoreBatch(new(2, 20, LeaderboardState.eLBS_Active,
+                [new LeaderboardEntryWrite(20, 200, 1, 2, [1])])));
+            await AssertCommitTerminationAsync("expiration", "leaderboard_instance", "UPDATE", async fixture =>
+            {
+                await InsertDefinitionAsync(fixture, 3);
+                await InsertInstanceAsync(fixture, 30, 3, true, LeaderboardState.eLBS_Active);
+            }, fixture => fixture.Leaderboards.ExpireInstance(new(3, 30, 30, LeaderboardState.eLBS_Active,
+                [new LeaderboardEntryWrite(30, 300, 1, 2, [1])])));
+            await AssertCommitTerminationAsync("rotation", "leaderboard_instance", "INSERT", async fixture =>
+            {
+                await InsertDefinitionAsync(fixture, 4);
+                await InsertInstanceAsync(fixture, 40, 4, true, LeaderboardState.eLBS_Expired);
+            }, fixture => fixture.Leaderboards.RotateActiveInstance(new(4, 40, LeaderboardState.eLBS_Expired, LeaderboardState.eLBS_Expired,
+                new LeaderboardInstanceSpec(41, 4, LeaderboardState.eLBS_Created, 400, true), LeaderboardState.eLBS_Created,
+                Array.Empty<LeaderboardMetaMapping>()), out _));
         }
 
         private static LeaderboardReconciliation Reconciliation(long leaderboardId, bool enabled = true, long startTime = 100, int maxResetCount = 0, long activationDate = 300, long currentTime = 500, int normalArchiveLimit = 2)
@@ -437,13 +467,26 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
             throw new TimeoutException("Reconciliation did not wait for the global advisory lock.");
         }
 
-        private static PostgreSQLLeaderboardStore CreateStore(PostgreSQLStoreTestFixture fixture, IPostgreSQLTransactionCommitter committer)
+        private async Task AssertCommitTerminationAsync(string name, string table, string operation, Func<PostgreSQLStoreTestFixture, Task> setup,
+            Func<PostgreSQLStoreTestFixture, LeaderboardStoreResult> write)
         {
-            FieldInfo ownerField = typeof(PostgreSQLProvider).GetField("_writerOwner", BindingFlags.Instance | BindingFlags.NonPublic);
-            Assert.NotNull(ownerField);
-            PostgreSQLWriterOwner owner = Assert.IsType<PostgreSQLWriterOwner>(ownerField.GetValue(fixture.Provider));
-            return new PostgreSQLLeaderboardStore(fixture.Provider.DataSource,
-                new PostgreSQLStoreExecutor(fixture.Provider.DataSource, owner, TimeSpan.FromSeconds(30), committer));
+            List<PostgreSQLPersistenceFailure> failures = new();
+            await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database, fatalCallback: failures.Add);
+            await setup(fixture);
+            await CreateDeferredBackendTerminationAsync(fixture.Provider.DataSource, name, table, operation);
+            try
+            {
+                Assert.Equal(LeaderboardStoreResult.OutcomeUncertain, write(fixture));
+            }
+            finally
+            {
+                await DropDeferredBackendTerminationAsync(fixture.Provider.DataSource, name, table);
+            }
+
+            PostgreSQLPersistenceFailure failure = Assert.Single(failures);
+            Assert.Equal("WriteOutcomeUncertain", failure.Code);
+            Assert.DoesNotContain("termination", failure.ToString(), StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("pg_terminate_backend", failure.ToString(), StringComparison.OrdinalIgnoreCase);
         }
 
         private static async Task InsertDefinitionAsync(PostgreSQLStoreTestFixture fixture, long leaderboardId, bool enabled = true)
@@ -511,16 +554,34 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
             return await command.ExecuteScalarAsync();
         }
 
-        private sealed class CommitThenDisconnectCommitter : IPostgreSQLTransactionCommitter
+        private static async Task TerminateBackendAsync(int processId)
         {
-            public int CommitCount { get; private set; }
+            await using NpgsqlConnection connection = new(Environment.GetEnvironmentVariable("MHSERVEREMU_POSTGRESQL_TEST_ADMIN_CONNECTION_STRING"));
+            await connection.OpenAsync();
+            await using NpgsqlCommand command = new("SELECT pg_terminate_backend(@processId)", connection);
+            command.Parameters.AddWithValue("processId", processId);
+            await command.ExecuteNonQueryAsync();
+        }
 
-            public async Task CommitAsync(NpgsqlTransaction transaction, CancellationToken cancellationToken)
-            {
-                CommitCount++;
-                await transaction.CommitAsync(cancellationToken);
-                throw new NpgsqlException("injected commit disconnect");
-            }
+        private static async Task TerminateBackendBeforeCommitAsync(NpgsqlConnection connection, NpgsqlTransaction transaction)
+        {
+            await TerminateBackendAsync(connection.ProcessID);
+            await using NpgsqlCommand command = new("SELECT 1", connection, transaction);
+            await command.ExecuteScalarAsync();
+        }
+
+        private static async Task CreateDeferredBackendTerminationAsync(NpgsqlDataSource dataSource, string name, string table, string operation)
+        {
+            await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync();
+            await using NpgsqlCommand command = new($"CREATE FUNCTION mhserveremu.leaderboard_{name}_termination() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_terminate_backend(pg_backend_pid()); RETURN NULL; END; $$; CREATE CONSTRAINT TRIGGER leaderboard_{name}_termination AFTER {operation} ON mhserveremu.{table} DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION mhserveremu.leaderboard_{name}_termination();", connection);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        private static async Task DropDeferredBackendTerminationAsync(NpgsqlDataSource dataSource, string name, string table)
+        {
+            await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync();
+            await using NpgsqlCommand command = new($"DROP TRIGGER IF EXISTS leaderboard_{name}_termination ON mhserveremu.{table}; DROP FUNCTION IF EXISTS mhserveremu.leaderboard_{name}_termination();", connection);
+            await command.ExecuteNonQueryAsync();
         }
     }
 }

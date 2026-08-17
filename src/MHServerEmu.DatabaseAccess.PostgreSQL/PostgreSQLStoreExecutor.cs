@@ -10,8 +10,10 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
         private readonly PostgreSQLWriterOwner _writerOwner;
         private readonly TimeSpan _operationTimeout;
         private readonly IPostgreSQLTransactionCommitter _committer;
+        private readonly Action<PostgreSQLPersistenceFailure> _fatalCallback;
 
-        internal PostgreSQLStoreExecutor(NpgsqlDataSource dataSource, PostgreSQLWriterOwner writerOwner, TimeSpan operationTimeout, IPostgreSQLTransactionCommitter committer)
+        internal PostgreSQLStoreExecutor(NpgsqlDataSource dataSource, PostgreSQLWriterOwner writerOwner, TimeSpan operationTimeout,
+            IPostgreSQLTransactionCommitter committer, Action<PostgreSQLPersistenceFailure> fatalCallback = null)
         {
             _dataSource = dataSource ?? throw new ArgumentNullException(nameof(dataSource));
             _writerOwner = writerOwner ?? throw new ArgumentNullException(nameof(writerOwner));
@@ -19,9 +21,11 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
                 throw new ArgumentOutOfRangeException(nameof(operationTimeout));
             _operationTimeout = operationTimeout;
             _committer = committer ?? throw new ArgumentNullException(nameof(committer));
+            _fatalCallback = fatalCallback ?? (_ => { });
         }
 
-        internal async Task<PostgreSQLWriteResult> ExecuteWriteAsync(string operation, long entityId, Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task> writeAsync, CancellationToken cancellationToken = default)
+        internal async Task<PostgreSQLWriteResult> ExecuteWriteAsync(string operation, long entityId, Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task> writeAsync,
+            CancellationToken cancellationToken = default, bool notifyFatalOnOutcomeUncertain = false)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(operation);
             ArgumentNullException.ThrowIfNull(writeAsync);
@@ -56,14 +60,14 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
                             if (commitStarted == false)
                                 await RollbackAsync(transaction, deadline, cancellationToken);
 
-                            return WithEntityId(ClassifyFailure(operation, commitStarted, exception), entityId);
+                            return ReportFailure(ClassifyFailure(operation, commitStarted, exception), entityId, notifyFatalOnOutcomeUncertain);
                         }
                     }
                 }
             }
             catch (Exception exception)
             {
-                return WithEntityId(ClassifyFailure(operation, commitStarted, exception), entityId);
+                return ReportFailure(ClassifyFailure(operation, commitStarted, exception), entityId, notifyFatalOnOutcomeUncertain);
             }
         }
 
@@ -151,6 +155,14 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
         {
             PostgreSQLPersistenceFailure failure = result.Failure;
             return new PostgreSQLWriteResult(result.Outcome, new PostgreSQLPersistenceFailure(failure.Code, failure.Operation, failure.SqlState, failure.MigrationIdentity, entityId.ToString(System.Globalization.CultureInfo.InvariantCulture), failure.ConstraintName));
+        }
+
+        private PostgreSQLWriteResult ReportFailure(PostgreSQLWriteResult result, long entityId, bool notifyFatalOnOutcomeUncertain)
+        {
+            PostgreSQLWriteResult failure = WithEntityId(result, entityId);
+            if (notifyFatalOnOutcomeUncertain && failure.Outcome == PostgreSQLWriteOutcome.OutcomeUncertain)
+                _fatalCallback(failure.Failure);
+            return failure;
         }
 
         private static string ToMilliseconds(TimeSpan timeout)

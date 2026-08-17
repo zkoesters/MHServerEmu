@@ -59,7 +59,8 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
                     _dataSource,
                     _writerOwner,
                     TimeSpan.FromSeconds(_settings.OperationTimeoutSeconds),
-                    new NpgsqlTransactionCommitter());
+                    new NpgsqlTransactionCommitter(),
+                    _fatalCallback);
                 _monitor = new PostgreSQLWriterLockMonitor(_writerOwner.Connection, Fence);
                 return PostgreSQLProviderStartResult.Success();
             }

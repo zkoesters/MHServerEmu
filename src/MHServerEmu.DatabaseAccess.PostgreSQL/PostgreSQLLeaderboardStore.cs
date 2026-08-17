@@ -15,7 +15,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
         private const long ReconciliationLockKey = unchecked((long)0x4C6561646572626FUL);
 
         private static Action<string> SnapshotMetaMappingCommandHook = null;
-        private static readonly AsyncLocal<Action> LifecyclePreCommitHook = new();
+        private static readonly AsyncLocal<Func<NpgsqlConnection, NpgsqlTransaction, Task>> LifecyclePreCommitHook = new();
         private readonly PostgreSQLStoreExecutor _executor;
 
         internal PostgreSQLLeaderboardStore(NpgsqlDataSource dataSource, PostgreSQLStoreExecutor executor)
@@ -24,7 +24,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
             _executor = executor ?? throw new ArgumentNullException(nameof(executor));
         }
 
-        internal static void SetLifecyclePreCommitHookForTest(Action hook)
+        internal static void SetLifecyclePreCommitHookForTest(Func<NpgsqlConnection, NpgsqlTransaction, Task> hook)
         {
             LifecyclePreCommitHook.Value = hook;
         }
@@ -424,7 +424,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
                     {
                         operationResult = result;
                         Abort(result);
-                    })).GetAwaiter().GetResult();
+                    }), notifyFatalOnOutcomeUncertain: true).GetAwaiter().GetResult();
                 return write.Outcome == PostgreSQLWriteOutcome.Success
                     ? LeaderboardStoreResult.Success
                     : write.Outcome == PostgreSQLWriteOutcome.OutcomeUncertain ? LeaderboardStoreResult.OutcomeUncertain : operationResult;
@@ -439,7 +439,8 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
             Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Action<LeaderboardStoreResult>, Task> writeAsync, Action<LeaderboardStoreResult> abort)
         {
             await writeAsync(connection, transaction, cancellationToken, abort);
-            LifecyclePreCommitHook.Value?.Invoke();
+            if (LifecyclePreCommitHook.Value != null)
+                await LifecyclePreCommitHook.Value(connection, transaction);
         }
 
         private static async Task<DBLeaderboard> ReadDefinitionAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long leaderboardId, bool forUpdate, CancellationToken cancellationToken)
