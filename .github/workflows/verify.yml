@@ -51,23 +51,36 @@ jobs:
       - run: dotnet build MHServerEmu.sln --configuration Release --no-restore
       - name: Assert PostgreSQL integration connection string
         run: test -n "$MHSERVEREMU_POSTGRESQL_TEST_ADMIN_CONNECTION_STRING"
-      - name: Run PostgreSQL integration tests
+      - name: Run database access PostgreSQL integration tests
         run: >-
-          dotnet test MHServerEmu.sln --configuration Release --no-build -p:Platform=x64
-          --filter Category=PostgreSQLIntegration --logger "trx;LogFileName=TestResults.trx"
+          dotnet test src/MHServerEmu.DatabaseAccess.Tests/MHServerEmu.DatabaseAccess.Tests.csproj
+          --configuration Release --no-build -p:Platform=x64 --filter Category=PostgreSQLIntegration
+          --logger "trx;LogFileName=DatabaseAccess.trx"
+          --results-directory artifacts/postgresql
+      - name: Run activation PostgreSQL integration tests
+        run: >-
+          dotnet test src/MHServerEmu.Tests/MHServerEmu.Tests.csproj
+          --configuration Release --no-build -p:Platform=x64 --filter Category=PostgreSQLIntegration
+          --logger "trx;LogFileName=Activation.trx"
           --results-directory artifacts/postgresql
       - name: Assert PostgreSQL integration results
         shell: pwsh
         run: |
-          [xml]$trx = Get-Content artifacts/postgresql/TestResults.trx
-          $counters = $trx.TestRun.ResultSummary.Counters
-          if ([int]$counters.total -eq 0 -or [int]$counters.executed -eq 0 -or [int]$counters.notExecuted -ne 0) {
-              throw "PostgreSQL integration matrix matched no tests or skipped tests"
+          $resultFiles = @(
+            "artifacts/postgresql/DatabaseAccess.trx",
+            "artifacts/postgresql/Activation.trx"
+          )
+          foreach ($resultFile in $resultFiles) {
+            [xml]$trx = Get-Content $resultFile
+            $counters = $trx.TestRun.ResultSummary.Counters
+            if ([int]$counters.total -eq 0 -or [int]$counters.executed -eq 0 -or [int]$counters.notExecuted -ne 0) {
+                throw "PostgreSQL integration result '$resultFile' matched no tests or skipped tests"
+            }
           }
       - name: Upload PostgreSQL test results
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: postgresql-test-results-${{ matrix.version }}
-          path: artifacts/postgresql/TestResults.trx
+          path: artifacts/postgresql
           if-no-files-found: error
