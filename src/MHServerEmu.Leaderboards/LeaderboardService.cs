@@ -23,6 +23,8 @@ namespace MHServerEmu.Leaderboards
         private readonly LeaderboardDatabase _database;
         private readonly LeaderboardRewardManager _rewardManager;
         private readonly LeaderboardServiceMailbox _mailbox;
+        private readonly Func<bool> _isEnabledFactory;
+        private readonly Func<bool> _initializeDatabase;
         private readonly object _workLock = new();
 
         private bool _isEnabled;
@@ -44,6 +46,17 @@ namespace MHServerEmu.Leaderboards
                 new GameDatabaseLeaderboardPrototypeCatalog(), publisher,
                 new LeaderboardRuntimeOptions(schedulePath, config.NormalArchiveLimit, config.AutoSaveIntervalMinutes), Shutdown);
             _rewardManager = new LeaderboardRewardManager(leaderboards, publisher, () => Clock.UnixTime, Shutdown);
+            _isEnabledFactory = () => ConfigManager.Instance.GetConfig<GameOptionsConfig>().LeaderboardsEnabled;
+            _initializeDatabase = _database.Initialize;
+            _mailbox = new(this);
+        }
+
+        internal LeaderboardService(LeaderboardDatabase database, LeaderboardRewardManager rewardManager, Func<bool> isEnabledFactory, Func<bool> initializeDatabase)
+        {
+            _database = database ?? throw new ArgumentNullException(nameof(database));
+            _rewardManager = rewardManager ?? throw new ArgumentNullException(nameof(rewardManager));
+            _isEnabledFactory = isEnabledFactory ?? throw new ArgumentNullException(nameof(isEnabledFactory));
+            _initializeDatabase = initializeDatabase ?? throw new ArgumentNullException(nameof(initializeDatabase));
             _mailbox = new(this);
         }
 
@@ -53,8 +66,7 @@ namespace MHServerEmu.Leaderboards
         {
             State = GameServiceState.Starting;
 
-            var config = ConfigManager.Instance.GetConfig<GameOptionsConfig>();
-            _isEnabled = config.LeaderboardsEnabled;
+            _isEnabled = _isEnabledFactory();
 
             if (_isEnabled == false)
             {
@@ -65,7 +77,7 @@ namespace MHServerEmu.Leaderboards
                 return;
             }
 
-            if (_database.Initialize() == false)
+            if (_initializeDatabase() == false)
             {
                 State = GameServiceState.Shutdown;
                 return;
