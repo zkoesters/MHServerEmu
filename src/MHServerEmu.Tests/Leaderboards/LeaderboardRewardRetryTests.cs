@@ -5,87 +5,89 @@ using MHServerEmu.Leaderboards;
 
 namespace MHServerEmu.Tests.Leaderboards
 {
-    public class LeaderboardRewardManagerTests
+    public class LeaderboardRewardRetryTests
     {
         [Fact]
-        public void Update_PublishesPendingRewardsThroughInjectedPublisher()
+        public void FinalizationFailure_RetriesAtBoundedSchedule()
         {
-            RewardStore store = new();
-            RecordingPublisher publisher = new();
-            LeaderboardRewardManager manager = new(store, publisher);
+            ManualClock clock = new();
+            RewardStore store = new(RewardFinalizationResult.Failed);
+            LeaderboardRewardManager manager = new(store, new RecordingPublisher(), () => clock.Now, () => { });
 
             manager.OnLeaderboardRewardRequest(new ServiceMessage.LeaderboardRewardRequest(42));
             manager.Update();
+            manager.OnLeaderboardRewardConfirmation(new ServiceMessage.LeaderboardRewardConfirmation(1, 2, 42));
+            manager.Update();
 
-            ServiceMessage.LeaderboardRewardRequestResponse response = Assert.Single(publisher.RewardResponses);
-            Assert.Equal(42UL, response.ParticipantId);
-            Assert.Equal(3UL, Assert.Single(response.Entries).RewardId);
+            Assert.Equal(1, store.FinalizationCalls);
+            foreach ((int seconds, int expectedCalls) in new[] { (1, 2), (3, 3), (7, 4), (15, 5), (31, 6), (61, 7), (91, 8) })
+            {
+                clock.Now = TimeSpan.FromSeconds(seconds);
+                manager.Update();
+                Assert.Equal(expectedCalls, store.FinalizationCalls);
+            }
         }
 
         [Fact]
-        public void FinalizationFailure_DuplicateConfirmation_AddressesFullKeyAgain()
+        public void FinalizationOutcomeUncertain_RequestsShutdownAndStopsRetries()
         {
-            RewardStore store = new();
-            LeaderboardRewardManager manager = new(store, new RecordingPublisher());
-            ServiceMessage.LeaderboardRewardConfirmation confirmation = new(1, 2, 42);
+            ManualClock clock = new();
+            RewardStore store = new(RewardFinalizationResult.OutcomeUncertain);
+            int fatalCalls = 0;
+            LeaderboardRewardManager manager = new(store, new RecordingPublisher(), () => clock.Now, () => fatalCalls++);
 
             manager.OnLeaderboardRewardRequest(new ServiceMessage.LeaderboardRewardRequest(42));
             manager.Update();
-            manager.OnLeaderboardRewardConfirmation(confirmation);
+            manager.OnLeaderboardRewardConfirmation(new ServiceMessage.LeaderboardRewardConfirmation(1, 2, 42));
             manager.Update();
-            manager.OnLeaderboardRewardConfirmation(confirmation);
+            clock.Now = TimeSpan.FromMinutes(10);
             manager.Update();
 
-            Assert.Equal(2, store.FinalizationCalls);
+            Assert.Equal(1, fatalCalls);
+            Assert.Equal(1, store.FinalizationCalls);
         }
 
         [Fact]
-        public void RewardResponseFailure_NextRequestCanDeliverPendingReward()
+        public void FinalizationOutcomeUncertain_StopsOtherDueFinalizations()
         {
-            RewardStore store = new();
-            ThrowingPublisher publisher = new() { ThrowOnNextResponse = true };
-            LeaderboardRewardManager manager = new(store, publisher);
-
-            manager.OnLeaderboardRewardRequest(new ServiceMessage.LeaderboardRewardRequest(42));
-            Assert.Throws<InvalidOperationException>(() => manager.Update());
+            ManualClock clock = new();
+            RewardStore store = new(RewardFinalizationResult.Failed, RewardFinalizationResult.Failed, RewardFinalizationResult.OutcomeUncertain)
+            {
+                PendingRewardCount = 2,
+            };
+            int fatalCalls = 0;
+            LeaderboardRewardManager manager = new(store, new RecordingPublisher(), () => clock.Now, () => fatalCalls++);
 
             manager.OnLeaderboardRewardRequest(new ServiceMessage.LeaderboardRewardRequest(42));
             manager.Update();
+            manager.OnLeaderboardRewardConfirmation(new ServiceMessage.LeaderboardRewardConfirmation(1, 1, 42));
+            manager.OnLeaderboardRewardConfirmation(new ServiceMessage.LeaderboardRewardConfirmation(2, 2, 42));
+            manager.Update();
+            clock.Now = TimeSpan.FromSeconds(1);
+            manager.Update();
 
-            Assert.Single(publisher.RewardResponses);
+            Assert.Equal(1, fatalCalls);
+            Assert.Equal(3, store.FinalizationCalls);
+        }
+
+        private sealed class ManualClock
+        {
+            public TimeSpan Now { get; set; }
         }
 
         private sealed class RecordingPublisher : ILeaderboardPublisher
         {
-            public List<ServiceMessage.LeaderboardRewardRequestResponse> RewardResponses { get; } = new();
-
             public void Publish(ServiceMessage.LeaderboardStateChange change) { }
             public void Publish(IReadOnlyList<ServiceMessage.LeaderboardStateChange> changes) { }
-            public void Publish(ServiceMessage.LeaderboardRewardRequestResponse response) => RewardResponses.Add(response);
+            public void Publish(ServiceMessage.LeaderboardRewardRequestResponse response) { }
         }
 
-        private sealed class ThrowingPublisher : ILeaderboardPublisher
+        private sealed class RewardStore(params RewardFinalizationResult[] finalizationResults) : ILeaderboardStore
         {
-            public bool ThrowOnNextResponse { get; set; }
-            public List<ServiceMessage.LeaderboardRewardRequestResponse> RewardResponses { get; } = new();
+            private readonly Queue<RewardFinalizationResult> _finalizationResults = new(finalizationResults);
 
-            public void Publish(ServiceMessage.LeaderboardStateChange change) { }
-            public void Publish(IReadOnlyList<ServiceMessage.LeaderboardStateChange> changes) { }
-            public void Publish(ServiceMessage.LeaderboardRewardRequestResponse response)
-            {
-                if (ThrowOnNextResponse)
-                {
-                    ThrowOnNextResponse = false;
-                    throw new InvalidOperationException();
-                }
-
-                RewardResponses.Add(response);
-            }
-        }
-
-        private sealed class RewardStore : ILeaderboardStore
-        {
             public int FinalizationCalls { get; private set; }
+            public int PendingRewardCount { get; set; } = 1;
 
             public LeaderboardStoreResult Initialize() => LeaderboardStoreResult.Failed;
             public LeaderboardStoreResult ReconcileSchedule(LeaderboardReconciliation request, out LeaderboardSnapshot snapshot) { snapshot = new(); return LeaderboardStoreResult.Failed; }
@@ -101,13 +103,15 @@ namespace MHServerEmu.Tests.Leaderboards
             public LeaderboardStoreResult GenerateRewards(LeaderboardRewardGeneration request) => LeaderboardStoreResult.Failed;
             public LeaderboardStoreResult GetPendingRewards(long participantId, out IReadOnlyList<DBRewardEntry> rewards)
             {
-                rewards = [new DBRewardEntry(1, 2, 3, participantId, 1)];
+                rewards = Enumerable.Range(1, PendingRewardCount)
+                    .Select(index => new DBRewardEntry(index, index, 3, participantId, 1))
+                    .ToArray();
                 return LeaderboardStoreResult.Success;
             }
             public RewardFinalizationResult FinalizeReward(LeaderboardRewardKey key, long rewardedDate)
             {
                 FinalizationCalls++;
-                return RewardFinalizationResult.Failed;
+                return _finalizationResults.Count > 0 ? _finalizationResults.Dequeue() : RewardFinalizationResult.Failed;
             }
         }
     }

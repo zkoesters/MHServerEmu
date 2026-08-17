@@ -3,6 +3,7 @@ using MHServerEmu.Core.Config;
 using MHServerEmu.Core.Helpers;
 using MHServerEmu.Core.Logging;
 using MHServerEmu.Core.Network;
+using MHServerEmu.Core.System.Time;
 using MHServerEmu.DatabaseAccess;
 using MHServerEmu.Games;
 
@@ -34,8 +35,8 @@ namespace MHServerEmu.Leaderboards
             ILeaderboardPublisher publisher = new ServerManagerLeaderboardPublisher();
             _database = new LeaderboardDatabase(leaderboards, new PlayerStoreLeaderboardNameResolver(players),
                 new GameDatabaseLeaderboardPrototypeCatalog(), publisher,
-                new LeaderboardRuntimeOptions(schedulePath, config.NormalArchiveLimit, config.AutoSaveIntervalMinutes));
-            _rewardManager = new LeaderboardRewardManager(leaderboards, publisher);
+                new LeaderboardRuntimeOptions(schedulePath, config.NormalArchiveLimit, config.AutoSaveIntervalMinutes), Shutdown);
+            _rewardManager = new LeaderboardRewardManager(leaderboards, publisher, () => Clock.UnixTime, Shutdown);
         }
 
         #region IGameService Implementation
@@ -80,6 +81,7 @@ namespace MHServerEmu.Leaderboards
             if (_isEnabled)
             {
                 _database?.Save();
+                _rewardManager?.Shutdown();
                 State = GameServiceState.ShuttingDown;
             }
             else

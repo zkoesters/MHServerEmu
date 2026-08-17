@@ -12,9 +12,8 @@ namespace MHServerEmu.Leaderboards
     public class LeaderboardRewardManager
     {
         private static readonly Logger Logger = LogManager.CreateLogger();
-        private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(5);    // If we don't get all confirmations in 5 minutes, something must have gone very wrong
-
-        private readonly Dictionary<ulong, RewardQueryResult> _pendingRewards = new();
+        private readonly Dictionary<LeaderboardRewardKey, DBRewardEntry> _pendingRewards = new();
+        private readonly Dictionary<LeaderboardRewardKey, PendingFinalization> _pendingFinalizations = new();
 
         private Queue<ServiceMessage.LeaderboardRewardRequest> _requestQueue = new();
         private Queue<ServiceMessage.LeaderboardRewardRequest> _processRequestQueue = new();
@@ -24,11 +23,21 @@ namespace MHServerEmu.Leaderboards
         private readonly object _queueLock = new();
         private readonly ILeaderboardStore _store;
         private readonly ILeaderboardPublisher _publisher;
+        private readonly Func<TimeSpan> _clock;
+        private readonly Action _fatal;
+        private bool _stopped;
 
         public LeaderboardRewardManager(ILeaderboardStore store, ILeaderboardPublisher publisher)
+            : this(store, publisher, () => Clock.UnixTime, () => { })
+        {
+        }
+
+        public LeaderboardRewardManager(ILeaderboardStore store, ILeaderboardPublisher publisher, Func<TimeSpan> clock, Action fatal)
         {
             _store = store ?? throw new ArgumentNullException(nameof(store));
             _publisher = publisher ?? throw new ArgumentNullException(nameof(publisher));
+            _clock = clock ?? throw new ArgumentNullException(nameof(clock));
+            _fatal = fatal ?? throw new ArgumentNullException(nameof(fatal));
         }
 
         /// <summary>
@@ -54,6 +63,9 @@ namespace MHServerEmu.Leaderboards
         /// </summary>
         public void Update()
         {
+            if (_stopped)
+                return;
+
             // Swap queues
             lock (_queueLock)
             {
@@ -75,16 +87,23 @@ namespace MHServerEmu.Leaderboards
                 QueryRewards(request.ParticipantId);
             }
 
-            // Check for timeouts
-            TimeSpan now = Clock.UnixTime;
-            foreach (var kvp in _pendingRewards)
+            TimeSpan now = _clock();
+            List<LeaderboardRewardKey> due = _pendingFinalizations
+                .Where(pair => pair.Value.DueTime <= now)
+                .Select(pair => pair.Key)
+                .ToList();
+            foreach (LeaderboardRewardKey key in due)
             {
-                if ((now - kvp.Value.Timestamp) >= Timeout)
-                {
-                    Logger.Error($"Update(): Reward timeout for participant 0x{kvp.Key:X}");
-                    _pendingRewards.Remove(kvp.Key);
-                }
+                FinalizeReward(key);
+                if (_stopped)
+                    break;
             }
+        }
+
+        public void Shutdown()
+        {
+            _stopped = true;
+            _pendingFinalizations.Clear();
         }
 
         /// <summary>
@@ -92,9 +111,6 @@ namespace MHServerEmu.Leaderboards
         /// </summary>
         private bool QueryRewards(ulong participantId)
         {
-            if (_pendingRewards.ContainsKey(participantId))
-                return Logger.WarnReturn(false, $"QueryRewards(): Participant 0x{participantId:X} already has pending rewards");
-
             // Query the database and exit early if there are no rewards to give
             List<DBRewardEntry> dbRewards;
             if (_store.GetPendingRewards((long)participantId, out IReadOnlyList<DBRewardEntry> rewards) == LeaderboardStoreResult.Success)
@@ -103,9 +119,6 @@ namespace MHServerEmu.Leaderboards
                 return false;
             if (dbRewards.Count == 0)
                 return true;
-
-            // Keep track of all pending rewards
-            _pendingRewards.Add(participantId, new(dbRewards));
 
             // Send reward information to game
             ServiceMessage.LeaderboardRewardEntry[]  rewardEntries = new ServiceMessage.LeaderboardRewardEntry[dbRewards.Count];
@@ -118,6 +131,8 @@ namespace MHServerEmu.Leaderboards
 
             ServiceMessage.LeaderboardRewardRequestResponse requestResponse = new(participantId, rewardEntries);
             _publisher.Publish(requestResponse);
+            foreach (DBRewardEntry reward in dbRewards)
+                _pendingRewards[new(reward.LeaderboardId, reward.InstanceId, reward.ParticipantId)] = reward;
 
             return true;
         }
@@ -127,47 +142,62 @@ namespace MHServerEmu.Leaderboards
         /// </summary>
         private bool FinalizeReward(long leaderboardId, long instanceId, ulong participantId)
         {
-            if (_pendingRewards.TryGetValue(participantId, out RewardQueryResult rewardQuery) == false)
-                return Logger.WarnReturn(false, $"FinalizeReward(): Received confirmation for participant 0x{participantId:X}, who does not have pending rewards");
-
-            List<DBRewardEntry> rewards = rewardQuery.Rewards;
-
-            // Find the specified pending reward
-            DBRewardEntry reward = null;
-            for (int i = 0; i < rewards.Count; i++)
-            {
-                DBRewardEntry itReward = rewards[i];
-                if (itReward.LeaderboardId == leaderboardId && itReward.InstanceId == instanceId)
-                {
-                    reward = itReward;
-                    rewards.RemoveAt(i);
-                    break;
-                }
-            }
-
-            if (reward == null)
-                return Logger.WarnReturn(false, $"FinalizeReward(): Failed to find reward for leaderboardId={leaderboardId}, instanceId={instanceId}, participant=0x{participantId:X}");
-
-            // Update reward in the database
-            if (_store.FinalizeReward(new LeaderboardRewardKey(leaderboardId, instanceId, (long)participantId), (long)Clock.UnixTime.TotalSeconds) is not (RewardFinalizationResult.Finalized or RewardFinalizationResult.AlreadyFinalized))
-            {
+            LeaderboardRewardKey key = new(leaderboardId, instanceId, (long)participantId);
+            if (FinalizeReward(key) == false)
                 return false;
-            }
 
-            // Finish this batch of rewards if we have received confirmations for everything
-            if (rewards.Count == 0)
-            {
-                Logger.Info($"FinalizeReward(): Received confirmation for all pending rewards for participant 0x{participantId:X}");
-                _pendingRewards.Remove(participantId);
-            }
+            _pendingRewards.Remove(key);
 
             return true;
         }
 
-        private readonly struct RewardQueryResult(List<DBRewardEntry> rewards)
+        private bool FinalizeReward(LeaderboardRewardKey key)
         {
-            public readonly List<DBRewardEntry> Rewards = rewards;
-            public readonly TimeSpan Timestamp = Clock.UnixTime;
+            RewardFinalizationResult result = _store.FinalizeReward(key, (long)_clock().TotalSeconds);
+            switch (result)
+            {
+                case RewardFinalizationResult.Finalized:
+                case RewardFinalizationResult.AlreadyFinalized:
+                    _pendingFinalizations.Remove(key);
+                    _pendingRewards.Remove(key);
+                    return true;
+
+                case RewardFinalizationResult.NotFound:
+                    _pendingFinalizations.Remove(key);
+                    _pendingRewards.Remove(key);
+                    Logger.Warn($"FinalizeReward(): Missing reward {key}");
+                    return true;
+
+                case RewardFinalizationResult.Failed:
+                    ScheduleRetry(key);
+                    return false;
+
+                case RewardFinalizationResult.OutcomeUncertain:
+                    _stopped = true;
+                    _pendingFinalizations.Clear();
+                    _fatal();
+                    return false;
+
+                default:
+                    return false;
+            }
         }
+
+        private void ScheduleRetry(LeaderboardRewardKey key)
+        {
+            int retryCount = _pendingFinalizations.TryGetValue(key, out PendingFinalization pending) ? pending.RetryCount + 1 : 1;
+            int delaySeconds = retryCount switch
+            {
+                1 => 1,
+                2 => 2,
+                3 => 4,
+                4 => 8,
+                5 => 16,
+                _ => 30,
+            };
+            _pendingFinalizations[key] = new(retryCount, _clock() + TimeSpan.FromSeconds(delaySeconds));
+        }
+
+        private readonly record struct PendingFinalization(int RetryCount, TimeSpan DueTime);
     }
 }

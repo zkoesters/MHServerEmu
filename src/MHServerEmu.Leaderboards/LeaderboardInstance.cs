@@ -505,7 +505,16 @@ namespace MHServerEmu.Leaderboards
                     GetMetaRewards(rewardsList);
 
                 long expectedActiveInstanceId = (long)(_leaderboard.ActiveInstance?.InstanceId ?? InstanceId);
-                if (_leaderboard.Database.GenerateRewards((long)LeaderboardId, expectedActiveInstanceId, (long)InstanceId, rewardsList) != LeaderboardStoreResult.Success)
+                if (LeaderboardRewardBuilder.TryBuild(rewardsList, out IReadOnlyList<DBRewardEntry> rewardSet) == false)
+                    return false;
+
+                LeaderboardStoreResult result = _leaderboard.Database.GenerateRewards((long)LeaderboardId, expectedActiveInstanceId, (long)InstanceId, rewardSet);
+                if (result == LeaderboardStoreResult.OutcomeUncertain)
+                {
+                    _leaderboard.Database.RequestControlledShutdown();
+                    return false;
+                }
+                if (result != LeaderboardStoreResult.Success)
                     return false;
             }
 
@@ -522,6 +531,8 @@ namespace MHServerEmu.Leaderboards
             if (State != LeaderboardState.eLBS_Expired)
                 throw new InvalidOperationException("Only expired instances can complete reward generation.");
 
+            _leaderboard.OnStateChange(InstanceId, LeaderboardState.eLBS_Reward);
+            _leaderboard.OnStateChange(InstanceId, LeaderboardState.eLBS_RewardsPending);
             Logger.Info($"SetState(): {LeaderboardPrototype.DataRef.GetNameFormatted()} {InstanceId} [{State}] => [{LeaderboardState.eLBS_Rewarded}]");
             State = LeaderboardState.eLBS_Rewarded;
             _leaderboard.OnStateChange(InstanceId, State);
@@ -542,28 +553,27 @@ namespace MHServerEmu.Leaderboards
                 int rank = LeaderboardRanking.GetCompetitionRank(entryIndex, entry.Score, hasPrevious, prevScore, prevRank);
 
                 MetaLeaderboardEntry metaEntry = _metaLeaderboardEntries.Find(metaEntry => (ulong)metaEntry.SubLeaderboardId == entry.ParticipantId);
-                if (metaEntry == null || metaEntry.SubInstance == null || metaEntry.Rewards.IsNullOrEmpty()) 
-                    continue;
-
-                foreach (LeaderboardRewardEntryPrototype rewardProto in metaEntry.Rewards)
+                if (metaEntry != null && metaEntry.SubInstance != null && metaEntry.Rewards.HasValue())
                 {
-                    if (EvaluateReward(rewardProto, entry, rank))
+                    foreach (LeaderboardRewardEntryPrototype rewardProto in metaEntry.Rewards)
                     {
-                        PrototypeGuid rewardId = GameDatabase.GetPrototypeGuid(rewardProto.RewardItem);
+                        if (EvaluateReward(rewardProto, entry, rank))
+                        {
+                            PrototypeGuid rewardId = GameDatabase.GetPrototypeGuid(rewardProto.RewardItem);
 
-                        foreach (LeaderboardEntry subEntry in metaEntry.SubInstance.Entries)
-                            rewardsList.Add(new DBRewardEntry(
-                                (long)LeaderboardId, (long)InstanceId,
-                                (long)rewardId, (long)subEntry.ParticipantId, rank));
+                            foreach (LeaderboardEntry subEntry in metaEntry.SubInstance.Entries)
+                                rewardsList.Add(new DBRewardEntry(
+                                    (long)LeaderboardId, (long)InstanceId,
+                                    (long)rewardId, (long)subEntry.ParticipantId, rank));
 
-                        prevScore = entry.Score;
-                        prevRank = rank;
-                        hasPrevious = true;
-
-                        break;
+                            break;
+                        }
                     }
                 }
-                
+
+                prevScore = entry.Score;
+                prevRank = rank;
+                hasPrevious = true;
                 entryIndex++;
             }
         }
