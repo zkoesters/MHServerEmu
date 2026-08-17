@@ -1000,6 +1000,19 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
         }
 
         [Fact]
+        public void FinalizeReward_RejectsPendingTimestampWithoutMutatingReward()
+        {
+            using SQLiteLeaderboardStoreFixture fixture = new();
+            fixture.InsertReward(1, 10, 20, 1, 300, rewardedDate: null);
+            LeaderboardRewardKey key = new(1, 10, 20);
+
+            Assert.Equal(RewardFinalizationResult.Failed, fixture.Store.FinalizeReward(key, 0));
+            Assert.Equal(1, fixture.ReadScalar("SELECT COUNT(*) FROM Rewards WHERE LeaderboardId = 1 AND InstanceId = 10 AND ParticipantId = 20 AND RewardedDate IS NULL"));
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.GetPendingRewards(20, out IReadOnlyList<DBRewardEntry> pending));
+            Assert.Single(pending);
+        }
+
+        [Fact]
         public void RewardWrites_ClassifyPreCommitAndCommitStageFailures()
         {
             AssertRewardWriteFailure("LifecyclePreCommitHook", LeaderboardStoreResult.Failed, RewardFinalizationResult.Failed, verifyRollback: true);
