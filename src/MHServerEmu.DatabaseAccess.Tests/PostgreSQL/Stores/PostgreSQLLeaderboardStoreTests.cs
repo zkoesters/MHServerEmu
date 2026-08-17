@@ -470,6 +470,8 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
             Assert.True(await ReadInstanceVisibleAsync(fixture, 12));
             Assert.True(await ReadInstanceVisibleAsync(fixture, 13));
             Assert.Equal(new[] { 11L }, snapshot.NormalArchiveInstances.Select(instance => instance.InstanceId));
+            Assert.Equal(new[] { (10L, false), (12L, true), (13L, true) }, snapshot.ChangedInstances.Select(instance =>
+                (instance.InstanceId, instance.Visible)));
             Assert.Equal(new[] { (1L, 11L, 2L, 20L) }, snapshot.MetaMappings.Select(mapping =>
                 (mapping.LeaderboardId, mapping.InstanceId, mapping.SubLeaderboardId, mapping.SubInstanceId)));
         }

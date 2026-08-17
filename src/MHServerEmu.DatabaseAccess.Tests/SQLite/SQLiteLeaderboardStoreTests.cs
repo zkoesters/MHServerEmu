@@ -886,6 +886,8 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
             Assert.True(fixture.ReadInstanceVisible(12));
             Assert.True(fixture.ReadInstanceVisible(13));
             Assert.Equal(new[] { 11L }, snapshot.NormalArchiveInstances.Select(instance => instance.InstanceId));
+            Assert.Equal(new[] { (10L, false), (12L, true), (13L, true) }, snapshot.ChangedInstances.Select(instance =>
+                (instance.InstanceId, instance.Visible)));
             Assert.Equal(new[] { (1L, 11L, 1L, 1L) }, snapshot.MetaMappings.Select(mapping =>
                 (mapping.LeaderboardId, mapping.InstanceId, mapping.SubLeaderboardId, mapping.SubInstanceId)));
         }

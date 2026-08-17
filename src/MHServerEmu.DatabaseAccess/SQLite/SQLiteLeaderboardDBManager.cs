@@ -838,13 +838,18 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                     .Take(request.ArchiveLimit)
                     .ToList();
                 HashSet<long> normalArchiveIds = normalArchives.Select(instance => instance.InstanceId).ToHashSet();
+                List<DBLeaderboardInstance> changedInstances = new();
 
                 foreach (DBLeaderboardInstance archive in archives)
                 {
                     bool visible = rewardBearingIds.Contains(archive.InstanceId) || normalArchiveIds.Contains(archive.InstanceId);
+                    if (archive.Visible == visible)
+                        continue;
+
                     connection.Execute("UPDATE Instances SET Visible = @Visible WHERE InstanceId = @InstanceId",
                         new { Visible = visible, archive.InstanceId }, transaction);
                     archive.Visible = visible;
+                    changedInstances.Add(archive);
                 }
 
                 List<DBMetaEntry> mappings = normalArchiveIds.Count == 0
@@ -854,7 +859,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                         WHERE LeaderboardId = @LeaderboardId AND InstanceId IN @InstanceIds
                         ORDER BY InstanceId, SubLeaderboardId",
                         new { request.LeaderboardId, InstanceIds = normalArchiveIds.ToArray() }, transaction).ToList();
-                snapshot = new(normalArchives, mappings);
+                snapshot = new(normalArchives, changedInstances, mappings);
                 CommitLifecycleTransaction(transaction, ref commitStarted);
                 return LeaderboardStoreResult.Success;
             }
