@@ -12,6 +12,7 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
     [Collection("PostgreSQL migration integration")]
     public class PostgreSQLLeaderboardStoreTests
     {
+        private const long ReconciliationLockKey = unchecked((long)0x4C6561646572626FUL);
         private readonly PostgreSQLTestDatabase _database;
 
         public PostgreSQLLeaderboardStoreTests(PostgreSQLTestDatabase database)
@@ -213,10 +214,7 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
             await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
             Assert.Equal(LeaderboardStoreResult.Success, fixture.Leaderboards.ReconcileSchedule(Reconciliation(1), out _));
 
-            using Barrier barrier = new(2);
-            LeaderboardStoreResult[] results = await Task.WhenAll(
-                Task.Run(() => ReconcileAfterBarrier(fixture.Leaderboards, Reconciliation(1, startTime: 200), barrier)),
-                Task.Run(() => ReconcileAfterBarrier(fixture.Leaderboards, Reconciliation(1, startTime: 300), barrier)));
+            LeaderboardStoreResult[] results = await ReconcileBehindGlobalLockAsync(fixture, Reconciliation(1, startTime: 200), Reconciliation(1, startTime: 300));
 
             Assert.All(results, result => Assert.Equal(LeaderboardStoreResult.Success, result));
             Assert.Equal(LeaderboardStoreResult.Success, fixture.Leaderboards.LoadInstance(1, 1, out DBLeaderboardInstance active));
@@ -229,10 +227,7 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
             await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
             LeaderboardReconciliation request = Reconciliation(1);
 
-            using Barrier barrier = new(2);
-            LeaderboardStoreResult[] results = await Task.WhenAll(
-                Task.Run(() => ReconcileAfterBarrier(fixture.Leaderboards, request, barrier)),
-                Task.Run(() => ReconcileAfterBarrier(fixture.Leaderboards, request, barrier)));
+            LeaderboardStoreResult[] results = await ReconcileBehindGlobalLockAsync(fixture, request, request);
 
             Assert.All(results, result => Assert.Equal(LeaderboardStoreResult.Success, result));
             Assert.Equal(LeaderboardStoreResult.Success, fixture.Leaderboards.LoadVisibleInstances(1, 0, 10, out IReadOnlyList<DBLeaderboardInstance> instances));
@@ -243,12 +238,9 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
         public async Task ReconcileSchedule_ConcurrentDisjointSchedulesSerializeGlobally()
         {
             await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
-            using Barrier barrier = new(2);
             long highBitId = unchecked((long)0xABCDEF1200000002UL);
 
-            LeaderboardStoreResult[] results = await Task.WhenAll(
-                Task.Run(() => ReconcileAfterBarrier(fixture.Leaderboards, Reconciliation(1), barrier)),
-                Task.Run(() => ReconcileAfterBarrier(fixture.Leaderboards, Reconciliation(highBitId), barrier)));
+            LeaderboardStoreResult[] results = await ReconcileBehindGlobalLockAsync(fixture, Reconciliation(1), Reconciliation(highBitId));
 
             Assert.All(results, result => Assert.Equal(LeaderboardStoreResult.Success, result));
             Assert.Equal(LeaderboardStoreResult.Success, fixture.Leaderboards.LoadVisibleInstances(1, 0, 10, out IReadOnlyList<DBLeaderboardInstance> first));
@@ -263,10 +255,40 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
                 Array.Empty<LeaderboardMetaMapping>(), currentTime, normalArchiveLimit);
         }
 
-        private static LeaderboardStoreResult ReconcileAfterBarrier(PostgreSQLLeaderboardStore store, LeaderboardReconciliation request, Barrier barrier)
+        private static async Task<LeaderboardStoreResult[]> ReconcileBehindGlobalLockAsync(PostgreSQLStoreTestFixture fixture, params LeaderboardReconciliation[] requests)
         {
-            barrier.SignalAndWait();
-            return store.ReconcileSchedule(request, out _);
+            await using NpgsqlConnection holder = await fixture.Provider.DataSource.OpenConnectionAsync();
+            await using NpgsqlTransaction transaction = await holder.BeginTransactionAsync();
+            await using (NpgsqlCommand command = new("SELECT pg_advisory_xact_lock(@lockKey)", holder, transaction))
+            {
+                command.Parameters.AddWithValue("lockKey", NpgsqlDbType.Bigint, ReconciliationLockKey);
+                await command.ExecuteNonQueryAsync();
+            }
+
+            Task<LeaderboardStoreResult>[] operations = requests.Select(request => Task.Run(() => fixture.Leaderboards.ReconcileSchedule(request, out _))).ToArray();
+            try
+            {
+                await WaitForReconciliationLockWaitAsync(fixture);
+                Assert.All(operations, operation => Assert.False(operation.IsCompleted));
+            }
+            finally
+            {
+                await transaction.CommitAsync();
+            }
+            return await Task.WhenAll(operations);
+        }
+
+        private static async Task WaitForReconciliationLockWaitAsync(PostgreSQLStoreTestFixture fixture)
+        {
+            for (int attempt = 0; attempt < 100; attempt++)
+            {
+                await using NpgsqlConnection connection = await fixture.Provider.DataSource.OpenConnectionAsync();
+                await using NpgsqlCommand command = new("SELECT COUNT(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE '%pg_advisory_xact_lock%'", connection);
+                if ((long)await command.ExecuteScalarAsync() > 0)
+                    return;
+                await Task.Delay(10);
+            }
+            throw new TimeoutException("Reconciliation did not wait for the global advisory lock.");
         }
 
         private static async Task InsertDefinitionAsync(PostgreSQLStoreTestFixture fixture, long leaderboardId, bool enabled = true)
