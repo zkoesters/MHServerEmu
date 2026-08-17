@@ -842,12 +842,277 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
             Assert.Equal(3, archive.InstanceId);
         }
 
+        [Fact]
+        public void MaintainVisibility_RetainsBoundedNormalArchivesAndAllRewardBearingArchives()
+        {
+            using SQLiteLeaderboardStoreFixture fixture = new();
+            fixture.InsertDefinition(1, activeInstanceId: 1);
+            fixture.InsertInstance(1, 1, visible: true, state: (int)LeaderboardState.eLBS_Active);
+            fixture.InsertInstance(10, 1, visible: true, state: (int)LeaderboardState.eLBS_Rewarded);
+            fixture.InsertInstance(11, 1, visible: true, state: (int)LeaderboardState.eLBS_Rewarded);
+            fixture.InsertInstance(12, 1, visible: false, state: (int)LeaderboardState.eLBS_Rewarded);
+            fixture.InsertInstance(13, 1, visible: false, state: (int)LeaderboardState.eLBS_Rewarded);
+            fixture.InsertEntry(10, 100, new byte[] { 1 });
+            fixture.InsertEntry(11, 101, new byte[] { 1 });
+            fixture.InsertEntry(13, 103, new byte[] { 1 });
+            fixture.InsertReward(1, 12, 102, 1, 300, rewardedDate: null);
+            fixture.InsertReward(1, 13, 103, 1, 301, rewardedDate: 400);
+            fixture.InsertMetaMapping(1, 11, 1, 1);
+            fixture.InsertMetaMapping(1, 12, 1, 1);
+
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.MaintainVisibility(new(1, 1, 500), out LeaderboardVisibilitySnapshot snapshot));
+
+            Assert.False(fixture.ReadInstanceVisible(10));
+            Assert.True(fixture.ReadInstanceVisible(11));
+            Assert.True(fixture.ReadInstanceVisible(12));
+            Assert.True(fixture.ReadInstanceVisible(13));
+            Assert.Equal(new[] { 11L }, snapshot.NormalArchiveInstances.Select(instance => instance.InstanceId));
+            Assert.Equal(new[] { (1L, 11L, 1L, 1L) }, snapshot.MetaMappings.Select(mapping =>
+                (mapping.LeaderboardId, mapping.InstanceId, mapping.SubLeaderboardId, mapping.SubInstanceId)));
+        }
+
+        [Fact]
+        public void MaintainVisibility_RejectsInvalidOwnershipWithoutChangingVisibility()
+        {
+            using SQLiteLeaderboardStoreFixture fixture = new();
+            fixture.InsertDefinition(1, activeInstanceId: 10);
+            fixture.InsertDefinition(2, activeInstanceId: 20);
+            fixture.InsertInstance(10, 2, visible: true, state: (int)LeaderboardState.eLBS_Rewarded);
+            fixture.InsertInstance(20, 2, visible: true, state: (int)LeaderboardState.eLBS_Active);
+
+            Assert.Equal(LeaderboardStoreResult.InvalidData, fixture.Store.MaintainVisibility(new(1, 0, 500), out LeaderboardVisibilitySnapshot snapshot));
+
+            Assert.Empty(snapshot.NormalArchiveInstances);
+            Assert.True(fixture.ReadInstanceVisible(10));
+        }
+
+        [Fact]
+        public void GenerateRewards_PersistsCompleteSetTransitionsLifecycleAndReplaysExactly()
+        {
+            using SQLiteLeaderboardStoreFixture fixture = new();
+            fixture.InsertDefinition(1, activeInstanceId: 10);
+            fixture.InsertInstance(10, 1, visible: true, state: (int)LeaderboardState.eLBS_Expired);
+            LeaderboardRewardGeneration request = Rewards(1, 10,
+                new LeaderboardRewardWrite(1, 10, 100, 20, 1, 300),
+                new LeaderboardRewardWrite(1, 10, 101, 21, 2, 301));
+
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.GenerateRewards(request));
+            Assert.Equal((int)LeaderboardState.eLBS_Rewarded, fixture.ReadScalar("SELECT State FROM Instances WHERE InstanceId = 10"));
+            Assert.Equal(2, fixture.ReadScalar("SELECT COUNT(*) FROM Rewards WHERE LeaderboardId = 1 AND InstanceId = 10"));
+            Assert.Equal(300, fixture.ReadScalar("SELECT CreationDate FROM Rewards WHERE ParticipantId = 20"));
+
+            LeaderboardRewardGeneration replay = Rewards(1, 10,
+                new LeaderboardRewardWrite(1, 10, 100, 20, 1, 900),
+                new LeaderboardRewardWrite(1, 10, 101, 21, 2, 901));
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.GenerateRewards(replay));
+            Assert.Equal(300, fixture.ReadScalar("SELECT CreationDate FROM Rewards WHERE ParticipantId = 20"));
+        }
+
+        [Fact]
+        public void GenerateRewards_RejectsSubsetSupersetAndValueMismatchesWithoutChangingPersistedRewards()
+        {
+            using SQLiteLeaderboardStoreFixture fixture = new();
+            fixture.InsertDefinition(1, activeInstanceId: 10);
+            fixture.InsertInstance(10, 1, visible: true, state: (int)LeaderboardState.eLBS_Expired);
+            LeaderboardRewardGeneration request = Rewards(1, 10,
+                new LeaderboardRewardWrite(1, 10, 100, 20, 1, 300),
+                new LeaderboardRewardWrite(1, 10, 101, 21, 2, 301));
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.GenerateRewards(request));
+
+            Assert.Equal(LeaderboardStoreResult.Conflict, fixture.Store.GenerateRewards(Rewards(1, 10,
+                new LeaderboardRewardWrite(1, 10, 100, 20, 1, 300))));
+            Assert.Equal(LeaderboardStoreResult.Conflict, fixture.Store.GenerateRewards(Rewards(1, 10,
+                new LeaderboardRewardWrite(1, 10, 100, 20, 1, 300),
+                new LeaderboardRewardWrite(1, 10, 101, 21, 2, 301),
+                new LeaderboardRewardWrite(1, 10, 102, 22, 3, 302))));
+            Assert.Equal(LeaderboardStoreResult.Conflict, fixture.Store.GenerateRewards(Rewards(1, 10,
+                new LeaderboardRewardWrite(1, 10, 100, 20, 3, 300),
+                new LeaderboardRewardWrite(1, 10, 101, 21, 2, 301))));
+            Assert.Equal(LeaderboardStoreResult.Conflict, fixture.Store.GenerateRewards(Rewards(1, 10,
+                new LeaderboardRewardWrite(1, 10, 999, 20, 1, 300),
+                new LeaderboardRewardWrite(1, 10, 101, 21, 2, 301))));
+            Assert.Equal(2, fixture.ReadScalar("SELECT COUNT(*) FROM Rewards WHERE LeaderboardId = 1 AND InstanceId = 10"));
+            Assert.Equal(100, fixture.ReadScalar("SELECT RewardId FROM Rewards WHERE ParticipantId = 20"));
+            Assert.Equal(1, fixture.ReadScalar("SELECT Rank FROM Rewards WHERE ParticipantId = 20"));
+        }
+
+        [Fact]
+        public void GenerateRewards_RejectsDuplicateParticipantsWithoutTransitioningState()
+        {
+            using SQLiteLeaderboardStoreFixture fixture = new();
+            fixture.InsertDefinition(1, activeInstanceId: 10);
+            fixture.InsertInstance(10, 1, visible: true, state: (int)LeaderboardState.eLBS_Expired);
+            LeaderboardRewardGeneration request = Rewards(1, 10, new LeaderboardRewardWrite(1, 10, 100, 20, 1, 300));
+            FieldInfo rewards = typeof(LeaderboardRewardGeneration).GetField("<Rewards>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.NotNull(rewards);
+            rewards.SetValue(request, new[]
+            {
+                new LeaderboardRewardWrite(1, 10, 100, 20, 1, 300),
+                new LeaderboardRewardWrite(1, 10, 101, 20, 2, 301),
+            });
+
+            Assert.Equal(LeaderboardStoreResult.InvalidData, fixture.Store.GenerateRewards(request));
+            Assert.Equal((int)LeaderboardState.eLBS_Expired, fixture.ReadScalar("SELECT State FROM Instances WHERE InstanceId = 10"));
+            Assert.Equal(0, fixture.ReadScalar("SELECT COUNT(*) FROM Rewards WHERE InstanceId = 10"));
+        }
+
+        [Fact]
+        public void GetPendingRewards_ReturnsDetachedPendingRowsAndEmptyResults()
+        {
+            using SQLiteLeaderboardStoreFixture fixture = new();
+            fixture.InsertReward(1, 10, 20, 1, 300, rewardedDate: null);
+            fixture.InsertReward(1, 11, 20, 2, 301, rewardedDate: 400);
+
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.GetPendingRewards(20, out IReadOnlyList<DBRewardEntry> rewards));
+            DBRewardEntry reward = Assert.Single(rewards);
+            Assert.Equal(10, reward.InstanceId);
+            reward.RewardId = 999;
+            Assert.Equal(1020, fixture.ReadScalar("SELECT RewardId FROM Rewards WHERE LeaderboardId = 1 AND InstanceId = 10 AND ParticipantId = 20"));
+
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.GetPendingRewards(999, out IReadOnlyList<DBRewardEntry> missing));
+            Assert.Empty(missing);
+        }
+
+        [Fact]
+        public void GetPendingRewards_RejectsMalformedPersistedRows()
+        {
+            using SQLiteLeaderboardStoreFixture fixture = new();
+            fixture.InsertReward(1, 10, 20, 1, creationDate: null, rewardedDate: null);
+
+            Assert.Equal(LeaderboardStoreResult.InvalidData, fixture.Store.GetPendingRewards(20, out IReadOnlyList<DBRewardEntry> rewards));
+            Assert.Empty(rewards);
+        }
+
+        [Fact]
+        public void FinalizeReward_UsesFullProtocolKeyAndDoesNotOverwriteTimestamp()
+        {
+            using SQLiteLeaderboardStoreFixture fixture = new();
+            fixture.InsertReward(1, 10, 20, 1, 300, rewardedDate: null);
+            LeaderboardRewardKey key = new(1, 10, 20);
+
+            Assert.Equal(RewardFinalizationResult.Finalized, fixture.Store.FinalizeReward(key, 500));
+            Assert.Equal(500, fixture.ReadScalar("SELECT RewardedDate FROM Rewards WHERE LeaderboardId = 1 AND InstanceId = 10 AND ParticipantId = 20"));
+            Assert.Equal(RewardFinalizationResult.AlreadyFinalized, fixture.Store.FinalizeReward(key, 600));
+            Assert.Equal(500, fixture.ReadScalar("SELECT RewardedDate FROM Rewards WHERE LeaderboardId = 1 AND InstanceId = 10 AND ParticipantId = 20"));
+            Assert.Equal(RewardFinalizationResult.NotFound, fixture.Store.FinalizeReward(new(2, 10, 20), 700));
+            Assert.Equal(500, fixture.ReadScalar("SELECT RewardedDate FROM Rewards WHERE LeaderboardId = 1 AND InstanceId = 10 AND ParticipantId = 20"));
+            Assert.Equal(RewardFinalizationResult.NotFound, fixture.Store.FinalizeReward(new(1, 10, 999), 700));
+        }
+
+        [Fact]
+        public void RewardWrites_ClassifyPreCommitAndCommitStageFailures()
+        {
+            AssertRewardWriteFailure("LifecyclePreCommitHook", LeaderboardStoreResult.Failed, RewardFinalizationResult.Failed, verifyRollback: true);
+            AssertRewardWriteFailure("LifecycleCommitHook", LeaderboardStoreResult.OutcomeUncertain, RewardFinalizationResult.OutcomeUncertain, verifyRollback: false);
+        }
+
+        [Fact]
+        public void SchemaGolden_RemainsFrozenThroughSQLiteLeaderboardStoreOperations()
+        {
+            using SQLiteLeaderboardStoreFixture fixture = new();
+            AssertFrozenSchema(fixture);
+
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.ReconcileSchedule(Reconciliation(1), out _));
+            AssertFrozenSchema(fixture);
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.LoadInstance(1, 1, out _));
+            AssertFrozenSchema(fixture);
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.LoadEntries(1, out _));
+            AssertFrozenSchema(fixture);
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.LoadVisibleInstances(1, 0, 10, out _));
+            AssertFrozenSchema(fixture);
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.ActivateInstance(new(1, 1, 1)));
+            AssertFrozenSchema(fixture);
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.SaveScoreBatch(new(1, 1, LeaderboardState.eLBS_Active,
+                new[] { new LeaderboardEntryWrite(1, 20, 30, 40, new byte[] { 1 }) })));
+            AssertFrozenSchema(fixture);
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.ExpireInstance(new(1, 1, 1, LeaderboardState.eLBS_Active,
+                new[] { new LeaderboardEntryWrite(1, 20, 30, 40, new byte[] { 1 }) })));
+            AssertFrozenSchema(fixture);
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.GenerateRewards(Rewards(1, 1,
+                new LeaderboardRewardWrite(1, 1, 100, 20, 1, 300))));
+            AssertFrozenSchema(fixture);
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.MaintainVisibility(new(1, 1, 500), out _));
+            AssertFrozenSchema(fixture);
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Store.GetPendingRewards(20, out _));
+            AssertFrozenSchema(fixture);
+            Assert.Equal(RewardFinalizationResult.Finalized, fixture.Store.FinalizeReward(new(1, 1, 20), 600));
+            AssertFrozenSchema(fixture);
+        }
+
         private static LeaderboardReconciliation Reconciliation(long leaderboardId, bool enabled = true, long startTime = 100, int maxResetCount = 0, long activationDate = 300, long currentTime = 500, int normalArchiveLimit = 2)
         {
             return new(
                 new[] { new LeaderboardDefinitionSpec(leaderboardId, $"Leaderboard{leaderboardId}", enabled, startTime, maxResetCount) },
                 new[] { new LeaderboardInstanceSpec(0, leaderboardId, enabled ? LeaderboardState.eLBS_Created : LeaderboardState.eLBS_Rewarded, activationDate, enabled) },
                 Array.Empty<LeaderboardMetaMapping>(), currentTime, normalArchiveLimit);
+        }
+
+        private static LeaderboardRewardGeneration Rewards(long leaderboardId, long instanceId, params LeaderboardRewardWrite[] rewards)
+        {
+            return new(leaderboardId, instanceId, instanceId, LeaderboardState.eLBS_Expired, rewards);
+        }
+
+        private static void AssertRewardWriteFailure(string hookName, LeaderboardStoreResult expectedGeneration, RewardFinalizationResult expectedFinalization, bool verifyRollback)
+        {
+            FieldInfo hookField = typeof(SQLiteLeaderboardDBManager).GetField(hookName, BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.NotNull(hookField);
+
+            try
+            {
+                hookField.SetValue(null, (Action)(() => throw new InvalidOperationException("injected lifecycle failure")));
+
+                using (SQLiteLeaderboardStoreFixture generation = new())
+                {
+                    generation.InsertDefinition(1, activeInstanceId: 10);
+                    generation.InsertInstance(10, 1, visible: true, state: (int)LeaderboardState.eLBS_Expired);
+                    Assert.Equal(expectedGeneration, generation.Store.GenerateRewards(Rewards(1, 10, new LeaderboardRewardWrite(1, 10, 100, 20, 1, 300))));
+                    if (verifyRollback)
+                    {
+                        Assert.Equal((int)LeaderboardState.eLBS_Expired, generation.ReadScalar("SELECT State FROM Instances WHERE InstanceId = 10"));
+                        Assert.Equal(0, generation.ReadScalar("SELECT COUNT(*) FROM Rewards WHERE InstanceId = 10"));
+                    }
+                }
+
+                using (SQLiteLeaderboardStoreFixture visibility = new())
+                {
+                    visibility.InsertDefinition(1, activeInstanceId: 1);
+                    visibility.InsertInstance(1, 1, visible: true, state: (int)LeaderboardState.eLBS_Active);
+                    visibility.InsertInstance(10, 1, visible: true, state: (int)LeaderboardState.eLBS_Rewarded);
+                    visibility.InsertEntry(10, 20, new byte[] { 1 });
+                    Assert.Equal(expectedGeneration, visibility.Store.MaintainVisibility(new(1, 1, 500), out LeaderboardVisibilitySnapshot snapshot));
+                    Assert.Empty(snapshot.NormalArchiveInstances);
+                    if (verifyRollback)
+                        Assert.True(visibility.ReadInstanceVisible(10));
+                }
+
+                using (SQLiteLeaderboardStoreFixture finalization = new())
+                {
+                    finalization.InsertReward(1, 10, 20, 1, 300, rewardedDate: null);
+                    Assert.Equal(expectedFinalization, finalization.Store.FinalizeReward(new(1, 10, 20), 500));
+                    if (verifyRollback)
+                        Assert.Equal(0, finalization.ReadScalar("SELECT COUNT(*) FROM Rewards WHERE LeaderboardId = 1 AND InstanceId = 10 AND ParticipantId = 20 AND RewardedDate IS NOT NULL"));
+                }
+            }
+            finally
+            {
+                hookField.SetValue(null, null);
+            }
+        }
+
+        private static void AssertFrozenSchema(SQLiteLeaderboardStoreFixture fixture)
+        {
+            Assert.Equal(1, fixture.ReadScalar("PRAGMA user_version"));
+            Assert.Equal(new Dictionary<string, string>
+            {
+                ["index:idx_entries_instanceid"] = "CREATEINDEXIDX_ENTRIES_INSTANCEIDONENTRIES(INSTANCEID)",
+                ["index:idx_instances_leaderboardid"] = "CREATEINDEXIDX_INSTANCES_LEADERBOARDIDONINSTANCES(LEADERBOARDID)",
+                ["index:idx_rewards_participantid"] = "CREATEINDEXIDX_REWARDS_PARTICIPANTIDONREWARDS(PARTICIPANTID)",
+                ["table:Entries"] = "CREATETABLEENTRIES(INSTANCEIDINTEGERNOTNULL,PARTICIPANTIDINTEGERNOTNULL,SCOREINTEGER,HIGHSCOREINTEGER,RULESTATESBLOB,PRIMARYKEY(INSTANCEID,PARTICIPANTID),FOREIGNKEY(INSTANCEID)REFERENCESINSTANCES(INSTANCEID)ONDELETECASCADE)",
+                ["table:Instances"] = "CREATETABLEINSTANCES(INSTANCEIDINTEGERNOTNULLPRIMARYKEY,LEADERBOARDIDINTEGERNOTNULL,STATEINTEGER,ACTIVATIONDATEINTEGER,VISIBLEINTEGER,FOREIGNKEY(LEADERBOARDID)REFERENCESLEADERBOARDS(LEADERBOARDID)ONDELETECASCADE)",
+                ["table:Leaderboards"] = "CREATETABLELEADERBOARDS(LEADERBOARDIDINTEGERNOTNULLPRIMARYKEY,PROTOTYPENAMETEXT,ACTIVEINSTANCEIDINTEGER,ISENABLEDINTEGER,STARTTIMEINTEGER,MAXRESETCOUNTINTEGER)",
+                ["table:MetaEntries"] = "CREATETABLEMETAENTRIES(LEADERBOARDIDINTEGERNOTNULL,INSTANCEIDINTEGERNOTNULL,SUBLEADERBOARDIDINTEGERNOTNULL,SUBINSTANCEIDINTEGERNOTNULL,PRIMARYKEY(LEADERBOARDID,INSTANCEID,SUBLEADERBOARDID),FOREIGNKEY(LEADERBOARDID)REFERENCESLEADERBOARDS(LEADERBOARDID)ONDELETECASCADE)",
+                ["table:Rewards"] = "CREATETABLEREWARDS(LEADERBOARDIDINTEGERNOTNULL,INSTANCEIDINTEGERNOTNULL,PARTICIPANTIDINTEGERNOTNULL,RANKINTEGERNOTNULL,REWARDIDINTEGERNOTNULL,CREATIONDATEINTEGER,REWARDEDDATEINTEGER,PRIMARYKEY(LEADERBOARDID,INSTANCEID,PARTICIPANTID),FOREIGNKEY(INSTANCEID)REFERENCESINSTANCES(INSTANCEID)ONDELETECASCADE)",
+            }, fixture.ReadSchemaMetadata());
         }
 
         private static void AssertLifecycleWriteFailure(string hookName, LeaderboardStoreResult expectedResult, bool verifyRollback)
@@ -968,6 +1233,19 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
                 ("@instanceId", instanceId), ("@participantId", participantId), ("@ruleStates", ruleStates));
         }
 
+        public void InsertReward(long leaderboardId, long instanceId, long participantId, int rank, long? creationDate, long? rewardedDate)
+        {
+            Execute("INSERT INTO Rewards (LeaderboardId, InstanceId, ParticipantId, Rank, RewardId, CreationDate, RewardedDate) VALUES (@leaderboardId, @instanceId, @participantId, @rank, @rewardId, @creationDate, @rewardedDate)",
+                ("@leaderboardId", leaderboardId), ("@instanceId", instanceId), ("@participantId", participantId), ("@rank", rank),
+                ("@rewardId", participantId + 1000), ("@creationDate", creationDate), ("@rewardedDate", (object)rewardedDate ?? DBNull.Value));
+        }
+
+        public void InsertMetaMapping(long leaderboardId, long instanceId, long subLeaderboardId, long subInstanceId)
+        {
+            Execute("INSERT INTO MetaEntries (LeaderboardId, InstanceId, SubLeaderboardId, SubInstanceId) VALUES (@leaderboardId, @instanceId, @subLeaderboardId, @subInstanceId)",
+                ("@leaderboardId", leaderboardId), ("@instanceId", instanceId), ("@subLeaderboardId", subLeaderboardId), ("@subInstanceId", subInstanceId));
+        }
+
         public byte[] ReadEntryRuleStates(long instanceId, long participantId)
         {
             using SQLiteConnection connection = OpenConnection();
@@ -1003,6 +1281,17 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
             return Convert.ToInt64(command.ExecuteScalar());
         }
 
+        public IReadOnlyDictionary<string, string> ReadSchemaMetadata()
+        {
+            Dictionary<string, string> schema = new();
+            using SQLiteConnection connection = OpenConnection();
+            using SQLiteCommand command = new("SELECT Type, Name, Sql FROM sqlite_master WHERE Type IN ('table', 'index') AND Name NOT LIKE 'sqlite_%'", connection);
+            using SQLiteDataReader reader = command.ExecuteReader();
+            while (reader.Read())
+                schema.Add($"{reader.GetString(0)}:{reader.GetString(1)}", NormalizeSchemaSql(reader.GetString(2)));
+            return schema;
+        }
+
         public void Dispose() => _directory.Dispose();
 
         private void Execute(string sql, params (string Name, object Value)[] parameters)
@@ -1019,6 +1308,12 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
             SQLiteConnection connection = new($"Data Source={_databasePath}");
             connection.Open();
             return connection;
+        }
+
+        private static string NormalizeSchemaSql(string sql)
+        {
+            return new string(sql.Where(character => char.IsWhiteSpace(character) == false && character != '"' && character != '[' && character != ']').ToArray())
+                .ToUpperInvariant();
         }
     }
 }

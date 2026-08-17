@@ -775,23 +775,193 @@ namespace MHServerEmu.DatabaseAccess.SQLite
         public LeaderboardStoreResult MaintainVisibility(LeaderboardVisibilityRequest request, out LeaderboardVisibilitySnapshot snapshot)
         {
             snapshot = new();
-            return LeaderboardStoreResult.Failed;
+            if (request == null || request.ArchiveLimit < 0)
+                return LeaderboardStoreResult.InvalidData;
+
+            bool commitStarted = false;
+            try
+            {
+                using SQLiteConnection connection = GetConnection();
+                using SQLiteTransaction transaction = connection.BeginTransaction(IsolationLevel.Serializable);
+                DBLeaderboard definition = connection.QueryFirstOrDefault<DBLeaderboard>("SELECT * FROM Leaderboards WHERE LeaderboardId = @LeaderboardId",
+                    new { request.LeaderboardId }, transaction);
+                if (definition == null)
+                    return LeaderboardStoreResult.NotFound;
+
+                DBLeaderboardInstance active = connection.QueryFirstOrDefault<DBLeaderboardInstance>("SELECT * FROM Instances WHERE InstanceId = @InstanceId",
+                    new { InstanceId = definition.ActiveInstanceId }, transaction);
+                if (active == null)
+                    return LeaderboardStoreResult.NotFound;
+                if (active.LeaderboardId != request.LeaderboardId)
+                    return LeaderboardStoreResult.InvalidData;
+
+                List<DBLeaderboardInstance> archives = connection.Query<DBLeaderboardInstance>(@"
+                    SELECT * FROM Instances
+                    WHERE LeaderboardId = @LeaderboardId AND State >= @TerminalState",
+                    new { request.LeaderboardId, TerminalState = (int)LeaderboardState.eLBS_Rewarded }, transaction).ToList();
+                HashSet<long> rewardBearingIds = connection.Query<long>(@"
+                    SELECT DISTINCT InstanceId FROM Rewards
+                    WHERE LeaderboardId = @LeaderboardId",
+                    new { request.LeaderboardId }, transaction).ToHashSet();
+                HashSet<long> entryBearingIds = connection.Query<long>(@"
+                    SELECT DISTINCT InstanceId FROM Entries
+                    WHERE InstanceId IN @InstanceIds",
+                    new { InstanceIds = archives.Select(instance => instance.InstanceId).ToArray() }, transaction).ToHashSet();
+                List<DBLeaderboardInstance> normalArchives = archives
+                    .Where(instance => entryBearingIds.Contains(instance.InstanceId) && rewardBearingIds.Contains(instance.InstanceId) == false)
+                    .OrderByDescending(instance => unchecked((ulong)instance.InstanceId))
+                    .Take(request.ArchiveLimit)
+                    .ToList();
+                HashSet<long> normalArchiveIds = normalArchives.Select(instance => instance.InstanceId).ToHashSet();
+
+                foreach (DBLeaderboardInstance archive in archives)
+                {
+                    bool visible = rewardBearingIds.Contains(archive.InstanceId) || normalArchiveIds.Contains(archive.InstanceId);
+                    connection.Execute("UPDATE Instances SET Visible = @Visible WHERE InstanceId = @InstanceId",
+                        new { Visible = visible, archive.InstanceId }, transaction);
+                    archive.Visible = visible;
+                }
+
+                List<DBMetaEntry> mappings = normalArchiveIds.Count == 0
+                    ? new()
+                    : connection.Query<DBMetaEntry>(@"
+                        SELECT * FROM MetaEntries
+                        WHERE LeaderboardId = @LeaderboardId AND InstanceId IN @InstanceIds
+                        ORDER BY InstanceId, SubLeaderboardId",
+                        new { request.LeaderboardId, InstanceIds = normalArchiveIds.ToArray() }, transaction).ToList();
+                snapshot = new(normalArchives, mappings);
+                CommitLifecycleTransaction(transaction, ref commitStarted);
+                return LeaderboardStoreResult.Success;
+            }
+            catch (Exception e)
+            {
+                Logger.Error($"MaintainVisibility(): {e.Message}");
+                snapshot = new();
+                return commitStarted ? LeaderboardStoreResult.OutcomeUncertain : LeaderboardStoreResult.Failed;
+            }
         }
 
-        public LeaderboardStoreResult GenerateRewards(LeaderboardRewardGeneration request) => LeaderboardStoreResult.Failed;
+        public LeaderboardStoreResult GenerateRewards(LeaderboardRewardGeneration request)
+        {
+            if (request == null || request.Rewards == null || request.Rewards.GroupBy(reward => reward.ParticipantId).Any(group => group.Skip(1).Any())
+                || request.Rewards.Any(reward => reward.LeaderboardId != request.LeaderboardId || reward.InstanceId != request.InstanceId))
+                return LeaderboardStoreResult.InvalidData;
+
+            bool commitStarted = false;
+            try
+            {
+                using SQLiteConnection connection = GetConnection();
+                using SQLiteTransaction transaction = connection.BeginTransaction(IsolationLevel.Serializable);
+                DBLeaderboard definition = connection.QueryFirstOrDefault<DBLeaderboard>("SELECT * FROM Leaderboards WHERE LeaderboardId = @LeaderboardId",
+                    new { request.LeaderboardId }, transaction);
+                if (definition == null)
+                    return LeaderboardStoreResult.NotFound;
+
+                DBLeaderboardInstance instance = connection.QueryFirstOrDefault<DBLeaderboardInstance>("SELECT * FROM Instances WHERE InstanceId = @InstanceId",
+                    new { request.InstanceId }, transaction);
+                if (instance == null)
+                    return LeaderboardStoreResult.NotFound;
+                if (instance.LeaderboardId != request.LeaderboardId)
+                    return LeaderboardStoreResult.InvalidData;
+
+                List<DBRewardEntry> existingRewards = connection.Query<DBRewardEntry>(@"
+                    SELECT * FROM Rewards WHERE LeaderboardId = @LeaderboardId AND InstanceId = @InstanceId",
+                    new { request.LeaderboardId, request.InstanceId }, transaction).ToList();
+                if (instance.State == LeaderboardState.eLBS_Rewarded)
+                    return HasExactRewards(existingRewards, request.Rewards) ? LeaderboardStoreResult.Success : LeaderboardStoreResult.Conflict;
+
+                if (definition.ActiveInstanceId != request.ExpectedActiveInstanceId || request.InstanceId != definition.ActiveInstanceId
+                    || instance.State != request.ExpectedState)
+                    return LeaderboardStoreResult.StaleState;
+                if (existingRewards.Count != 0)
+                    return LeaderboardStoreResult.Conflict;
+
+                foreach (LeaderboardRewardWrite reward in request.Rewards)
+                {
+                    connection.Execute(@"
+                        INSERT INTO Rewards (LeaderboardId, InstanceId, ParticipantId, Rank, RewardId, CreationDate, RewardedDate)
+                        VALUES (@LeaderboardId, @InstanceId, @ParticipantId, @Rank, @RewardId, @CreationDate, NULL)", reward, transaction);
+                }
+                connection.Execute("UPDATE Instances SET State = @State WHERE InstanceId = @InstanceId",
+                    new { State = (int)LeaderboardState.eLBS_Rewarded, request.InstanceId }, transaction);
+                CommitLifecycleTransaction(transaction, ref commitStarted);
+                return LeaderboardStoreResult.Success;
+            }
+            catch (Exception e)
+            {
+                Logger.Error($"GenerateRewards(): {e.Message}");
+                return commitStarted ? LeaderboardStoreResult.OutcomeUncertain : LeaderboardStoreResult.Failed;
+            }
+        }
 
         public LeaderboardStoreResult GetPendingRewards(long participantId, out IReadOnlyList<DBRewardEntry> rewards)
         {
             rewards = Array.Empty<DBRewardEntry>();
-            return LeaderboardStoreResult.Failed;
+            try
+            {
+                using SQLiteConnection connection = GetConnection();
+                if (connection.QuerySingle<long>(@"
+                    SELECT COUNT(*) FROM Rewards
+                    WHERE ParticipantId = @ParticipantId AND (RewardedDate IS NULL OR RewardedDate = 0) AND CreationDate IS NULL",
+                    new { ParticipantId = participantId }) != 0)
+                    return LeaderboardStoreResult.InvalidData;
+
+                rewards = connection.Query<DBRewardEntry>(@"
+                    SELECT * FROM Rewards
+                    WHERE ParticipantId = @ParticipantId AND (RewardedDate IS NULL OR RewardedDate = 0)
+                    ORDER BY LeaderboardId, InstanceId",
+                    new { ParticipantId = participantId }).Select(CloneReward).ToArray();
+                return LeaderboardStoreResult.Success;
+            }
+            catch (Exception e)
+            {
+                Logger.Error($"GetPendingRewards(): {e.Message}");
+                return LeaderboardStoreResult.Failed;
+            }
         }
 
-        public RewardFinalizationResult FinalizeReward(LeaderboardRewardKey key, long rewardedDate) => RewardFinalizationResult.Failed;
+        public RewardFinalizationResult FinalizeReward(LeaderboardRewardKey key, long rewardedDate)
+        {
+            bool commitStarted = false;
+            try
+            {
+                using SQLiteConnection connection = GetConnection();
+                using SQLiteTransaction transaction = connection.BeginTransaction(IsolationLevel.Serializable);
+                int updated = connection.Execute(@"
+                    UPDATE Rewards SET RewardedDate = @RewardedDate
+                    WHERE LeaderboardId = @LeaderboardId AND InstanceId = @InstanceId AND ParticipantId = @ParticipantId
+                      AND (RewardedDate IS NULL OR RewardedDate = 0)",
+                    new { key.LeaderboardId, key.InstanceId, key.ParticipantId, RewardedDate = rewardedDate }, transaction);
+                if (updated != 0)
+                {
+                    CommitLifecycleTransaction(transaction, ref commitStarted);
+                    return RewardFinalizationResult.Finalized;
+                }
+
+                long? existing = connection.QuerySingleOrDefault<long?>(@"
+                    SELECT RewardedDate FROM Rewards
+                    WHERE LeaderboardId = @LeaderboardId AND InstanceId = @InstanceId AND ParticipantId = @ParticipantId",
+                    key, transaction);
+                return existing.HasValue ? RewardFinalizationResult.AlreadyFinalized : RewardFinalizationResult.NotFound;
+            }
+            catch (Exception e)
+            {
+                Logger.Error($"FinalizeReward(): {e.Message}");
+                return commitStarted ? RewardFinalizationResult.OutcomeUncertain : RewardFinalizationResult.Failed;
+            }
+        }
 
         private static bool HasExactEntries(IReadOnlyCollection<DBLeaderboardEntry> existingEntries, IReadOnlyList<LeaderboardEntryWrite> requestedEntries)
         {
             return existingEntries.Count == requestedEntries.Count
                 && requestedEntries.All(requested => existingEntries.Any(existing => existing.ParticipantId == requested.ParticipantId && EntriesMatch(existing, requested)));
+        }
+
+        private static bool HasExactRewards(IReadOnlyCollection<DBRewardEntry> existingRewards, IReadOnlyList<LeaderboardRewardWrite> requestedRewards)
+        {
+            return existingRewards.Count == requestedRewards.Count
+                && requestedRewards.All(requested => existingRewards.Any(existing => existing.ParticipantId == requested.ParticipantId
+                    && existing.RewardId == requested.RewardId && existing.Rank == requested.Rank));
         }
 
         private static bool EntriesMatch(DBLeaderboardEntry existing, LeaderboardEntryWrite requested)
@@ -830,6 +1000,20 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                 Score = entry.Score,
                 HighScore = entry.HighScore,
                 RuleStates = entry.RuleStates?.ToArray()
+            };
+        }
+
+        private static DBRewardEntry CloneReward(DBRewardEntry reward)
+        {
+            return new()
+            {
+                LeaderboardId = reward.LeaderboardId,
+                InstanceId = reward.InstanceId,
+                ParticipantId = reward.ParticipantId,
+                Rank = reward.Rank,
+                RewardId = reward.RewardId,
+                CreationDate = reward.CreationDate,
+                RewardedDate = reward.RewardedDate
             };
         }
 
