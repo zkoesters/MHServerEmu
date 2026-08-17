@@ -170,6 +170,33 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
             return result;
         }
 
+        public AccountStoreResult ReconcileAccount(DBAccount account)
+        {
+            if (account == null)
+                return AccountStoreResult.InvalidData;
+            if (account.PersistenceState == PersistenceState.Clean)
+                return AccountStoreResult.Success;
+
+            PostgreSQLReadResult<DBAccount> read = _executor.ExecuteReadAsync("AccountReconcile", async (connection, deadline, cancellationToken) =>
+            {
+                await using NpgsqlCommand command = new($"SELECT id, email, player_name, password_hash, password_salt, password_algorithm, password_format_version, password_iterations, password_key_size, credential_version, game_security_version, user_level, flags, email_verified_at_utc, revision, created_at_utc, updated_at_utc FROM {AccountTable} WHERE id = @id", connection)
+                {
+                    CommandTimeout = deadline.RemainingCommandTimeoutSeconds,
+                };
+                command.Parameters.AddWithValue("id", NpgsqlDbType.Bigint, account.Id);
+                await using NpgsqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
+                return await reader.ReadAsync(cancellationToken) ? ReadAccount(reader) : null;
+            }).GetAwaiter().GetResult();
+            if (read.Succeeded == false)
+                return AccountStoreResult.Failed;
+            if (read.Value == null)
+                return AccountStoreResult.AccountNotFound;
+
+            ApplyReconciledScalars(account, read.Value);
+            account.PersistenceState = PersistenceState.Clean;
+            return AccountStoreResult.Success;
+        }
+
         private AccountStoreResult UpdateAccount(DBAccount account, string operation, string sql, Action<NpgsqlParameterCollection> addParameters)
         {
             AccountMetadata? metadata = null;
@@ -307,6 +334,26 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
             account.GameSecurityVersion = metadata.GameSecurityVersion;
             account.Flags = metadata.Flags;
             account.PersistenceState = PersistenceState.Clean;
+        }
+
+        private static void ApplyReconciledScalars(DBAccount account, DBAccount persisted)
+        {
+            account.Email = persisted.Email;
+            account.PlayerName = persisted.PlayerName;
+            account.PasswordHash = persisted.PasswordHash;
+            account.Salt = persisted.Salt;
+            account.UserLevel = persisted.UserLevel;
+            account.Flags = persisted.Flags;
+            account.PasswordAlgorithm = persisted.PasswordAlgorithm;
+            account.PasswordFormatVersion = persisted.PasswordFormatVersion;
+            account.PasswordIterations = persisted.PasswordIterations;
+            account.PasswordKeySize = persisted.PasswordKeySize;
+            account.CredentialVersion = persisted.CredentialVersion;
+            account.GameSecurityVersion = persisted.GameSecurityVersion;
+            account.PersistenceRevision = persisted.PersistenceRevision;
+            account.EmailVerifiedAtUtc = persisted.EmailVerifiedAtUtc;
+            account.CreatedAtUtc = persisted.CreatedAtUtc;
+            account.UpdatedAtUtc = persisted.UpdatedAtUtc;
         }
 
         private static AccountStoreResult MapWriteFailure(PostgreSQLWriteResult write)

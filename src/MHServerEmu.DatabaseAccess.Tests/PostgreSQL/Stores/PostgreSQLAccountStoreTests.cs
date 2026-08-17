@@ -170,6 +170,71 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
         }
 
         [PostgreSQLIntegrationFact]
+        public async Task ReconcileAccount_UncertainObject_ReplacesScalarsButPreservesPlayerAggregate()
+        {
+            await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
+            DBAccount persisted = fixture.CreateAccount(1, "persisted@example.test", "PersistedPlayer");
+            persisted.PasswordHash = [0x01, 0x02];
+            persisted.Salt = [0x03, 0x04];
+            persisted.UserLevel = AccountUserLevel.Admin;
+            persisted.Flags = AccountFlags.IsBanned;
+            persisted.EmailVerifiedAtUtc = new DateTime(2025, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+            Assert.Equal(AccountStoreResult.Success, fixture.AccountStore.InsertAccount(persisted));
+
+            DBAccount uncertain = fixture.CreateAccount(persisted.Id, "stale@example.test", "StalePlayer");
+            uncertain.PasswordHash = [0x10];
+            uncertain.Salt = [0x11];
+            uncertain.UserLevel = AccountUserLevel.User;
+            uncertain.Flags = AccountFlags.IsArchived;
+            uncertain.PasswordAlgorithm = "stale";
+            uncertain.PasswordFormatVersion = 99;
+            uncertain.PasswordIterations = 98;
+            uncertain.PasswordKeySize = 97;
+            uncertain.CredentialVersion = 96;
+            uncertain.GameSecurityVersion = 95;
+            uncertain.PersistenceRevision = 94;
+            uncertain.EmailVerifiedAtUtc = null;
+            uncertain.CreatedAtUtc = null;
+            uncertain.UpdatedAtUtc = null;
+            uncertain.PersistenceState = PersistenceState.OutcomeUncertain;
+            DBPlayer player = new(uncertain.Id);
+            uncertain.Player = player;
+            Assert.True(uncertain.Avatars.Add(new() { DbGuid = 2, ContainerDbGuid = uncertain.Id }));
+
+            Assert.Equal(AccountStoreResult.Success, fixture.AccountStore.ReconcileAccount(uncertain));
+
+            Assert.Equal(persisted.Email, uncertain.Email);
+            Assert.Equal(persisted.PlayerName, uncertain.PlayerName);
+            Assert.Equal(persisted.PasswordHash, uncertain.PasswordHash);
+            Assert.Equal(persisted.Salt, uncertain.Salt);
+            Assert.Equal(persisted.UserLevel, uncertain.UserLevel);
+            Assert.Equal(persisted.Flags, uncertain.Flags);
+            Assert.Equal(persisted.PasswordAlgorithm, uncertain.PasswordAlgorithm);
+            Assert.Equal(persisted.PasswordFormatVersion, uncertain.PasswordFormatVersion);
+            Assert.Equal(persisted.PasswordIterations, uncertain.PasswordIterations);
+            Assert.Equal(persisted.PasswordKeySize, uncertain.PasswordKeySize);
+            Assert.Equal(persisted.CredentialVersion, uncertain.CredentialVersion);
+            Assert.Equal(persisted.GameSecurityVersion, uncertain.GameSecurityVersion);
+            Assert.Equal(persisted.PersistenceRevision, uncertain.PersistenceRevision);
+            Assert.Equal(persisted.EmailVerifiedAtUtc, uncertain.EmailVerifiedAtUtc);
+            Assert.Equal(persisted.CreatedAtUtc, uncertain.CreatedAtUtc);
+            Assert.Equal(persisted.UpdatedAtUtc, uncertain.UpdatedAtUtc);
+            Assert.Same(player, uncertain.Player);
+            Assert.Single(uncertain.Avatars.Entries);
+            Assert.Equal(PersistenceState.Clean, uncertain.PersistenceState);
+        }
+
+        [PostgreSQLIntegrationFact]
+        public async Task AccountStoreConformance_ReconciliationNoOpAndMissingAccount()
+        {
+            await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
+            DBAccount clean = fixture.CreateAccount(1, "clean@example.test", "CleanPlayer");
+            DBAccount missing = fixture.CreateAccount(2, "missing@example.test", "MissingPlayer");
+
+            AccountStoreConformanceTests.AssertReconciliationNoOpAndMissingAccount(fixture.AccountStore, clean, missing);
+        }
+
+        [PostgreSQLIntegrationFact]
         public async Task Lookup_ExhaustedPool_ReturnsAtOperationDeadline()
         {
             await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database, new PostgreSQLConfig

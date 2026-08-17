@@ -294,6 +294,44 @@ namespace MHServerEmu.PlayerManagement.Tests
             Assert.True(_notifier.Notified);
         }
 
+        [Fact]
+        public void SetFlag_UncertainAccount_ReconcilesBeforeApplyingLaterMutation()
+        {
+            DBAccount account = new("account@example.com", "PlayerOne", "old-password")
+            {
+                Flags = AccountFlags.IsBanned,
+                PersistenceState = PersistenceState.OutcomeUncertain,
+            };
+            _dbManager.Accounts.Add(account.Email, account);
+            _dbManager.ReconcileAccountAction = reconciled => reconciled.Flags = AccountFlags.None;
+
+            AccountOperationResult result = _accountManager.SetFlag(account, AccountFlags.IsBanned);
+
+            Assert.Equal(AccountOperationResult.Success, result);
+            Assert.Equal(1, _dbManager.ReconcileAccountCallCount);
+            Assert.Equal(1, _dbManager.UpdateAccountCallCount);
+            Assert.True(_notifier.Notified);
+        }
+
+        [Fact]
+        public void SetFlag_UncertainAccount_ReconciliationFailureIsFailClosedWithoutReplayOrNotification()
+        {
+            DBAccount account = new("account@example.com", "PlayerOne", "old-password")
+            {
+                PersistenceState = PersistenceState.OutcomeUncertain,
+            };
+            _dbManager.Accounts.Add(account.Email, account);
+            _dbManager.ReconcileAccountStoreResult = AccountStoreResult.Failed;
+
+            AccountOperationResult result = _accountManager.SetFlag(account, AccountFlags.IsBanned);
+
+            Assert.Equal(AccountOperationResult.DatabaseError, result);
+            Assert.Equal(1, _dbManager.ReconcileAccountCallCount);
+            Assert.Equal(0, _dbManager.UpdateAccountCallCount);
+            Assert.Equal(PersistenceState.OutcomeUncertain, account.PersistenceState);
+            Assert.False(_notifier.Notified);
+        }
+
         public enum AccountMutation
         {
             PlayerName,
@@ -359,6 +397,7 @@ namespace MHServerEmu.PlayerManagement.Tests
 
             public AccountStoreResult ChangeUserLevel(DBAccount account, AccountUserLevel userLevel) => AccountStoreResult.Failed;
             public AccountStoreResult ChangeFlags(DBAccount account, AccountFlags flags) => AccountStoreResult.Failed;
+            public AccountStoreResult ReconcileAccount(DBAccount account) => AccountStoreResult.Failed;
         }
     }
 }

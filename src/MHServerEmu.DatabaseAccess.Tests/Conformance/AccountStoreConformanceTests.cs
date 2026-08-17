@@ -19,5 +19,14 @@ namespace MHServerEmu.DatabaseAccess.Tests.Conformance
             Assert.True(store.TryQueryAccountByEmail(account.Email.ToUpperInvariant(), out stored));
             Assert.Equal(changedPlayerName, stored.PlayerName);
         }
+
+        internal static void AssertReconciliationNoOpAndMissingAccount(IAccountStore store, DBAccount cleanAccount, DBAccount missingAccount)
+        {
+            Assert.Equal(AccountStoreResult.Success, store.ReconcileAccount(cleanAccount));
+
+            missingAccount.PersistenceState = PersistenceState.OutcomeUncertain;
+            Assert.Equal(AccountStoreResult.AccountNotFound, store.ReconcileAccount(missingAccount));
+            Assert.Equal(PersistenceState.OutcomeUncertain, missingAccount.PersistenceState);
+        }
     }
 }

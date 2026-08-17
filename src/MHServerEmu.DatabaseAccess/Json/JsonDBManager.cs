@@ -118,6 +118,19 @@ namespace MHServerEmu.DatabaseAccess.Json
             return Logger.WarnReturn(AccountStoreResult.Failed, "ChangeFlags(): Operation not supported");
         }
 
+        public AccountStoreResult ReconcileAccount(DBAccount account)
+        {
+            if (account == null)
+                return AccountStoreResult.InvalidData;
+            if (account.PersistenceState == PersistenceState.Clean)
+                return AccountStoreResult.Success;
+            if (ReferenceEquals(account, _account) == false)
+                return AccountStoreResult.AccountNotFound;
+
+            account.PersistenceState = PersistenceState.Clean;
+            return AccountStoreResult.Success;
+        }
+
         public PlayerStoreResult LoadPlayerData(DBAccount account)
         {
             // All JSON data is loaded at once (FIXME)
