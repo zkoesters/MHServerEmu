@@ -1,5 +1,6 @@
 ﻿using Dapper;
 using System.Data.SQLite;
+using Gazillion;
 using MHServerEmu.Core.Helpers;
 using MHServerEmu.Core.Logging;
 using MHServerEmu.DatabaseAccess.Models.Leaderboards;
@@ -59,7 +60,9 @@ namespace MHServerEmu.DatabaseAccess.SQLite
 
                 using SQLiteConnection connection = GetConnection();
                 long schemaVersion = connection.QuerySingle<long>("PRAGMA user_version");
-                return schemaVersion == CurrentSchemaVersion ? LeaderboardStoreResult.Success : LeaderboardStoreResult.Failed;
+                return schemaVersion == CurrentSchemaVersion && HasSchemaVersionOneMetadata(connection)
+                    ? LeaderboardStoreResult.Success
+                    : LeaderboardStoreResult.Failed;
             }
             catch (Exception e)
             {
@@ -94,6 +97,36 @@ namespace MHServerEmu.DatabaseAccess.SQLite
             SQLiteConnection connection = new(_connectionString);
             connection.Open();
             return connection;
+        }
+
+        private static bool HasSchemaVersionOneMetadata(SQLiteConnection connection)
+        {
+            Dictionary<string, string[]> tables = new()
+            {
+                ["Leaderboards"] = ["LeaderboardId", "PrototypeName", "ActiveInstanceId", "IsEnabled", "StartTime", "MaxResetCount"],
+                ["Instances"] = ["InstanceId", "LeaderboardId", "State", "ActivationDate", "Visible"],
+                ["Entries"] = ["InstanceId", "ParticipantId", "Score", "HighScore", "RuleStates"],
+                ["MetaEntries"] = ["LeaderboardId", "InstanceId", "SubLeaderboardId", "SubInstanceId"],
+                ["Rewards"] = ["LeaderboardId", "InstanceId", "ParticipantId", "Rank", "RewardId", "CreationDate", "RewardedDate"],
+            };
+            Dictionary<string, string[]> indexes = new()
+            {
+                ["idx_instances_leaderboardid"] = ["LeaderboardId"],
+                ["idx_entries_instanceid"] = ["InstanceId"],
+                ["idx_rewards_participantid"] = ["ParticipantId"],
+            };
+
+            return tables.All(table => connection.Query<SQLiteSchemaColumn>($"PRAGMA table_info([{table.Key}])")
+                    .Select(column => column.Name)
+                    .SequenceEqual(table.Value))
+                && indexes.All(index => connection.Query<SQLiteSchemaColumn>($"PRAGMA index_info([{index.Key}])")
+                    .Select(column => column.Name)
+                    .SequenceEqual(index.Value));
+        }
+
+        private sealed class SQLiteSchemaColumn
+        {
+            public string Name { get; set; }
         }
 
         public LeaderboardStoreResult LoadEntries(long instanceId, out IReadOnlyList<DBLeaderboardEntry> entries)
@@ -159,7 +192,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                     SELECT * FROM Instances
                     WHERE LeaderboardId = @LeaderboardId AND Visible = 1
                       AND (@BeforeInstanceId = 0
-                        OR (@BeforeInstanceId < 0 AND InstanceId < 0 AND InstanceId < @BeforeInstanceId)
+                        OR (@BeforeInstanceId < 0 AND (InstanceId < @BeforeInstanceId OR InstanceId >= 0))
                         OR (@BeforeInstanceId >= 0 AND (InstanceId < 0 OR (InstanceId >= 0 AND InstanceId < @BeforeInstanceId))))
                     ORDER BY CASE WHEN InstanceId < 0 THEN 0 ELSE 1 END, InstanceId DESC
                     LIMIT @Limit",
@@ -192,6 +225,9 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                     return LeaderboardStoreResult.InvalidData;
 
                 Dictionary<long, DBLeaderboard> currentById = currentDefinitions.ToDictionary(definition => definition.LeaderboardId);
+                if (HasTerminalizationOwnershipMismatch(currentDefinitions, currentInstances, desiredDefinitions))
+                    return LeaderboardStoreResult.InvalidData;
+
                 Dictionary<long, long> activeInstanceIds = new();
                 foreach ((long leaderboardId, LeaderboardDefinitionSpec definition) in desiredDefinitions)
                 {
@@ -263,7 +299,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                     }
                     else if (definition.IsEnabled == false)
                     {
-                        TerminalizeInstance(connection, transaction, current.ActiveInstanceId);
+                        TerminalizeInstance(connection, transaction, current.LeaderboardId, current.ActiveInstanceId);
                     }
                     else if (definition.IsEnabled)
                     {
@@ -282,7 +318,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                 foreach (DBLeaderboard definition in currentDefinitions.Where(definition => desiredDefinitions.ContainsKey(definition.LeaderboardId) == false))
                 {
                     connection.Execute("UPDATE Leaderboards SET IsEnabled = 0 WHERE LeaderboardId = @LeaderboardId", new { definition.LeaderboardId }, transaction);
-                    TerminalizeInstance(connection, transaction, definition.ActiveInstanceId);
+                    TerminalizeInstance(connection, transaction, definition.LeaderboardId, definition.ActiveInstanceId);
                 }
 
                 foreach (long leaderboardId in desiredDefinitions.Keys)
@@ -330,6 +366,12 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                 return false;
 
             Dictionary<long, LeaderboardInstanceSpec> requestedInitialInstances = request.InitialInstances.ToDictionary(instance => instance.LeaderboardId);
+            if (requestedInitialInstances.Any(pair => pair.Value.State != (requestedDefinitions[pair.Key].IsEnabled
+                ? LeaderboardState.eLBS_Created
+                : LeaderboardState.eLBS_Rewarded)
+                || pair.Value.Visible != requestedDefinitions[pair.Key].IsEnabled))
+                return false;
+
             Dictionary<long, DBLeaderboard> currentById = currentDefinitions.ToDictionary(definition => definition.LeaderboardId);
             HashSet<long> existingIds = currentInstances.Select(instance => instance.InstanceId).ToHashSet();
             HashSet<long> generatedIds = new();
@@ -373,18 +415,28 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                     && activeInstanceIds[mapping.SubLeaderboardId] == mapping.SubInstanceId);
         }
 
+        private static bool HasTerminalizationOwnershipMismatch(IEnumerable<DBLeaderboard> currentDefinitions,
+            IReadOnlyList<DBLeaderboardInstance> currentInstances, IReadOnlyDictionary<long, LeaderboardDefinitionSpec> desiredDefinitions)
+        {
+            return currentDefinitions
+                .Where(definition => desiredDefinitions.TryGetValue(definition.LeaderboardId, out LeaderboardDefinitionSpec desired) == false || desired.IsEnabled == false)
+                .Any(definition => currentInstances.Any(instance => instance.LeaderboardId == definition.LeaderboardId
+                    && instance.InstanceId == definition.ActiveInstanceId) == false);
+        }
+
         private static long GetActivationDate(LeaderboardInstanceSpec initial, long currentTime)
         {
             return initial.ActivationDate == 0 ? currentTime : initial.ActivationDate;
         }
 
-        private static void TerminalizeInstance(SQLiteConnection connection, SQLiteTransaction transaction, long instanceId)
+        private static void TerminalizeInstance(SQLiteConnection connection, SQLiteTransaction transaction, long leaderboardId, long instanceId)
         {
             connection.Execute(@"
                 UPDATE Instances
                 SET State = 5,
                     Visible = CASE WHEN EXISTS (SELECT 1 FROM Rewards WHERE Rewards.InstanceId = Instances.InstanceId) THEN 1 ELSE 0 END
-                WHERE InstanceId = @InstanceId AND State < 5", new { InstanceId = instanceId }, transaction);
+                WHERE LeaderboardId = @LeaderboardId AND InstanceId = @InstanceId AND State < 5",
+                new { LeaderboardId = leaderboardId, InstanceId = instanceId }, transaction);
         }
 
         private static LeaderboardSnapshot ReadSnapshot(SQLiteConnection connection, SQLiteTransaction transaction, IEnumerable<long> desiredLeaderboardIds, int normalArchiveLimit)
