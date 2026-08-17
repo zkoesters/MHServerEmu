@@ -37,6 +37,7 @@ namespace MHServerEmu.Leaderboards
         private readonly ILeaderboardPrototypeCatalog _catalog;
         private readonly ILeaderboardPublisher _publisher;
         private readonly LeaderboardRuntimeOptions _options;
+        private readonly Action _fatal;
         private LeaderboardArchiveCache<DBLeaderboardInstance> _archiveCache;
 
         internal LeaderboardRuntimeOptions Options { get => _options; }
@@ -51,13 +52,14 @@ namespace MHServerEmu.Leaderboards
         private LeaderboardDatabase() { }
 
         public LeaderboardDatabase(ILeaderboardStore store, ILeaderboardPlayerNameResolver nameResolver,
-            ILeaderboardPrototypeCatalog catalog, ILeaderboardPublisher publisher, LeaderboardRuntimeOptions options)
+            ILeaderboardPrototypeCatalog catalog, ILeaderboardPublisher publisher, LeaderboardRuntimeOptions options, Action fatal = null)
         {
             _store = store ?? throw new ArgumentNullException(nameof(store));
             _nameResolver = nameResolver ?? throw new ArgumentNullException(nameof(nameResolver));
             _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
             _publisher = publisher ?? throw new ArgumentNullException(nameof(publisher));
             _options = options ?? throw new ArgumentNullException(nameof(options));
+            _fatal = fatal ?? (() => { });
             _archiveCache = new(_options.ArchiveCacheCapacity);
         }
 
@@ -584,6 +586,8 @@ namespace MHServerEmu.Leaderboards
         {
             return _store?.GenerateRewards(request) ?? LeaderboardStoreResult.Failed;
         }
+
+        internal void RequestControlledShutdown() => _fatal();
 
         internal LeaderboardStoreResult PersistVisibility(LeaderboardVisibilityRequest request, out LeaderboardVisibilitySnapshot snapshot)
         {
