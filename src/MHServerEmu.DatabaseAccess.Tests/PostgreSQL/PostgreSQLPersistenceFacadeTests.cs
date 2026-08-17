@@ -44,6 +44,18 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL
             Assert.Contains("writer_lock_timeout", exception.Message, StringComparison.Ordinal);
         }
 
+        [PostgreSQLIntegrationFact]
+        public async Task DisposeAsync_ReleasesWriterOwnershipForSubsequentStart()
+        {
+            string connectionString = await _database.CreateSettingsConnectionStringAsync();
+            PersistenceRuntime first = await PostgreSQLPersistenceFacade.StartAsync(new PostgreSQLConfig(), connectionString, _ => { });
+
+            await first.DisposeAsync();
+
+            await using PersistenceRuntime second = await PostgreSQLPersistenceFacade.StartAsync(new PostgreSQLConfig(), connectionString, _ => { });
+            Assert.NotNull(second.Services.Leaderboards);
+        }
+
         [Fact]
         public async Task StartAsync_InvalidSettingsFailsWithoutInvokingFatalCallback()
         {

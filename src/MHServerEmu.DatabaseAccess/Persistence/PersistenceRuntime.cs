@@ -2,7 +2,9 @@ namespace MHServerEmu.DatabaseAccess.Persistence
 {
     public sealed class PersistenceRuntime : IAsyncDisposable
     {
+        private readonly object _disposeLock = new();
         private Func<ValueTask> _disposeAsync;
+        private Task _disposeTask;
 
         public PersistenceRuntime(PersistenceServices services, Func<ValueTask> disposeAsync)
         {
@@ -12,11 +14,38 @@ namespace MHServerEmu.DatabaseAccess.Persistence
 
         public PersistenceServices Services { get; }
 
-        public async ValueTask DisposeAsync()
+        public ValueTask DisposeAsync()
         {
-            Func<ValueTask> disposeAsync = Interlocked.Exchange(ref _disposeAsync, null);
-            if (disposeAsync != null)
-                await disposeAsync();
+            lock (_disposeLock)
+            {
+                Task disposeTask = _disposeTask;
+                if (disposeTask == null)
+                {
+                    TaskCompletionSource<bool> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    disposeTask = completion.Task;
+                    _disposeTask = disposeTask;
+                    _ = DisposeCoreAsync(completion);
+                }
+
+                return new ValueTask(disposeTask);
+            }
+        }
+
+        private async Task DisposeCoreAsync(TaskCompletionSource<bool> completion)
+        {
+            try
+            {
+                await _disposeAsync();
+                lock (_disposeLock)
+                    _disposeAsync = null;
+                completion.SetResult(true);
+            }
+            catch (Exception exception)
+            {
+                completion.SetException(exception);
+                lock (_disposeLock)
+                    _disposeTask = null;
+            }
         }
     }
 }
