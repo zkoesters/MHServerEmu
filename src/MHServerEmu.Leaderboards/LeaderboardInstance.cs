@@ -1,6 +1,5 @@
 ﻿using System.Text;
 using Gazillion;
-using MHServerEmu.Core.Config;
 using MHServerEmu.Core.Extensions;
 using MHServerEmu.Core.Logging;
 using MHServerEmu.Core.Memory;
@@ -15,7 +14,6 @@ namespace MHServerEmu.Leaderboards
     public class LeaderboardInstance
     {
         private static readonly Logger Logger = LogManager.CreateLogger();
-        private static readonly int AutoSaveIntervalMinutes = ConfigManager.Instance.GetConfig<LeaderboardsConfig>().AutoSaveIntervalMinutes;
 
         private readonly object _lock = new();
         private readonly Leaderboard _leaderboard;
@@ -295,6 +293,11 @@ namespace MHServerEmu.Leaderboards
         {
             lock (_lock)
             {
+                MetaLeaderboardEntry metaEntry = _metaLeaderboardEntries.Find(entry => entry.SubLeaderboardId == subLeaderboardId);
+                if (metaEntry == null)
+                    return;
+
+                metaEntry.SubInstanceId = subInstanceId;
                 Leaderboard leaderboard = _leaderboard.Database.GetLeaderboard(subLeaderboardId);
                 if (leaderboard == null)
                     return;
@@ -302,13 +305,8 @@ namespace MHServerEmu.Leaderboards
                 LeaderboardInstance subInstance = leaderboard.GetInstance(subInstanceId, true);
                 if (subInstance == null)
                     return;
-                
-                MetaLeaderboardEntry metaEntry = _metaLeaderboardEntries.Find(entry => entry.SubLeaderboardId == subLeaderboardId);
-                if (metaEntry == null)
-                    return;
-                
+
                 metaEntry.SubInstance = subInstance;
-                metaEntry.SubInstanceId = subInstanceId;
             }
         }
 
@@ -693,7 +691,7 @@ namespace MHServerEmu.Leaderboards
         /// </summary>
         private void ScheduleNextAutoSave()
         {
-            _nextAutoSaveTime = Clock.UtcNowPrecise.AddMinutes(AutoSaveIntervalMinutes);
+            _nextAutoSaveTime = Clock.UtcNowPrecise.AddMinutes(_leaderboard.AutoSaveIntervalMinutes);
         }
     }
 }

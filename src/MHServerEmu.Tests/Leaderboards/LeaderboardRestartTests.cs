@@ -2,6 +2,7 @@ using Gazillion;
 using MHServerEmu.Core.Network;
 using MHServerEmu.DatabaseAccess;
 using MHServerEmu.DatabaseAccess.Models.Leaderboards;
+using MHServerEmu.Games.GameData;
 using MHServerEmu.Leaderboards;
 
 namespace MHServerEmu.Tests.Leaderboards
@@ -54,6 +55,25 @@ namespace MHServerEmu.Tests.Leaderboards
             Assert.Contains("LoadMetaMappings", store.Calls);
         }
 
+        [Fact]
+        public void PersistedMetaMapping_RetainsSubInstanceIdUntilChildLeaderboardIsConstructed()
+        {
+            LeaderboardDatabase database = CreateDatabase(new RecordingStore(null), "mappings.json");
+            Leaderboard leaderboard = (Leaderboard)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(typeof(Leaderboard));
+            typeof(Leaderboard).GetField("_database", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).SetValue(leaderboard, database);
+            LeaderboardInstance instance = (LeaderboardInstance)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(typeof(LeaderboardInstance));
+            typeof(LeaderboardInstance).GetField("_leaderboard", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).SetValue(instance, leaderboard);
+            typeof(LeaderboardInstance).GetField("_lock", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).SetValue(instance, new object());
+            MetaLeaderboardEntry metaEntry = new((PrototypeGuid)2, null);
+            typeof(LeaderboardInstance).GetField("_metaLeaderboardEntries", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                .SetValue(instance, new List<MetaLeaderboardEntry> { metaEntry });
+
+            typeof(LeaderboardInstance).GetMethod("SetSubInstance", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                .Invoke(instance, [(PrototypeGuid)2, 20UL]);
+
+            Assert.Equal(20UL, metaEntry.SubInstanceId);
+        }
+
         private static LeaderboardDatabase CreateDatabase(ILeaderboardStore store, string schedulePath)
         {
             return new LeaderboardDatabase(store, new NameResolver(), new TestCatalog(
@@ -70,6 +90,7 @@ namespace MHServerEmu.Tests.Leaderboards
         {
             public void Publish(ServiceMessage.LeaderboardStateChange change) { }
             public void Publish(IReadOnlyList<ServiceMessage.LeaderboardStateChange> changes) { }
+            public void Publish(ServiceMessage.LeaderboardRewardRequestResponse response) { }
         }
 
         private sealed class TestCatalog(params LeaderboardPrototypeDefinition[] definitions) : ILeaderboardPrototypeCatalog
