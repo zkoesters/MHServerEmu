@@ -1,4 +1,5 @@
 using System.Data.SQLite;
+using System.Reflection;
 using Gazillion;
 using MHServerEmu.DatabaseAccess.Models.Leaderboards;
 using MHServerEmu.DatabaseAccess.SQLite;
@@ -86,6 +87,21 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
             Assert.Equal(0L, ReadScalar(databasePath, "SELECT COUNT(*) FROM pragma_foreign_key_list('Instances')"));
             Assert.Equal(0L, ReadScalar(databasePath, "SELECT COUNT(*) FROM pragma_foreign_key_list('Entries')"));
             Assert.Equal(0L, ReadScalar(databasePath, "SELECT COUNT(*) FROM pragma_index_list('Entries') WHERE name = 'idx_entries_instanceid' AND [unique] = 0"));
+        }
+
+        [Fact]
+        public void Initialize_VersionOneDatabaseWithUnexpectedTriggerReturnsFailedWithoutRewritingIt()
+        {
+            using TemporaryDirectory directory = new();
+            string databasePath = Path.Combine(directory.Path, "Leaderboards.db");
+            SQLiteLeaderboardDBManager firstStore = new(databasePath);
+            Assert.Equal(LeaderboardStoreResult.Success, firstStore.Initialize());
+            Execute(databasePath, "CREATE TRIGGER SuppressLeaderboardInsert BEFORE INSERT ON Leaderboards BEGIN SELECT RAISE(IGNORE); END;");
+            SQLiteLeaderboardDBManager store = new(databasePath);
+
+            Assert.Equal(LeaderboardStoreResult.Failed, store.Initialize());
+            Assert.Equal(1L, ReadScalar(databasePath, "PRAGMA user_version"));
+            Assert.Equal(1L, ReadScalar(databasePath, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = 'SuppressLeaderboardInsert'"));
         }
 
         [Fact]
@@ -243,6 +259,48 @@ namespace MHServerEmu.DatabaseAccess.Tests.SQLite
             Assert.Equal(900, Assert.Single(snapshot.Definitions).StartTime);
             Assert.Equal(4, Assert.Single(snapshot.Definitions).MaxResetCount);
             Assert.Equal(300, Assert.Single(snapshot.NonterminalInstances).ActivationDate);
+        }
+
+        [Fact]
+        public void ReconcileSchedule_SerializesStateReadsBeforeCompetingTerminalization()
+        {
+            using TemporaryDirectory directory = new();
+            string databasePath = Path.Combine(directory.Path, "Leaderboards.db");
+            SQLiteLeaderboardDBManager store = new(databasePath);
+            Assert.Equal(LeaderboardStoreResult.Success, store.Initialize());
+            Assert.Equal(LeaderboardStoreResult.Success, store.ReconcileSchedule(Reconciliation(1), out _));
+            FieldInfo hookField = typeof(SQLiteLeaderboardDBManager).GetField("ReconciliationStateReadHook", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.NotNull(hookField);
+            bool competingWriteBlocked = false;
+
+            try
+            {
+                hookField.SetValue(null, (Action)(() =>
+                {
+                    try
+                    {
+                        using SQLiteConnection connection = new($"Data Source={databasePath};Default Timeout=1");
+                        connection.Open();
+                        using SQLiteCommand command = new("UPDATE Instances SET State = 5, Visible = 0 WHERE InstanceId = 1", connection);
+                        command.ExecuteNonQuery();
+                    }
+                    catch (SQLiteException)
+                    {
+                        competingWriteBlocked = true;
+                    }
+                }));
+
+                Assert.Equal(LeaderboardStoreResult.Success, store.ReconcileSchedule(Reconciliation(1, startTime: 900), out _));
+            }
+            finally
+            {
+                hookField.SetValue(null, null);
+            }
+
+            Assert.True(competingWriteBlocked);
+            Assert.Equal((int)LeaderboardState.eLBS_Created, ReadScalar(databasePath, "SELECT State FROM Instances WHERE InstanceId = 1"));
+            Assert.Equal(1, ReadScalar(databasePath, "SELECT ActiveInstanceId FROM Leaderboards WHERE LeaderboardId = 1"));
+            Assert.Equal(1, ReadScalar(databasePath, "SELECT IsEnabled FROM Leaderboards WHERE LeaderboardId = 1"));
         }
 
         [Fact]
