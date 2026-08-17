@@ -135,6 +135,16 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
         }
 
         [PostgreSQLIntegrationFact]
+        public async Task ReconcileSchedule_RejectsNegativeMaxResetCountBeforeWriting()
+        {
+            await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
+
+            Assert.Equal(LeaderboardStoreResult.InvalidData, fixture.Leaderboards.ReconcileSchedule(Reconciliation(1, maxResetCount: -1), out LeaderboardSnapshot snapshot));
+            Assert.Empty(snapshot.Definitions);
+            Assert.Equal(0L, await ScalarAsync(fixture, "SELECT COUNT(*) FROM mhserveremu.leaderboard"));
+        }
+
+        [PostgreSQLIntegrationFact]
         public async Task ReconcileSchedule_OrdersHighBitDefinitionsAndGeneratesUnsignedInstanceIds()
         {
             await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
@@ -150,7 +160,7 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
         }
 
         [PostgreSQLIntegrationFact]
-        public async Task ReconcileSchedule_ReturnsBoundedCommittedArchiveSnapshot()
+        public async Task ReconcileSchedule_SeparatesNonterminalInstancesAndBoundsArchives()
         {
             await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
             LeaderboardReconciliation request = Reconciliation(1, normalArchiveLimit: 1);
@@ -169,9 +179,10 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
             await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
             Assert.Equal(LeaderboardStoreResult.Success, fixture.Leaderboards.ReconcileSchedule(Reconciliation(1), out _));
 
+            using Barrier barrier = new(2);
             LeaderboardStoreResult[] results = await Task.WhenAll(
-                Task.Run(() => fixture.Leaderboards.ReconcileSchedule(Reconciliation(1, startTime: 200), out _)),
-                Task.Run(() => fixture.Leaderboards.ReconcileSchedule(Reconciliation(1, startTime: 300), out _)));
+                Task.Run(() => ReconcileAfterBarrier(fixture.Leaderboards, Reconciliation(1, startTime: 200), barrier)),
+                Task.Run(() => ReconcileAfterBarrier(fixture.Leaderboards, Reconciliation(1, startTime: 300), barrier)));
 
             Assert.All(results, result => Assert.Equal(LeaderboardStoreResult.Success, result));
             Assert.Equal(LeaderboardStoreResult.Success, fixture.Leaderboards.LoadInstance(1, 1, out DBLeaderboardInstance active));
@@ -184,13 +195,31 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
             await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
             LeaderboardReconciliation request = Reconciliation(1);
 
+            using Barrier barrier = new(2);
             LeaderboardStoreResult[] results = await Task.WhenAll(
-                Task.Run(() => fixture.Leaderboards.ReconcileSchedule(request, out _)),
-                Task.Run(() => fixture.Leaderboards.ReconcileSchedule(request, out _)));
+                Task.Run(() => ReconcileAfterBarrier(fixture.Leaderboards, request, barrier)),
+                Task.Run(() => ReconcileAfterBarrier(fixture.Leaderboards, request, barrier)));
 
             Assert.All(results, result => Assert.Equal(LeaderboardStoreResult.Success, result));
             Assert.Equal(LeaderboardStoreResult.Success, fixture.Leaderboards.LoadVisibleInstances(1, 0, 10, out IReadOnlyList<DBLeaderboardInstance> instances));
             Assert.Single(instances);
+        }
+
+        [PostgreSQLIntegrationFact]
+        public async Task ReconcileSchedule_ConcurrentDisjointSchedulesSerializeGlobally()
+        {
+            await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
+            using Barrier barrier = new(2);
+            long highBitId = unchecked((long)0xABCDEF1200000002UL);
+
+            LeaderboardStoreResult[] results = await Task.WhenAll(
+                Task.Run(() => ReconcileAfterBarrier(fixture.Leaderboards, Reconciliation(1), barrier)),
+                Task.Run(() => ReconcileAfterBarrier(fixture.Leaderboards, Reconciliation(highBitId), barrier)));
+
+            Assert.All(results, result => Assert.Equal(LeaderboardStoreResult.Success, result));
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Leaderboards.LoadVisibleInstances(1, 0, 10, out IReadOnlyList<DBLeaderboardInstance> first));
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Leaderboards.LoadVisibleInstances(highBitId, 0, 10, out IReadOnlyList<DBLeaderboardInstance> second));
+            Assert.Equal(1, first.Count + second.Count);
         }
 
         private static LeaderboardReconciliation Reconciliation(long leaderboardId, bool enabled = true, long startTime = 100, int maxResetCount = 0, long activationDate = 300, long currentTime = 500, int normalArchiveLimit = 2)
@@ -198,6 +227,12 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
             return new([new LeaderboardDefinitionSpec(leaderboardId, $"Leaderboard{leaderboardId}", enabled, startTime, maxResetCount)],
                 [new LeaderboardInstanceSpec(0, leaderboardId, enabled ? LeaderboardState.eLBS_Created : LeaderboardState.eLBS_Rewarded, activationDate, enabled)],
                 Array.Empty<LeaderboardMetaMapping>(), currentTime, normalArchiveLimit);
+        }
+
+        private static LeaderboardStoreResult ReconcileAfterBarrier(PostgreSQLLeaderboardStore store, LeaderboardReconciliation request, Barrier barrier)
+        {
+            barrier.SignalAndWait();
+            return store.ReconcileSchedule(request, out _);
         }
 
         private static async Task InsertDefinitionAsync(PostgreSQLStoreTestFixture fixture, long leaderboardId, bool enabled = true)

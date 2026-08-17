@@ -12,6 +12,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
         private const string EntryTable = "mhserveremu.leaderboard_entry";
         private const string MetaEntryTable = "mhserveremu.leaderboard_meta_entry";
         private const string RewardTable = "mhserveremu.leaderboard_reward";
+        private const long ReconciliationLockKey = unchecked((long)0x4C6561646572626FUL);
 
         private readonly PostgreSQLStoreExecutor _executor;
 
@@ -163,9 +164,11 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
             {
                 PostgreSQLWriteResult write = _executor.ExecuteWriteAsync("LeaderboardReconcile", 0, async (connection, transaction, cancellationToken) =>
                 {
+                    await LockReconciliationAsync(connection, transaction, cancellationToken);
                     await LockRequestedDefinitionsAsync(connection, transaction, request.DesiredDefinitions.Select(definition => definition.LeaderboardId), cancellationToken);
                     List<DBLeaderboard> currentDefinitions = await ReadDefinitionsAsync(connection, transaction, true, cancellationToken);
-                    List<DBLeaderboardInstance> currentInstances = await ReadInstancesAsync(connection, transaction, true, cancellationToken);
+                    Dictionary<long, DBLeaderboard> currentById = currentDefinitions.ToDictionary(definition => definition.LeaderboardId);
+                    List<DBLeaderboardInstance> currentInstances = await ReadRelevantInstancesForUpdateAsync(connection, transaction, currentDefinitions, currentById, request.DesiredDefinitions, cancellationToken);
                     if (TryValidateReconciliation(request, currentDefinitions, currentInstances, out Dictionary<long, LeaderboardDefinitionSpec> desiredDefinitions,
                         out Dictionary<long, LeaderboardInstanceSpec> initialInstances, out Dictionary<long, long> nextInstanceIds) == false
                         || HasActiveInstanceOwnershipMismatch(currentDefinitions, currentInstances))
@@ -174,7 +177,12 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
                         Abort(LeaderboardStoreResult.InvalidData);
                     }
 
-                    Dictionary<long, DBLeaderboard> currentById = currentDefinitions.ToDictionary(definition => definition.LeaderboardId);
+                    if (await HasGeneratedInstanceCollisionAsync(connection, transaction, nextInstanceIds.Values, cancellationToken))
+                    {
+                        operationResult = LeaderboardStoreResult.InvalidData;
+                        Abort(LeaderboardStoreResult.InvalidData);
+                    }
+
                     Dictionary<long, long> activeInstanceIds = new();
                     foreach ((long leaderboardId, LeaderboardDefinitionSpec definition) in desiredDefinitions)
                     {
@@ -259,7 +267,8 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
             desiredDefinitions = null;
             initialInstances = null;
             nextInstanceIds = null;
-            if (request.NormalArchiveLimit < 0 || request.DesiredDefinitions.GroupBy(definition => definition.LeaderboardId).Any(group => group.Skip(1).Any())
+            if (request.NormalArchiveLimit < 0 || request.DesiredDefinitions.Any(definition => definition.MaxResetCount < 0)
+                || request.DesiredDefinitions.GroupBy(definition => definition.LeaderboardId).Any(group => group.Skip(1).Any())
                 || request.DesiredDefinitions.GroupBy(definition => definition.PrototypeName, StringComparer.Ordinal).Any(group => group.Skip(1).Any()))
                 return false;
 
@@ -322,6 +331,13 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
             }
         }
 
+        private static async Task LockReconciliationAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken cancellationToken)
+        {
+            await using NpgsqlCommand command = new("SELECT pg_advisory_xact_lock(@lockKey)", connection, transaction);
+            command.Parameters.AddWithValue("lockKey", NpgsqlDbType.Bigint, ReconciliationLockKey);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
         private static async Task<List<DBLeaderboard>> ReadDefinitionsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, bool forUpdate, CancellationToken cancellationToken)
         {
             await using NpgsqlCommand command = new($"SELECT leaderboard_id, prototype_name, active_instance_id, is_enabled, start_time, max_reset_count FROM {DefinitionTable} ORDER BY (leaderboard_id < 0), leaderboard_id{(forUpdate ? " FOR UPDATE" : string.Empty)}", connection, transaction);
@@ -332,14 +348,45 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
             return definitions;
         }
 
-        private static async Task<List<DBLeaderboardInstance>> ReadInstancesAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, bool forUpdate, CancellationToken cancellationToken)
+        private static async Task<List<DBLeaderboardInstance>> ReadRelevantInstancesForUpdateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+            IReadOnlyList<DBLeaderboard> currentDefinitions, IReadOnlyDictionary<long, DBLeaderboard> currentById,
+            IReadOnlyList<LeaderboardDefinitionSpec> desiredDefinitions, CancellationToken cancellationToken)
         {
-            await using NpgsqlCommand command = new($"SELECT instance_id, leaderboard_id, state, activation_date, visible FROM {InstanceTable} ORDER BY (instance_id < 0), instance_id{(forUpdate ? " FOR UPDATE" : string.Empty)}", connection, transaction);
-            List<DBLeaderboardInstance> instances = new();
-            await using NpgsqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
-            while (await reader.ReadAsync(cancellationToken))
-                instances.Add(ReadInstance(reader));
-            return instances;
+            Dictionary<long, DBLeaderboardInstance> instances = new();
+            List<DBLeaderboard> definitionsWithActiveInstances = currentDefinitions.Where(definition => definition.ActiveInstanceId != 0).ToList();
+            if (definitionsWithActiveInstances.Count > 0)
+            {
+                await using NpgsqlCommand command = new($@"SELECT instance.instance_id, instance.leaderboard_id, instance.state, instance.activation_date, instance.visible
+                    FROM {InstanceTable} instance
+                    INNER JOIN unnest(@leaderboardIds, @instanceIds) requested(leaderboard_id, instance_id)
+                        ON requested.leaderboard_id = instance.leaderboard_id AND requested.instance_id = instance.instance_id
+                    ORDER BY (instance.instance_id < 0), instance.instance_id FOR UPDATE", connection, transaction);
+                command.Parameters.AddWithValue("leaderboardIds", NpgsqlDbType.Array | NpgsqlDbType.Bigint, definitionsWithActiveInstances.Select(definition => definition.LeaderboardId).ToArray());
+                command.Parameters.AddWithValue("instanceIds", NpgsqlDbType.Array | NpgsqlDbType.Bigint, definitionsWithActiveInstances.Select(definition => definition.ActiveInstanceId).ToArray());
+                foreach (DBLeaderboardInstance instance in await ReadInstancesAsync(command, cancellationToken))
+                    instances.TryAdd(instance.InstanceId, instance);
+            }
+
+            long[] reenabledIds = desiredDefinitions.Where(definition => currentById.TryGetValue(definition.LeaderboardId, out DBLeaderboard current)
+                && current.IsEnabled == false && definition.IsEnabled).Select(definition => definition.LeaderboardId).Distinct().OrderBy(id => unchecked((ulong)id)).ToArray();
+            if (reenabledIds.Length > 0)
+            {
+                await using NpgsqlCommand command = new($"SELECT instance_id, leaderboard_id, state, activation_date, visible FROM {InstanceTable} WHERE leaderboard_id = ANY(@leaderboardIds) ORDER BY (instance_id < 0), instance_id FOR UPDATE", connection, transaction);
+                command.Parameters.AddWithValue("leaderboardIds", NpgsqlDbType.Array | NpgsqlDbType.Bigint, reenabledIds);
+                foreach (DBLeaderboardInstance instance in await ReadInstancesAsync(command, cancellationToken))
+                    instances.TryAdd(instance.InstanceId, instance);
+            }
+            return instances.Values.ToList();
+        }
+
+        private static async Task<bool> HasGeneratedInstanceCollisionAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, IEnumerable<long> instanceIds, CancellationToken cancellationToken)
+        {
+            long[] ids = instanceIds.ToArray();
+            if (ids.Length == 0)
+                return false;
+            await using NpgsqlCommand command = new($"SELECT 1 FROM {InstanceTable} WHERE instance_id = ANY(@instanceIds) LIMIT 1", connection, transaction);
+            command.Parameters.AddWithValue("instanceIds", NpgsqlDbType.Array | NpgsqlDbType.Bigint, ids);
+            return await command.ExecuteScalarAsync(cancellationToken) != null;
         }
 
         private static async Task<IReadOnlyList<DBLeaderboardEntry>> ReadEntriesAsync(NpgsqlCommand command, CancellationToken cancellationToken)
@@ -445,20 +492,21 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
 
         private static async Task<LeaderboardSnapshot> ReadSnapshotAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, IEnumerable<long> desiredIds, int normalArchiveLimit, CancellationToken cancellationToken)
         {
-            HashSet<long> desired = desiredIds.ToHashSet();
-            List<DBLeaderboard> definitions = (await ReadDefinitionsAsync(connection, transaction, false, cancellationToken)).Where(definition => desired.Contains(definition.LeaderboardId)).OrderBy(definition => unchecked((ulong)definition.LeaderboardId)).ToList();
-            List<DBLeaderboardInstance> allInstances = await ReadInstancesAsync(connection, transaction, false, cancellationToken);
-            List<DBLeaderboardInstance> nonterminal = allInstances.Where(instance => desired.Contains(instance.LeaderboardId) && instance.State < LeaderboardState.eLBS_Rewarded).OrderBy(instance => unchecked((ulong)instance.InstanceId)).ToList();
-            List<DBLeaderboardInstance> normalArchives = allInstances.Where(instance => desired.Contains(instance.LeaderboardId) && instance.State >= LeaderboardState.eLBS_Rewarded && instance.Visible)
-                .GroupBy(instance => instance.LeaderboardId).SelectMany(group => group.OrderByDescending(instance => unchecked((ulong)instance.InstanceId)).Take(normalArchiveLimit))
-                .OrderBy(instance => unchecked((ulong)instance.LeaderboardId)).ThenByDescending(instance => unchecked((ulong)instance.InstanceId)).ToList();
+            long[] ids = desiredIds.Distinct().OrderBy(id => unchecked((ulong)id)).ToArray();
+            if (ids.Length == 0)
+                return new();
+
+            List<DBLeaderboard> definitions = await ReadSnapshotDefinitionsAsync(connection, transaction, ids, cancellationToken);
+            List<DBLeaderboardInstance> nonterminal = await ReadSnapshotInstancesAsync(connection, transaction, ids,
+                $"state < {(short)LeaderboardState.eLBS_Rewarded} ORDER BY (instance_id < 0), instance_id", cancellationToken);
+            List<DBLeaderboardInstance> normalArchives = normalArchiveLimit == 0 ? new() : await ReadBoundedArchivesAsync(connection, transaction, ids, normalArchiveLimit, cancellationToken);
             HashSet<long> snapshotInstanceIds = nonterminal.Concat(normalArchives).Select(instance => instance.InstanceId).ToHashSet();
 
             List<DBMetaEntry> mappings = new();
-            if (desired.Count > 0)
+            if (snapshotInstanceIds.Count > 0)
             {
                 await using NpgsqlCommand command = new($"SELECT leaderboard_id, instance_id, sub_leaderboard_id, sub_instance_id FROM {MetaEntryTable} WHERE leaderboard_id = ANY(@leaderboardIds)", connection, transaction);
-                command.Parameters.AddWithValue("leaderboardIds", NpgsqlDbType.Array | NpgsqlDbType.Bigint, desired.ToArray());
+                command.Parameters.AddWithValue("leaderboardIds", NpgsqlDbType.Array | NpgsqlDbType.Bigint, ids);
                 await using NpgsqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
                 while (await reader.ReadAsync(cancellationToken))
                 {
@@ -467,6 +515,40 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
                 }
             }
             return new LeaderboardSnapshot(definitions, nonterminal, normalArchives, mappings.OrderBy(mapping => unchecked((ulong)mapping.LeaderboardId)).ThenBy(mapping => unchecked((ulong)mapping.InstanceId)).ThenBy(mapping => unchecked((ulong)mapping.SubLeaderboardId)));
+        }
+
+        private static async Task<List<DBLeaderboard>> ReadSnapshotDefinitionsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long[] ids, CancellationToken cancellationToken)
+        {
+            await using NpgsqlCommand command = new($"SELECT leaderboard_id, prototype_name, active_instance_id, is_enabled, start_time, max_reset_count FROM {DefinitionTable} WHERE leaderboard_id = ANY(@leaderboardIds) ORDER BY (leaderboard_id < 0), leaderboard_id", connection, transaction);
+            command.Parameters.AddWithValue("leaderboardIds", NpgsqlDbType.Array | NpgsqlDbType.Bigint, ids);
+            List<DBLeaderboard> definitions = new();
+            await using NpgsqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                definitions.Add(new DBLeaderboard { LeaderboardId = reader.GetInt64(0), PrototypeName = reader.GetString(1), ActiveInstanceId = reader.IsDBNull(2) ? 0 : reader.GetInt64(2), IsEnabled = reader.GetBoolean(3), StartTime = reader.GetInt64(4), MaxResetCount = reader.GetInt32(5) });
+            return definitions;
+        }
+
+        private static async Task<List<DBLeaderboardInstance>> ReadSnapshotInstancesAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long[] ids, string predicateAndOrder, CancellationToken cancellationToken)
+        {
+            await using NpgsqlCommand command = new($"SELECT instance_id, leaderboard_id, state, activation_date, visible FROM {InstanceTable} WHERE leaderboard_id = ANY(@leaderboardIds) AND {predicateAndOrder}", connection, transaction);
+            command.Parameters.AddWithValue("leaderboardIds", NpgsqlDbType.Array | NpgsqlDbType.Bigint, ids);
+            return (await ReadInstancesAsync(command, cancellationToken)).ToList();
+        }
+
+        private static async Task<List<DBLeaderboardInstance>> ReadBoundedArchivesAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long[] ids, int limit, CancellationToken cancellationToken)
+        {
+            await using NpgsqlCommand command = new($@"SELECT instance_id, leaderboard_id, state, activation_date, visible
+                FROM (
+                    SELECT instance_id, leaderboard_id, state, activation_date, visible,
+                        ROW_NUMBER() OVER (PARTITION BY leaderboard_id ORDER BY (instance_id < 0) DESC, instance_id DESC) AS archive_rank
+                    FROM {InstanceTable}
+                    WHERE leaderboard_id = ANY(@leaderboardIds) AND state >= {(short)LeaderboardState.eLBS_Rewarded} AND visible
+                ) archives
+                WHERE archive_rank <= @limit
+                ORDER BY (leaderboard_id < 0), leaderboard_id, (instance_id < 0) DESC, instance_id DESC", connection, transaction);
+            command.Parameters.AddWithValue("leaderboardIds", NpgsqlDbType.Array | NpgsqlDbType.Bigint, ids);
+            command.Parameters.AddWithValue("limit", NpgsqlDbType.Integer, limit);
+            return (await ReadInstancesAsync(command, cancellationToken)).ToList();
         }
 
         private readonly record struct LeaderboardEntriesRead(bool Found, IReadOnlyList<DBLeaderboardEntry> Entries);
