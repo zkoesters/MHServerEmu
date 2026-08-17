@@ -4,11 +4,9 @@ Below are some of the more advanced setup topics you might be interested in. For
 
 ## Configuring Persistence
 
-JSON and SQLite persistence are available. Set `[Persistence] Provider` to `Json` or `SQLite`; leave it empty to retain the legacy `UseJsonDBManager` selection. `UseJsonDBManager` is deprecated and conflicts with an explicit provider, so do not configure both.
+JSON, SQLite, and PostgreSQL persistence are available. Set `[Persistence] Provider` to `Json`, `SQLite`, or `PostgreSQL`; leave it empty to retain the legacy `UseJsonDBManager` selection. `UseJsonDBManager` is deprecated and conflicts with an explicit provider, so do not configure both.
 
-`PostgreSQL` is a documented provider value, but server startup intentionally rejects it until PR1C. The current work only establishes the PostgreSQL persistence foundation; it does not provide production setup, TLS, or backup guidance.
-
-When PostgreSQL becomes available, place its `ConnectionString` only in `ConfigOverride.ini`, never in `Config.ini` or version control. On Unix, restrict the override file with `chmod 600 ConfigOverride.ini`. On Windows, manually restrict the file's ACL to the account that runs the server.
+PostgreSQL is supported only for fresh installations and only one server writer may run against a database at a time. Place its `ConnectionString` only in `ConfigOverride.ini`, never in `Config.ini` or version control. PostgreSQL does not perform an in-place JSON/SQLite conversion or offer a downgrade path. Application and schema upgrades are supported through ordered startup migrations. See [PostgreSQL Setup](./PostgreSQL.md) for TLS, backup, restore, and upgrade procedures.
 
 ## Setting Up LAN Connections
 

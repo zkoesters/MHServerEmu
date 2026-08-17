@@ -14,7 +14,7 @@ The following instructions are intended for stable builds of the server. If you 
 
 ## Persistence
 
-JSON and SQLite persistence are available. SQLite is the default for a new setup; JSON remains available for development and legacy single-account use. PostgreSQL configuration is present only as a persistence foundation: selecting PostgreSQL is intentionally rejected until PR1C. Do not add a PostgreSQL connection string to `Config.ini`.
+JSON, SQLite, and PostgreSQL persistence are supported. SQLite is the default for a new setup; JSON remains available for development and legacy single-account use. PostgreSQL is for fresh installations only and permits one running server writer at a time. Configure its connection string only in `ConfigOverride.ini`, never in `Config.ini` or version control. PostgreSQL does not convert existing JSON or SQLite data and has no downgrade path; see [PostgreSQL Setup](./PostgreSQL.md).
 
 ## Running the Server
 
@@ -34,7 +34,7 @@ For web deployment profiles, request limits, and account security behavior, see 
 
 In most cases you can update MHServerEmu simply by downloading the [latest nightly build](https://nightly.link/Crypto137/MHServerEmu/workflows/nightly-release-windows-x64/master?preview) and extracting it into the `MHServerEmu` directory, overwriting all files.
 
-Your account data is stored in the `MHServerEmu\Data\Account.db` file. You can back up this file to make sure your progress does not get lost.
+Your SQLite account data is stored in the `MHServerEmu\Data\Account.db` file. You can back up this file to make sure your progress does not get lost. PostgreSQL backups and application/schema upgrades use the procedure in [PostgreSQL Setup](./PostgreSQL.md).
 
 To avoid losing your configuration changes when you update, we recommend to make all changes in the `ConfigOverride.ini` file instead of modifying `Config.ini` directly. `ConfigOverride.ini` should be created when you start the server for the first time, and it uses the same structure as `Config.ini`.
 
