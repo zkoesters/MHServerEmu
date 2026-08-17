@@ -190,9 +190,17 @@ namespace MHServerEmu.Core.Network
 
                 int serviceIndex = i;
                 TaskCompletionSource<Exception> serviceFault = new(TaskCreationOptions.RunContinuationsAsynchronously);
-                _serviceFaults[serviceIndex] = serviceFault;
-                _serviceThreads[serviceIndex] = new(() => RunService(service, IsStopping, exception => ReportServiceFault(serviceIndex, exception))) { Name = $"Service [{serviceType}]", IsBackground = true, CurrentCulture = CultureInfo.InvariantCulture };
-                _serviceThreads[i].Start();
+                Thread serviceThread = new(() => RunService(service, IsStopping, exception => ReportServiceFault(serviceIndex, exception))) { Name = $"Service [{serviceType}]", IsBackground = true, CurrentCulture = CultureInfo.InvariantCulture };
+
+                lock (_lifecycleLock)
+                {
+                    if (_state != ServerManagerState.Starting || cancellationToken.IsCancellationRequested)
+                        return false;
+
+                    _serviceFaults[serviceIndex] = serviceFault;
+                    _serviceThreads[serviceIndex] = serviceThread;
+                    serviceThread.Start();
+                }
 
                 while (service.State != GameServiceState.Running && serviceFault.Task.IsCompleted == false && _fault.Task.IsCompleted == false && IsStarting())
                     Thread.Sleep(1);

@@ -63,6 +63,35 @@ namespace MHServerEmu.Core.Tests.Network
         }
 
         [Fact]
+        public async Task RunServices_CancelledBetweenServiceStarts_DoesNotStartLaterService()
+        {
+            ServerManager manager = new();
+            RunningService running = new();
+            CancellationBoundaryService later = new();
+            manager.RegisterGameService(running, GameServiceType.GameInstance);
+            manager.RegisterGameService(later, GameServiceType.Leaderboard);
+            using CancellationTokenSource cancellation = new();
+
+            Task<bool> run = Task.Run(() => manager.RunServices(cancellation.Token));
+            await later.StartupChecked.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            try
+            {
+                cancellation.Cancel();
+                later.ContinueStartup();
+
+                Assert.False(await run.WaitAsync(TimeSpan.FromSeconds(5)));
+                Assert.False(later.RunStarted.Task.Wait(TimeSpan.FromMilliseconds(100)));
+            }
+            finally
+            {
+                later.ContinueStartup();
+                later.Shutdown();
+                await run.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+        }
+
+        [Fact]
         public async Task RunServices_ServiceThrowsAfterRunning_ReportsFaultAndShutdownDoesNotHang()
         {
             ServerManager manager = new();
@@ -123,6 +152,44 @@ namespace MHServerEmu.Core.Tests.Network
 
             public void Run() => State = GameServiceState.Shutdown;
             public void Shutdown() => State = GameServiceState.Shutdown;
+            public void ReceiveServiceMessage<T>(in T message) where T : struct, IGameServiceMessage { }
+            public void GetStatus(Dictionary<string, long> statusDict) { }
+        }
+
+        private sealed class CancellationBoundaryService : IGameService
+        {
+            private readonly ManualResetEventSlim _continueStartup = new();
+            private readonly ManualResetEventSlim _shutdown = new();
+            private int _startupChecked;
+            private GameServiceState _state = GameServiceState.Created;
+
+            public TaskCompletionSource<bool> StartupChecked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            public TaskCompletionSource<bool> RunStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            public GameServiceState State
+            {
+                get
+                {
+                    if (_state == GameServiceState.Created && Interlocked.Exchange(ref _startupChecked, 1) == 0)
+                    {
+                        StartupChecked.TrySetResult(true);
+                        _continueStartup.Wait();
+                    }
+
+                    return _state;
+                }
+            }
+
+            public void Run()
+            {
+                _state = GameServiceState.Running;
+                RunStarted.TrySetResult(true);
+                _shutdown.Wait();
+                _state = GameServiceState.Shutdown;
+            }
+
+            public void ContinueStartup() => _continueStartup.Set();
+            public void Shutdown() => _shutdown.Set();
             public void ReceiveServiceMessage<T>(in T message) where T : struct, IGameServiceMessage { }
             public void GetStatus(Dictionary<string, long> statusDict) { }
         }
