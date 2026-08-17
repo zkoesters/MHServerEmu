@@ -14,6 +14,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
         private const string RewardTable = "mhserveremu.leaderboard_reward";
         private const long ReconciliationLockKey = unchecked((long)0x4C6561646572626FUL);
 
+        private static Action<string> SnapshotMetaMappingCommandHook = null;
         private readonly PostgreSQLStoreExecutor _executor;
 
         internal PostgreSQLLeaderboardStore(NpgsqlDataSource dataSource, PostgreSQLStoreExecutor executor)
@@ -505,14 +506,14 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
             List<DBMetaEntry> mappings = new();
             if (snapshotInstanceIds.Count > 0)
             {
-                await using NpgsqlCommand command = new($"SELECT leaderboard_id, instance_id, sub_leaderboard_id, sub_instance_id FROM {MetaEntryTable} WHERE leaderboard_id = ANY(@leaderboardIds)", connection, transaction);
+                string sql = $"SELECT leaderboard_id, instance_id, sub_leaderboard_id, sub_instance_id FROM {MetaEntryTable} WHERE leaderboard_id = ANY(@leaderboardIds) AND instance_id = ANY(@instanceIds)";
+                SnapshotMetaMappingCommandHook?.Invoke(sql);
+                await using NpgsqlCommand command = new(sql, connection, transaction);
                 command.Parameters.AddWithValue("leaderboardIds", NpgsqlDbType.Array | NpgsqlDbType.Bigint, ids);
+                command.Parameters.AddWithValue("instanceIds", NpgsqlDbType.Array | NpgsqlDbType.Bigint, snapshotInstanceIds.ToArray());
                 await using NpgsqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
                 while (await reader.ReadAsync(cancellationToken))
-                {
-                    if (snapshotInstanceIds.Contains(reader.GetInt64(1)))
-                        mappings.Add(new DBMetaEntry { LeaderboardId = reader.GetInt64(0), InstanceId = reader.GetInt64(1), SubLeaderboardId = reader.GetInt64(2), SubInstanceId = reader.GetInt64(3) });
-                }
+                    mappings.Add(new DBMetaEntry { LeaderboardId = reader.GetInt64(0), InstanceId = reader.GetInt64(1), SubLeaderboardId = reader.GetInt64(2), SubInstanceId = reader.GetInt64(3) });
             }
             return new LeaderboardSnapshot(definitions, nonterminal, normalArchives, mappings.OrderBy(mapping => unchecked((ulong)mapping.LeaderboardId)).ThenBy(mapping => unchecked((ulong)mapping.InstanceId)).ThenBy(mapping => unchecked((ulong)mapping.SubLeaderboardId)));
         }
