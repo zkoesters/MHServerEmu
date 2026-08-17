@@ -99,8 +99,18 @@ namespace MHServerEmu.PlayerManagement.Players
             IFrontendSession session = player.Client.Session;
             if (session != null)
                 _playerManager.SessionManager.RemoveActiveSession(session.Id);
+
             player.Disconnect();
-            RemovePlayerHandle(player.Client);
+
+            if (player.State == PlayerHandleState.InGame)
+            {
+                player.MarkForDiscardAfterGameRemoval();
+                player.RemoveFromCurrentGame();
+                return;
+            }
+
+            if (player.State != PlayerHandleState.PendingRemoveFromGame)
+                RemovePlayerHandle(player.Client);
         }
 
         private bool DoAddClient(IFrontendClient client)

@@ -44,6 +44,7 @@ namespace MHServerEmu.PlayerManagement.Players
         private readonly Action<ulong> _gracePeriodRegionExpiredCallback;
 
         private bool _saveNeeded = false;   // Dirty flag for player data
+        private bool _discardAfterGameRemoval;
 
         private ulong _transferGameId;
         private NetStructTransferParams _transferParams;
@@ -298,6 +299,18 @@ namespace MHServerEmu.PlayerManagement.Players
             ServerManager.Instance.SendMessageToService(GameServiceType.GameInstance, gameInstanceOp);
 
             return true;
+        }
+
+        public void MarkForDiscardAfterGameRemoval()
+        {
+            _discardAfterGameRemoval = true;
+        }
+
+        public bool ConsumeDiscardAfterGameRemoval()
+        {
+            bool discard = _discardAfterGameRemoval;
+            _discardAfterGameRemoval = false;
+            return discard;
         }
 
         public PlayerStoreResult FinishRemoveFromGame(ulong gameId)
