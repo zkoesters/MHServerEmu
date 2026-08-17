@@ -40,7 +40,7 @@ namespace MHServerEmu.Tests.Leaderboards
             TaskCompletionSource<bool> servicesStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
             TaskCompletionSource<string> consoleRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
             bool disposedAfterSave = false;
-            PersistenceRuntime runtime = CreateRuntime(store, () => disposedAfterSave = store.SaveScoreBatchCount > 0);
+            PersistenceRuntime runtime = CreateRuntime(store, () => disposedAfterSave = store.SavedEntries.Any(entry => entry.ParticipantId == 9001 && entry.Score == 21));
             ServerStartupDependencies dependencies = new(
                 (_, _) => Task.FromResult(runtime),
                 () => true,
@@ -51,13 +51,15 @@ namespace MHServerEmu.Tests.Leaderboards
 
             Task run = app.RunAsync();
             await servicesStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(0, store.SaveScoreBatchCount);
             ServiceMessage.LeaderboardScoreUpdateBatch scoreBatch = new(1);
-            scoreBatch[0] = new(1, 7, 0, 0, 1);
+            scoreBatch[0] = new(1, 9001, 0, 17, 3);
             service.ReceiveServiceMessage(scoreBatch);
             app.Shutdown();
             await run.WaitAsync(TimeSpan.FromSeconds(5));
 
             Assert.Equal(1, store.SaveScoreBatchCount);
+            Assert.Contains(store.SavedEntries, entry => entry.ParticipantId == 9001 && entry.Score == 21 && entry.HighScore == 21);
             Assert.True(disposedAfterSave);
         }
 
@@ -74,19 +76,32 @@ namespace MHServerEmu.Tests.Leaderboards
         private static LeaderboardDatabase CreateDatabase(RecordingStore store)
         {
             LeaderboardDatabase database = new(store, new NameResolver(), new Catalog(), new Publisher(), new LeaderboardRuntimeOptions("unused.json", 1));
+            LeaderboardPrototype prototype = (LeaderboardPrototype)RuntimeHelpers.GetUninitializedObject(typeof(LeaderboardPrototype));
+            ScoringEventAchievementScorePrototype scoringEvent = (ScoringEventAchievementScorePrototype)RuntimeHelpers.GetUninitializedObject(typeof(ScoringEventAchievementScorePrototype));
+            LeaderboardScoringRuleIntPrototype rule = (LeaderboardScoringRuleIntPrototype)RuntimeHelpers.GetUninitializedObject(typeof(LeaderboardScoringRuleIntPrototype));
             Leaderboard leaderboard = (Leaderboard)RuntimeHelpers.GetUninitializedObject(typeof(Leaderboard));
             LeaderboardInstance instance = (LeaderboardInstance)RuntimeHelpers.GetUninitializedObject(typeof(LeaderboardInstance));
-            MHServerEmu.Leaderboards.LeaderboardEntry entry = new(new DBLeaderboardEntry { ParticipantId = 7, Score = 1, HighScore = 1, RuleStates = [0, 0, 0, 0] }) { SaveRequired = true };
+            SetAutoProperty(scoringEvent, "Type", MHServerEmu.Games.Events.ScoringEventType.AchievementScore);
+            SetAutoProperty(rule, "Event", scoringEvent);
+            SetAutoProperty(rule, "GUID", 17L);
+            SetAutoProperty(rule, "ValueInt", 7);
+            SetAutoProperty(prototype, "DepthOfStandings", 10);
+            SetAutoProperty(prototype, "RankingRule", LeaderboardRankingRule.Descending);
+            SetAutoProperty(prototype, "ScoringRules", new LeaderboardScoringRulePrototype[] { rule });
             SetField(leaderboard, "_lock", new object());
             SetField(leaderboard, "_database", database);
             SetAutoProperty(leaderboard, "LeaderboardId", (PrototypeGuid)1);
+            SetAutoProperty(leaderboard, "Prototype", prototype);
             SetAutoProperty(leaderboard, "ActiveInstance", instance);
             SetAutoProperty(leaderboard, "Instances", new List<LeaderboardInstance> { instance });
             SetField(instance, "_leaderboard", leaderboard);
             SetField(instance, "_lock", new object());
+            SetField(instance, "_entryMap", new Dictionary<ulong, MHServerEmu.Leaderboards.LeaderboardEntry>());
+            SetField(instance, "_percentileBuckets", new List<(LeaderboardPercentile Percentile, ulong Score)>());
+            SetField(instance, "_nextAutoSaveTime", DateTime.MaxValue);
             SetAutoProperty(instance, "InstanceId", 1UL);
             SetAutoProperty(instance, "State", LeaderboardState.eLBS_Active);
-            SetAutoProperty(instance, "Entries", new List<MHServerEmu.Leaderboards.LeaderboardEntry> { entry });
+            SetAutoProperty(instance, "Entries", new List<MHServerEmu.Leaderboards.LeaderboardEntry>());
             instance.ActivationTime = DateTime.UtcNow;
             instance.ExpirationTime = DateTime.UtcNow.AddDays(1);
             SetField(typeof(LeaderboardDatabase), database, "_leaderboards", new Dictionary<PrototypeGuid, Leaderboard> { [(PrototypeGuid)1] = leaderboard });
@@ -95,17 +110,27 @@ namespace MHServerEmu.Tests.Leaderboards
 
         private static void SetAutoProperty<T>(object target, string name, T value)
         {
-            target.GetType().GetField($"<{name}>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(target, value);
+            SetField(target, $"<{name}>k__BackingField", value);
         }
 
         private static void SetField(object target, string name, object value)
         {
-            target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic).SetValue(target, value);
+            SetField(target.GetType(), target, name, value);
         }
 
         private static void SetField(Type type, object target, string name, object value)
         {
-            type.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic).SetValue(target, value);
+            for (; type != null; type = type.BaseType)
+            {
+                FieldInfo field = type.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);
+                if (field != null)
+                {
+                    field.SetValue(target, value);
+                    return;
+                }
+            }
+
+            throw new InvalidOperationException($"Field {name} was not found on {target.GetType().Name}.");
         }
 
         private sealed class NameResolver : ILeaderboardPlayerNameResolver
@@ -133,6 +158,7 @@ namespace MHServerEmu.Tests.Leaderboards
         private sealed class RecordingStore : ILeaderboardStore
         {
             public int SaveScoreBatchCount { get; private set; }
+            public IReadOnlyList<LeaderboardEntryWrite> SavedEntries { get; private set; } = Array.Empty<LeaderboardEntryWrite>();
 
             public LeaderboardStoreResult Initialize() => LeaderboardStoreResult.Success;
             public LeaderboardStoreResult ReconcileSchedule(LeaderboardReconciliation request, out LeaderboardSnapshot snapshot) { snapshot = new(); return LeaderboardStoreResult.Success; }
@@ -141,7 +167,7 @@ namespace MHServerEmu.Tests.Leaderboards
             public LeaderboardStoreResult LoadMetaMappings(long leaderboardId, long instanceId, out IReadOnlyList<LeaderboardMetaMapping> mappings) { mappings = Array.Empty<LeaderboardMetaMapping>(); return LeaderboardStoreResult.Success; }
             public LeaderboardStoreResult LoadVisibleInstances(long leaderboardId, long beforeInstanceId, int limit, out IReadOnlyList<DBLeaderboardInstance> instances) { instances = Array.Empty<DBLeaderboardInstance>(); return LeaderboardStoreResult.Success; }
             public LeaderboardStoreResult ActivateInstance(LeaderboardActivation request) => LeaderboardStoreResult.Success;
-            public LeaderboardStoreResult SaveScoreBatch(LeaderboardScoreBatch request) { SaveScoreBatchCount++; return LeaderboardStoreResult.Success; }
+            public LeaderboardStoreResult SaveScoreBatch(LeaderboardScoreBatch request) { SaveScoreBatchCount++; SavedEntries = request.Entries; return LeaderboardStoreResult.Success; }
             public LeaderboardStoreResult ExpireInstance(LeaderboardExpiration request) => LeaderboardStoreResult.Success;
             public LeaderboardStoreResult RotateActiveInstance(LeaderboardRotation request, out DBLeaderboardInstance committedInstance) { committedInstance = null; return LeaderboardStoreResult.Success; }
             public LeaderboardStoreResult MaintainVisibility(LeaderboardVisibilityRequest request, out LeaderboardVisibilitySnapshot snapshot) { snapshot = new(); return LeaderboardStoreResult.Success; }
