@@ -40,6 +40,18 @@ namespace MHServerEmu.PlayerManagement.Tests
         }
 
         [Fact]
+        public void SavePlayerDataResult_OutcomeUncertain_IsPropagated()
+        {
+            StubDBManager store = new() { SavePlayerDataStoreResult = PlayerStoreResult.OutcomeUncertain };
+            DBAccount account = new("player@example.com", "Player", "password") { Id = 1 };
+            PlayerHandle player = new(new FakeFrontendClient(account), store, () => true, PrototypeId.Invalid);
+
+            Assert.True(player.LoadPlayerData());
+            Assert.Equal(PlayerStoreResult.OutcomeUncertain, player.SavePlayerDataResult());
+            Assert.Equal(1, store.SavePlayerDataCallCount);
+        }
+
+        [Fact]
         public void TryStoreSerializedPlayerData_TransferSucceeds_StoresArchiveAndMetadata()
         {
             MethodInfo tryStoreSerializedPlayerData = typeof(PlayerConnection).GetMethod("TryStoreSerializedPlayerData", BindingFlags.NonPublic | BindingFlags.Static);

@@ -45,9 +45,10 @@ namespace MHServerEmu
     {
         private enum State
         {
-            Created,
+            Starting,
             Running,
-            Shutdown,
+            Stopping,
+            Stopped,
         }
 
 #if DEBUG
@@ -59,21 +60,34 @@ namespace MHServerEmu
         public static readonly string VersionInfo = $"Version {AssemblyHelper.GetAssemblyInformationalVersion()} | {AssemblyHelper.ParseAssemblyBuildTime():yyyy.MM.dd HH:mm:ss} UTC | {BuildConfiguration}";
 
         private static readonly Logger Logger = LogManager.CreateLogger();
-        private State _state = State.Created;
+        private State _state = State.Stopped;
+        private readonly ServerStartupDependencies _startupDependencies;
+        private readonly ServerManager _serverManager;
+        private readonly TaskCompletionSource<bool> _shutdownSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private PersistenceServices _persistence;
+        private PersistenceRuntime _persistenceRuntime;
         private AccountManager _accountManager;
+        private int _shutdownRequested;
 
         public static ServerApp Instance { get; } = new();
         public DateTime StartupTime { get; private set; }
 
-        private ServerApp() { }
-
-        public void Run()
+        private ServerApp()
+            : this(ServerStartupDependencies.CreateProduction(), ServerManager.Instance)
         {
-            // Prevent duplicate runs
-            if (_state != State.Created)
+        }
+
+        internal ServerApp(ServerStartupDependencies startupDependencies, ServerManager serverManager)
+        {
+            _startupDependencies = startupDependencies ?? throw new ArgumentNullException(nameof(startupDependencies));
+            _serverManager = serverManager ?? throw new ArgumentNullException(nameof(serverManager));
+        }
+
+        public async Task RunAsync()
+        {
+            if (_state != State.Stopped)
                 throw new InvalidOperationException();
-            _state = State.Running;
+            _state = State.Starting;
 
 #if OS_WINDOWS
             WinMM.TimeBeginPeriod(1);
@@ -87,67 +101,61 @@ namespace MHServerEmu
             PrintBanner();
             PrintVersionInfo();
             Console.ResetColor();
-
-            // Init loggers before anything else
             InitLoggers();
-
             Logger.Info("MHServerEmu starting...");
-
-            // Make sure the MetricsManager is instantiated before we do anything else.
             MetricsManager.Instance.Initialize();
 
-            // Our encoding is not going to work unless we are running on a little-endian system
-            if (BitConverter.IsLittleEndian == false)
+            try
             {
-                Logger.Fatal("This computer's architecture uses big-endian byte order, which is not compatible with MHServerEmu.");
-                Console.ReadLine();
-                return;
-            }
+                if (BitConverter.IsLittleEndian == false)
+                {
+                    Logger.Fatal("This computer's architecture uses big-endian byte order, which is not compatible with MHServerEmu.");
+                    return;
+                }
 
-            // Initialize everything else and start the servers
-            if (InitSystems() == false)
+                _persistenceRuntime = await _startupDependencies.CreatePersistenceAsync(RequestFatalShutdown, CancellationToken.None);
+                _persistence = _persistenceRuntime.Services;
+                if (Volatile.Read(ref _shutdownRequested) != 0 || _startupDependencies.InitializeSystems() == false)
+                    return;
+
+                _accountManager = new(_persistence.Accounts, _persistence.Players, _persistence.Capabilities, new ServerAccountSecurityNotifier());
+                _serverManager.Initialize();
+                _startupDependencies.RegisterServices(_serverManager, _persistence, _accountManager);
+                if (_serverManager.RunServices() == false)
+                    return;
+
+                _startupDependencies.NotifyServicesStarted();
+                _state = State.Running;
+                Logger.Info("Type '!commands' for a list of available commands");
+                while (_state == State.Running)
+                {
+                    Task<string> readTask = _startupDependencies.ReadConsoleLineAsync();
+                    if (await Task.WhenAny(readTask, _shutdownSignal.Task) != readTask)
+                        break;
+
+                    string input = await readTask;
+                    if (input == null || _state != State.Running)
+                        break;
+
+                    CommandManager.Instance.TryParse(input);
+                }
+            }
+            catch (Exception exception)
             {
-                Console.ReadLine();
-                return;
+                Logger.FatalException(exception, "MHServerEmu startup failed.");
             }
-
-            // Initialize the command system
-            LeaderboardService leaderboardService = new(_persistence.Players, _persistence.Leaderboards);
-            CommandManager.Instance.Initialize(new AccountCommands(_accountManager), new LeaderboardsCommands(leaderboardService.Administration));
-            CommandManager.Instance.SetClientOutput(new FrontendClientChatOutput());
-            ICommandParser.Instance = new CommandParser();
-
-            // Create and register game services
-            ServerManager serverManager = ServerManager.Instance;
-            serverManager.Initialize();
-
-            serverManager.RegisterGameService(new GameInstanceService(), GameServiceType.GameInstance);
-            serverManager.RegisterGameService(leaderboardService, GameServiceType.Leaderboard);
-            serverManager.RegisterGameService(new PlayerManagerService(_accountManager, _persistence.Players, _persistence.Guilds, _persistence.Capabilities), GameServiceType.PlayerManager);
-            serverManager.RegisterGameService(new GroupingManagerService(), GameServiceType.GroupingManager);
-            serverManager.RegisterGameService(new FrontendServer(), GameServiceType.Frontend);
-            serverManager.RegisterGameService(new WebFrontendService(), GameServiceType.WebFrontend);
-
-            serverManager.RunServices();
-
-            // We can't set Live Tuning event message on the Grouping Manager until after we initialize it, so do it here I guess.
-            LiveTuningEventScheduler.Instance.SendEventMessageTextToGroupingManager();
-
-            // Begin processing console input
-            Logger.Info("Type '!commands' for a list of available commands");
-            while (_state == State.Running)
+            finally
             {
-                string input = Console.ReadLine();
-                if (_state != State.Running)
-                    break;
-
-                CommandManager.Instance.TryParse(input);
-            }
+                _state = State.Stopping;
+                _serverManager.ShutdownServices();
+                if (_persistenceRuntime != null)
+                    await _persistenceRuntime.DisposeAsync();
+                _state = State.Stopped;
 
 #if OS_WINDOWS
-            // Technically this isn't really needed, but MS docs say we should call it.
-            WinMM.TimeEndPeriod(1);
+                WinMM.TimeEndPeriod(1);
 #endif
+            }
         }
 
         /// <summary>
@@ -155,8 +163,20 @@ namespace MHServerEmu
         /// </summary>
         public void Shutdown()
         {
-            ServerManager.Instance.ShutdownServices();
-            _state = State.Shutdown;
+            RequestShutdown();
+        }
+
+        internal void RequestFatalShutdown(PersistenceFatalFailure failure)
+        {
+            ArgumentNullException.ThrowIfNull(failure);
+            Logger.Fatal($"Persistence requested controlled shutdown: {failure.Code} during {failure.Operation}.");
+            RequestShutdown();
+        }
+
+        private void RequestShutdown()
+        {
+            if (Interlocked.Exchange(ref _shutdownRequested, 1) == 0)
+                _shutdownSignal.TrySetResult(true);
         }
 
         /// <summary>
@@ -209,14 +229,13 @@ namespace MHServerEmu
                 }
 
                 Logger.FatalException(exception, $"MHServerEmu terminating because of unhandled exception, report saved to {crashReportFilePath}");
-                ServerManager.Instance.ShutdownServices();
+                RequestShutdown();
             }
             else
             {
                 Logger.ErrorException(exception, "Caught unhandled exception.");
             }
 
-            Console.ReadLine();
         }
 
         /// <summary>
@@ -249,7 +268,7 @@ namespace MHServerEmu
         /// <summary>
         /// Initializes systems needed to run the servers.
         /// </summary>
-        private bool InitSystems()
+        internal static bool InitializeProductionSystems()
         {
             // LiveTuningManager uses data from LiveTuningEventScheduler initialization,
             // and LiveTuningEventScheduler needs GameDatabase to be initialized to get TimeZone from GlobalsPrototype.
@@ -258,14 +277,9 @@ namespace MHServerEmu
                 && GameDatabase.IsInitialized
                 && LiveTuningEventScheduler.Instance.Initialize()
                 && LiveTuningManager.Instance.Initialize()
-                && CatalogManager.Instance.Initialize()
-                && PersistenceComposition.TryCreate(out _persistence);
+                && CatalogManager.Instance.Initialize();
 
-            if (initialized == false)
-                return false;
-
-            _accountManager = new(_persistence.Accounts, _persistence.Players, _persistence.Capabilities, new ServerAccountSecurityNotifier());
-            return true;
+            return initialized;
         }
     }
 }

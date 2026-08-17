@@ -93,6 +93,12 @@ namespace MHServerEmu.PlayerManagement.Players
             return true;
         }
 
+        internal void DiscardPlayerHandle(PlayerHandle player)
+        {
+            ArgumentNullException.ThrowIfNull(player);
+            RemovePlayerHandle(player.Client);
+        }
+
         private bool DoAddClient(IFrontendClient client)
         {
             if (AllowNewClients == false)
@@ -220,6 +226,7 @@ namespace MHServerEmu.PlayerManagement.Players
 
             _playerManager.CommunityRegistry.RefreshPlayerStatus(player);
             player.OnRemoved();
+            player.DiscardLoadedAggregate();
             return true;
         }
 

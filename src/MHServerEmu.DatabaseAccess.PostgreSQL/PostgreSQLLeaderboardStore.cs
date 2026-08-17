@@ -277,7 +277,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
                         await InsertMappingAsync(connection, transaction, mapping, cancellationToken);
 
                     committedSnapshot = await ReadSnapshotAsync(connection, transaction, desiredDefinitions.Keys, request.NormalArchiveLimit, cancellationToken);
-                }).GetAwaiter().GetResult();
+                }, notifyFatalOnOutcomeUncertain: true).GetAwaiter().GetResult();
                 if (write.Outcome == PostgreSQLWriteOutcome.Success)
                 {
                     snapshot = committedSnapshot;

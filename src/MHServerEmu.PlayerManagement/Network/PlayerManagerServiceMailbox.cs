@@ -4,6 +4,7 @@ using MHServerEmu.Core.Logging;
 using MHServerEmu.Core.Memory;
 using MHServerEmu.Core.Network;
 using MHServerEmu.Core.RateLimiting;
+using MHServerEmu.DatabaseAccess;
 using MHServerEmu.DatabaseAccess.Models;
 using MHServerEmu.Games.GameData;
 using MHServerEmu.PlayerManagement.Auth;
@@ -310,7 +311,12 @@ namespace MHServerEmu.PlayerManagement.Network
             if (player == null)
                 return Logger.WarnReturn(false, $"OnPlayerDataUpdated(): No handle found for playerDbId 0x{playerDbId:X}");
 
-            player.SavePlayerData();
+            if (player.SavePlayerDataResult() == PlayerStoreResult.OutcomeUncertain)
+            {
+                Logger.Error($"OnPlayerDataUpdated(): Player save outcome is uncertain; disconnecting client [{player.Client}]");
+                player.Disconnect();
+                _playerManager.ClientManager.DiscardPlayerHandle(player);
+            }
             return true;
         }
 
