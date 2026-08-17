@@ -1,6 +1,7 @@
 using MHServerEmu.DatabaseAccess.PostgreSQL;
 using MHServerEmu.DatabaseAccess.Models.Leaderboards;
 using MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Migrations;
+using System.Reflection;
 using Npgsql;
 using NpgsqlTypes;
 using Gazillion;
@@ -174,6 +175,39 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
         }
 
         [PostgreSQLIntegrationFact]
+        public async Task ReconcileSchedule_LoadsMappingsOnlyForSelectedSnapshotParents()
+        {
+            await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
+            long subLeaderboardId = unchecked((long)0xABCDEF1200000042UL);
+            long subInstanceId = unchecked((long)0xABCDEF1200000001UL);
+            LeaderboardReconciliation request = new(
+                [new LeaderboardDefinitionSpec(1, "Parent", true, 100, 0), new LeaderboardDefinitionSpec(subLeaderboardId, "Sub", true, 100, 0)],
+                [new LeaderboardInstanceSpec(0, 1, LeaderboardState.eLBS_Created, 300, true), new LeaderboardInstanceSpec(0, subLeaderboardId, LeaderboardState.eLBS_Created, 300, true)],
+                [new LeaderboardMetaMapping(1, 1, subLeaderboardId, subInstanceId)], 500, 1);
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Leaderboards.ReconcileSchedule(request, out _));
+            await InsertInstanceAsync(fixture, 2, 1, true, LeaderboardState.eLBS_Rewarded, false);
+            await InsertInstanceAsync(fixture, 3, 1, true, LeaderboardState.eLBS_Rewarded, false);
+            await InsertMappingAsync(fixture, 2, 1, subLeaderboardId, subInstanceId);
+            await InsertMappingAsync(fixture, 3, 1, subLeaderboardId, subInstanceId);
+
+            FieldInfo hookField = typeof(PostgreSQLLeaderboardStore).GetField("SnapshotMetaMappingCommandHook", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.NotNull(hookField);
+            string sql = null;
+            try
+            {
+                hookField.SetValue(null, (Action<string>)(command => sql = command));
+                Assert.Equal(LeaderboardStoreResult.Success, fixture.Leaderboards.ReconcileSchedule(request, out LeaderboardSnapshot snapshot));
+                Assert.Equal(new[] { 1L, 3L }, snapshot.MetaMappings.Select(mapping => mapping.InstanceId));
+            }
+            finally
+            {
+                hookField.SetValue(null, null);
+            }
+
+            Assert.Contains("instance_id = ANY(@instanceIds)", sql, StringComparison.Ordinal);
+        }
+
+        [PostgreSQLIntegrationFact]
         public async Task ReconcileSchedule_ConcurrentUpdatesRemainSerializable()
         {
             await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
@@ -260,6 +294,14 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
             return ExecuteAsync(fixture, @"INSERT INTO mhserveremu.leaderboard_entry (instance_id, participant_id, score, high_score, rule_states)
                 VALUES (@instanceId, @participantId, 100, 200, @ruleStates)",
                 ("instanceId", NpgsqlDbType.Bigint, instanceId), ("participantId", NpgsqlDbType.Bigint, participantId), ("ruleStates", NpgsqlDbType.Bytea, ruleStates));
+        }
+
+        private static Task InsertMappingAsync(PostgreSQLStoreTestFixture fixture, long instanceId, long leaderboardId, long subLeaderboardId, long subInstanceId)
+        {
+            return ExecuteAsync(fixture, @"INSERT INTO mhserveremu.leaderboard_meta_entry (leaderboard_id, instance_id, sub_leaderboard_id, sub_instance_id)
+                VALUES (@leaderboardId, @instanceId, @subLeaderboardId, @subInstanceId)",
+                ("leaderboardId", NpgsqlDbType.Bigint, leaderboardId), ("instanceId", NpgsqlDbType.Bigint, instanceId),
+                ("subLeaderboardId", NpgsqlDbType.Bigint, subLeaderboardId), ("subInstanceId", NpgsqlDbType.Bigint, subInstanceId));
         }
 
         private static async Task<byte[]> ReadEntryRuleStatesAsync(PostgreSQLStoreTestFixture fixture, long instanceId, long participantId)
