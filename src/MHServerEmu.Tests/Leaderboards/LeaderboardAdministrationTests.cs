@@ -1,3 +1,6 @@
+using Gazillion;
+using Google.ProtocolBuffers;
+using MHServerEmu.Core.Network;
 using MHServerEmu.DatabaseAccess;
 using MHServerEmu.DatabaseAccess.Models.Leaderboards;
 using MHServerEmu.Leaderboards;
@@ -15,6 +18,24 @@ namespace MHServerEmu.Tests.Leaderboards
             ILeaderboardAdministration administration = new LeaderboardService(new PlayerStore(), new LeaderboardStore()).Administration;
 
             Assert.Equal(LeaderboardAdminResult.Unavailable, administration.GetLeaderboards(out _));
+        }
+
+        [Fact]
+        public void LeaderboardRequest_DisabledService_SendsEmptyReportWithoutMailboxProcessing()
+        {
+            LeaderboardService service = new(new PlayerStore(), new LeaderboardStore());
+            SetAutoProperty(service, "State", GameServiceState.Running);
+            RecordingFrontendClient client = new();
+            MailboxMessage message = new((uint)ClientToGameServerMessage.NetMessageLeaderboardRequest, NetMessageLeaderboardRequest.DefaultInstance);
+
+            service.ReceiveServiceMessage(new ServiceMessage.RouteMessage(client, typeof(ClientToGameServerMessage), message));
+
+            NetMessageLeaderboardReportClient report = Assert.IsType<NetMessageLeaderboardReportClient>(client.Message);
+            Assert.True(report.HasReport);
+            Assert.Equal(0UL, report.Report.LeaderboardId);
+            Assert.Equal(0UL, report.Report.InstanceId);
+            Assert.False(report.Report.HasScoreData);
+            Assert.False(report.Report.HasTableData);
         }
 
         [Fact]
@@ -132,6 +153,22 @@ namespace MHServerEmu.Tests.Leaderboards
 
             public PlayerStoreResult LoadPlayerData(MHServerEmu.DatabaseAccess.Models.DBAccount account) => PlayerStoreResult.Failed;
             public PlayerStoreResult SavePlayerData(MHServerEmu.DatabaseAccess.Models.DBAccount account) => PlayerStoreResult.Failed;
+        }
+
+        private sealed class RecordingFrontendClient : IFrontendClient
+        {
+            public IMessage Message { get; private set; }
+            public bool IsConnected => true;
+            public IFrontendSession Session => null;
+            public ulong DbId => 0;
+
+            public void Disconnect() { }
+            public void SuspendReceiveTimeout() { }
+            public bool AssignSession(IFrontendSession session) => true;
+            public bool HandleIncomingMessageBuffer(ushort muxId, in MessageBuffer messageBuffer) => true;
+            public void SendMuxCommand(ushort muxId, MuxCommand command) { }
+            public void SendMessage(ushort muxId, IMessage message) => Message = message;
+            public void SendMessageList(ushort muxId, List<IMessage> messageList) { }
         }
 
         private sealed class LeaderboardStore : ILeaderboardStore

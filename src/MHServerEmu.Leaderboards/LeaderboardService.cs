@@ -155,7 +155,11 @@ namespace MHServerEmu.Leaderboards
             var request = message.As<NetMessageLeaderboardRequest>();
             if (request == null) return Logger.WarnReturn(false, $"OnLeaderboardRequest(): Failed to retrieve message");
 
-            //Logger.Trace($"Received NetMessageLeaderboardRequest for {GameDatabase.GetPrototypeNameByGuid((PrototypeGuid)request.DataQuery.LeaderboardId)}");
+            if (_isEnabled == false)
+            {
+                SendEmptyLeaderboardReport(client);
+                return true;
+            }
 
             _mailbox.PostLeaderboardRequest(client, request);
 
@@ -176,6 +180,16 @@ namespace MHServerEmu.Leaderboards
             client.SendMessage(MuxChannel, NetMessageLeaderboardReportClient.CreateBuilder()
                 .SetReport(_database.GetLeaderboardReport(request))
                 .Build());
+        }
+
+        private static void SendEmptyLeaderboardReport(IFrontendClient client)
+        {
+            const ushort MuxChannel = 1;
+            LeaderboardReport report = LeaderboardReport.CreateBuilder()
+                .SetLeaderboardId(0)
+                .SetInstanceId(0)
+                .Build();
+            client.SendMessage(MuxChannel, NetMessageLeaderboardReportClient.CreateBuilder().SetReport(report).Build());
         }
 
         internal LeaderboardInstanceResponse GetInstance(long instanceId)
