@@ -103,11 +103,13 @@ namespace MHServerEmu.Tests.Leaderboards
         public void ApplyVisibility_UpdatesRuntimeFromCommittedSnapshot()
         {
             RecordingStore store = new();
-            LeaderboardDatabase database = new(store, new NameResolver(), new EmptyCatalog(), new RecordingPublisher(),
+            RecordingPublisher publisher = new();
+            LeaderboardDatabase database = new(store, new NameResolver(), new EmptyCatalog(), publisher,
                 new LeaderboardRuntimeOptions("schedule.json", normalArchiveLimit: 1));
             Leaderboard leaderboard = (Leaderboard)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(typeof(Leaderboard));
             typeof(Leaderboard).GetField("_database", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).SetValue(leaderboard, database);
             LeaderboardInstance instance = (LeaderboardInstance)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(typeof(LeaderboardInstance));
+            typeof(LeaderboardInstance).GetField("_leaderboard", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).SetValue(instance, leaderboard);
             typeof(LeaderboardInstance).GetField("<InstanceId>k__BackingField", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).SetValue(instance, 2UL);
             typeof(LeaderboardInstance).GetField("<Visible>k__BackingField", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).SetValue(instance, false);
             typeof(Leaderboard).GetField("<Instances>k__BackingField", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
@@ -117,9 +119,12 @@ namespace MHServerEmu.Tests.Leaderboards
                 System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
             Assert.NotNull(applyVisibility);
             applyVisibility.Invoke(leaderboard, [new LeaderboardVisibilitySnapshot(
-                [new LeaderboardInstanceSpec(2, 1, LeaderboardState.eLBS_Rewarded, 0, true)], Array.Empty<LeaderboardMetaMapping>())]);
+                Array.Empty<LeaderboardInstanceSpec>(),
+                [new LeaderboardInstanceSpec(2, 1, LeaderboardState.eLBS_Rewarded, 0, true)],
+                Array.Empty<LeaderboardMetaMapping>())]);
 
             Assert.True(instance.Visible);
+            Assert.Single(publisher.StateChanges);
         }
 
         private static LeaderboardInstance CreateInstance(RecordingStore store, LeaderboardState state, ulong instanceId)

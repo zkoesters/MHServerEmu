@@ -279,6 +279,16 @@ namespace MHServerEmu.Leaderboards
 
         private void ApplyVisibility(LeaderboardVisibilitySnapshot snapshot)
         {
+            foreach (LeaderboardInstanceSpec changedInstance in snapshot.ChangedInstances)
+            {
+                LeaderboardInstance instance = GetInstance((ulong)changedInstance.InstanceId);
+                if (instance == null)
+                    continue;
+
+                instance.Visible = changedInstance.Visible;
+                OnStateChange(instance.InstanceId, instance.State);
+            }
+
             foreach (LeaderboardInstanceSpec archivedInstance in snapshot.NormalArchiveInstances)
             {
                 LeaderboardInstance instance = GetInstance((ulong)archivedInstance.InstanceId);

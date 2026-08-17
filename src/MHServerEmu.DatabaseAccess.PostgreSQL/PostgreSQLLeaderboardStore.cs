@@ -478,16 +478,21 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
                     .Take(request.ArchiveLimit)
                     .ToList();
                 HashSet<long> normalArchiveIds = normalArchives.Select(archive => archive.InstanceId).ToHashSet();
+                List<DBLeaderboardInstance> changedInstances = new();
 
                 foreach (DBLeaderboardInstance archive in archives)
                 {
                     bool visible = rewardBearingIds.Contains(archive.InstanceId) || normalArchiveIds.Contains(archive.InstanceId);
+                    if (archive.Visible == visible)
+                        continue;
+
                     await UpdateInstanceVisibilityAsync(connection, transaction, archive.InstanceId, visible, cancellationToken);
                     archive.Visible = visible;
+                    changedInstances.Add(archive);
                 }
 
                 List<DBMetaEntry> mappings = await ReadMappingsForInstancesAsync(connection, transaction, request.LeaderboardId, normalArchiveIds, cancellationToken);
-                committedSnapshot = new(normalArchives, mappings);
+                committedSnapshot = new(normalArchives, changedInstances, mappings);
             });
             if (result == LeaderboardStoreResult.Success)
                 snapshot = committedSnapshot;
