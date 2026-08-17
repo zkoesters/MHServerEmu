@@ -17,7 +17,6 @@ namespace MHServerEmu.DatabaseAccess.SQLite
         [ThreadStatic] private static Action ReconciliationStateReadHook;
         [ThreadStatic] private static Action LifecyclePreCommitHook;
         [ThreadStatic] private static Action LifecycleCommitHook;
-        public static SQLiteLeaderboardDBManager Instance { get; } = new();
 
         private string _dbFilePath;
         private string _connectionString;
@@ -28,8 +27,6 @@ namespace MHServerEmu.DatabaseAccess.SQLite
             LifecyclePreCommitHook = null;
             LifecycleCommitHook = null;
         }
-
-        private SQLiteLeaderboardDBManager() { }
 
         public SQLiteLeaderboardDBManager(string databaseFilePath)
         {

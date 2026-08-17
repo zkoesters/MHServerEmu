@@ -47,10 +47,6 @@ namespace MHServerEmu.Leaderboards
         public bool IsInitialized { get; private set; }
         public SQLiteLeaderboardDBManager DBManager { get; private set; }
         public int LeaderboardCount { get => _leaderboards.Count; }
-        public static LeaderboardDatabase Instance { get; } = new();
-
-        private LeaderboardDatabase() { }
-
         public LeaderboardDatabase(ILeaderboardStore store, ILeaderboardPlayerNameResolver nameResolver,
             ILeaderboardPrototypeCatalog catalog, ILeaderboardPublisher publisher, LeaderboardRuntimeOptions options, Action fatal = null)
         {
@@ -81,44 +77,7 @@ namespace MHServerEmu.Leaderboards
             if (_store.ReconcileSchedule(reconciliation, out LeaderboardSnapshot snapshot) != LeaderboardStoreResult.Success)
                 return false;
 
-            lock (_leaderboardLock)
-            {
-                _leaderboards.Clear();
-                _metaLeaderboards.Clear();
-                IReadOnlyList<LeaderboardInstanceSpec> instances = snapshot.NonterminalInstances.Concat(snapshot.NormalArchiveInstances).ToArray();
-                foreach (LeaderboardDefinitionSpec definition in snapshot.Definitions)
-                {
-                    if (_catalog.TryGetPrototype(definition.LeaderboardId, out LeaderboardPrototype prototype) == false)
-                        continue;
-
-                    DBLeaderboardInstance[] definitionInstances = instances.Where(instance => instance.LeaderboardId == definition.LeaderboardId)
-                        .GroupBy(instance => instance.InstanceId)
-                        .Select(group => group.First())
-                        .Select(instance => new DBLeaderboardInstance
-                        {
-                            InstanceId = instance.InstanceId,
-                            LeaderboardId = instance.LeaderboardId,
-                            State = instance.State,
-                            ActivationDate = instance.ActivationDate,
-                            Visible = instance.Visible,
-                        }).ToArray();
-                    long activeInstanceId = definitionInstances.Where(instance => instance.State is LeaderboardState.eLBS_Created or LeaderboardState.eLBS_Active)
-                        .OrderByDescending(instance => unchecked((ulong)instance.InstanceId)).Select(instance => instance.InstanceId).FirstOrDefault();
-                    Leaderboard leaderboard = new(this, prototype, new DBLeaderboard
-                    {
-                        LeaderboardId = definition.LeaderboardId,
-                        PrototypeName = definition.PrototypeName,
-                        IsEnabled = definition.IsEnabled,
-                        StartTime = definition.StartTime,
-                        MaxResetCount = definition.MaxResetCount,
-                        ActiveInstanceId = activeInstanceId,
-                    }, definitionInstances);
-                    if (prototype.IsMetaLeaderboard)
-                        _metaLeaderboards.Add((PrototypeGuid)definition.LeaderboardId, leaderboard);
-                    else
-                        _leaderboards.Add((PrototypeGuid)definition.LeaderboardId, leaderboard);
-                }
-            }
+            ApplySnapshot(snapshot);
 
             PublishInitialState();
             IsInitialized = true;
@@ -309,19 +268,60 @@ namespace MHServerEmu.Leaderboards
         /// <summary>
         /// Reloads the leaderboard schedule from JSON and reapplies it if needed.
         /// </summary>
-        public void ReloadAndReapplySchedule()
+        public bool ReloadAndReapplySchedule()
+        {
+            if (_store == null)
+                return false;
+
+            LeaderboardScheduleLoader loader = new(_catalog, Clock.UtcNowPrecise);
+            if (loader.TryLoadOrCreate(_options.SchedulePath, _options.NormalArchiveLimit, out LeaderboardReconciliation reconciliation) == false)
+                return false;
+            if (_store.ReconcileSchedule(reconciliation, out LeaderboardSnapshot snapshot) != LeaderboardStoreResult.Success)
+                return false;
+
+            ApplySnapshot(snapshot);
+            PublishInitialState();
+            return true;
+        }
+
+        private void ApplySnapshot(LeaderboardSnapshot snapshot)
         {
             lock (_leaderboardLock)
             {
-                var config = ConfigManager.Instance.GetConfig<LeaderboardsConfig>();
-                string schedulePath = Path.Combine(LeaderboardsDirectory, config.ScheduleFile);
-                
-                List<DBLeaderboard> updatedLeaderboards = new();
-                List<DBLeaderboardInstance> updatedInstances = new();
-                if (LoadSchedule(schedulePath, updatedLeaderboards, updatedInstances))
+                _leaderboards.Clear();
+                _metaLeaderboards.Clear();
+                IReadOnlyList<LeaderboardInstanceSpec> instances = snapshot.NonterminalInstances.Concat(snapshot.NormalArchiveInstances).ToArray();
+                foreach (LeaderboardDefinitionSpec definition in snapshot.Definitions)
                 {
-                    SaveScheduleChanges(updatedLeaderboards, updatedInstances);
-                    ApplyScheduleChanges(updatedLeaderboards, updatedInstances);
+                    if (_catalog.TryGetPrototype(definition.LeaderboardId, out LeaderboardPrototype prototype) == false)
+                        continue;
+
+                    DBLeaderboardInstance[] definitionInstances = instances.Where(instance => instance.LeaderboardId == definition.LeaderboardId)
+                        .GroupBy(instance => instance.InstanceId)
+                        .Select(group => group.First())
+                        .Select(instance => new DBLeaderboardInstance
+                        {
+                            InstanceId = instance.InstanceId,
+                            LeaderboardId = instance.LeaderboardId,
+                            State = instance.State,
+                            ActivationDate = instance.ActivationDate,
+                            Visible = instance.Visible,
+                        }).ToArray();
+                    long activeInstanceId = definitionInstances.Where(instance => instance.State is LeaderboardState.eLBS_Created or LeaderboardState.eLBS_Active)
+                        .OrderByDescending(instance => unchecked((ulong)instance.InstanceId)).Select(instance => instance.InstanceId).FirstOrDefault();
+                    Leaderboard leaderboard = new(this, prototype, new DBLeaderboard
+                    {
+                        LeaderboardId = definition.LeaderboardId,
+                        PrototypeName = definition.PrototypeName,
+                        IsEnabled = definition.IsEnabled,
+                        StartTime = definition.StartTime,
+                        MaxResetCount = definition.MaxResetCount,
+                        ActiveInstanceId = activeInstanceId,
+                    }, definitionInstances);
+                    if (prototype.IsMetaLeaderboard)
+                        _metaLeaderboards.Add((PrototypeGuid)definition.LeaderboardId, leaderboard);
+                    else
+                        _leaderboards.Add((PrototypeGuid)definition.LeaderboardId, leaderboard);
                 }
             }
         }
@@ -887,13 +887,16 @@ namespace MHServerEmu.Leaderboards
         /// <summary>
         /// Saves all <see cref="LeaderboardEntry"/> instances for all active leaderboards to the database.
         /// </summary>
-        public void Save()
+        public bool Save()
         {
+            bool saved = true;
             using var leaderboardsHandle = ListPool<Leaderboard>.Instance.Get(out List<Leaderboard> leaderboards);
             GetLeaderboards(leaderboards);
 
             foreach (var leaderboard in leaderboards)                
-                leaderboard.ActiveInstance?.SaveEntries(true);
+                saved &= leaderboard.ActiveInstance?.SaveEntries(true) ?? true;
+
+            return saved;
         }
 
         /// <summary>

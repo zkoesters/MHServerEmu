@@ -1,11 +1,10 @@
 ﻿using System.Text;
+using Gazillion;
 using MHServerEmu.Commands.Attributes;
-using MHServerEmu.Core.Memory;
 using MHServerEmu.Core.Network;
 using MHServerEmu.Core.System.Time;
 using MHServerEmu.DatabaseAccess.Models;
-using MHServerEmu.Games.GameData;
-using MHServerEmu.Leaderboards;
+using MHServerEmu.Leaderboards.Administration;
 
 namespace MHServerEmu.Commands.Implementations
 {
@@ -14,16 +13,20 @@ namespace MHServerEmu.Commands.Implementations
     [CommandGroupUserLevel(AccountUserLevel.Admin)]
     public class LeaderboardsCommands : CommandGroup
     {
+        private readonly ILeaderboardAdministration _administration;
+
+        public LeaderboardsCommands(ILeaderboardAdministration administration)
+        {
+            _administration = administration ?? throw new ArgumentNullException(nameof(administration));
+        }
+
         [Command("reloadschedule")]
         [CommandDescription("Reloads leaderboard schedule from JSON.")]
         [CommandUsage("leaderboards reloadschedule")]
         public string ReloadSchedule(string[] @params, NetClient client)
         {
-            LeaderboardDatabase leaderboardDB = LeaderboardDatabase.Instance;
-            if (leaderboardDB.IsInitialized == false)
+            if (_administration.ReloadSchedule() != LeaderboardAdminResult.Success)
                 return "Leaderboard database is not available.";
-
-            leaderboardDB.ReloadAndReapplySchedule();
             return "Leaderboard schedule reloaded.";
         }
 
@@ -36,11 +39,9 @@ namespace MHServerEmu.Commands.Implementations
             if (long.TryParse(@params[0], out long instanceId) == false)
                 return $"Failed to parse InstanceId {@params[0]}";
 
-            var instance = LeaderboardDatabase.Instance.FindInstance((ulong)instanceId);
-            if (instance == null)
+            if (_administration.TryGetInstance(instanceId, out LeaderboardInstanceSummary instance) != LeaderboardAdminResult.Success)
                 return $"InstanceId {instanceId} not found";
-
-            return $"{instance}";
+            return instance.Details;
         }
 
         [Command("leaderboard")]
@@ -52,11 +53,9 @@ namespace MHServerEmu.Commands.Implementations
             if (long.TryParse(@params[0], out long leaderboardId) == false)
                 return $"Failed to parse LeaderboardId {@params[0]}";
 
-            var leaderboard = LeaderboardDatabase.Instance.GetLeaderboard((PrototypeGuid)leaderboardId);
-            if (leaderboard == null)
+            if (_administration.TryGetLeaderboard(leaderboardId, out LeaderboardSummary leaderboard) != LeaderboardAdminResult.Success)
                 return $"LeaderboardId {leaderboardId} not found";
-
-            return $"{leaderboard}";
+            return leaderboard.Details;
         }
 
         [Command("now")]
@@ -67,14 +66,14 @@ namespace MHServerEmu.Commands.Implementations
             var sb = new StringBuilder();
             sb.AppendLine($"Current Time: [{Clock.UtcNowTimestamp}] {Clock.UtcNowPrecise}");
 
-            using var leaderboardsHandle = ListPool<Leaderboard>.Instance.Get(out List<Leaderboard> leaderboards);
-            LeaderboardDatabase.Instance.GetLeaderboards(leaderboards);
+            if (_administration.GetLeaderboards(out IReadOnlyList<LeaderboardSummary> leaderboards) != LeaderboardAdminResult.Success)
+                return "Leaderboard database is not available.";
 
-            foreach (var leaderboard in leaderboards)
-                if (leaderboard.IsActive)
+            foreach (LeaderboardSummary leaderboard in leaderboards)
+                if (leaderboard.ActiveInstance?.State == LeaderboardState.eLBS_Active)
                     sb.AppendLine(
-                        $"{leaderboard.Prototype.DataRef.GetNameFormatted()}" +
-                        $"[{leaderboard.ActiveInstance.InstanceId}] = " +
+                        $"{leaderboard.Name}" +
+                        $"[{leaderboard.ActiveInstance.Id}] = " +
                         $"{leaderboard.ActiveInstance.ActivationTime} - " +
                         $"{leaderboard.ActiveInstance.ExpirationTime}");
 
@@ -89,14 +88,14 @@ namespace MHServerEmu.Commands.Implementations
             var sb = new StringBuilder();
             sb.AppendLine($"Current Time: [{Clock.UtcNowTimestamp}] {Clock.UtcNowPrecise}");
 
-            using var leaderboardsHandle = ListPool<Leaderboard>.Instance.Get(out List<Leaderboard> leaderboards);
-            LeaderboardDatabase.Instance.GetLeaderboards(leaderboards);
+            if (_administration.GetLeaderboards(out IReadOnlyList<LeaderboardSummary> leaderboards) != LeaderboardAdminResult.Success)
+                return "Leaderboard database is not available.";
 
-            foreach (var leaderboard in leaderboards)
-                if (leaderboard.Scheduler.IsEnabled)
+            foreach (LeaderboardSummary leaderboard in leaderboards)
+                if (leaderboard.IsEnabled && leaderboard.ActiveInstance != null)
                     sb.AppendLine(
-                        $"{leaderboard.Prototype.DataRef.GetNameFormatted()}" +
-                        $"[{leaderboard.ActiveInstance.InstanceId}][{leaderboard.ActiveInstance.State}] = " +
+                        $"{leaderboard.Name}" +
+                        $"[{leaderboard.ActiveInstance.Id}][{leaderboard.ActiveInstance.State}] = " +
                         $"{leaderboard.ActiveInstance.ActivationTime} - " +
                         $"{leaderboard.ActiveInstance.ExpirationTime}");
 
@@ -111,15 +110,15 @@ namespace MHServerEmu.Commands.Implementations
             var sb = new StringBuilder();
             sb.AppendLine($"Current Time: [{Clock.UtcNowTimestamp}] {Clock.UtcNowPrecise}");
 
-            using var leaderboardsHandle = ListPool<Leaderboard>.Instance.Get(out List<Leaderboard> leaderboards);
-            LeaderboardDatabase.Instance.GetLeaderboards(leaderboards);
+            if (_administration.GetLeaderboards(out IReadOnlyList<LeaderboardSummary> leaderboards) != LeaderboardAdminResult.Success)
+                return "Leaderboard database is not available.";
 
-            foreach (var leaderboard in leaderboards)
+            foreach (LeaderboardSummary leaderboard in leaderboards)
                 sb.AppendLine(
-                    $"[{(leaderboard.Scheduler.IsEnabled ? "+" : "-")}]" +
-                    $"[{(long)leaderboard.LeaderboardId}] " +
-                    $"{leaderboard.Prototype.DataRef.GetNameFormatted()} = " +
-                    $"{leaderboard.Scheduler.StartTime}");
+                    $"[{(leaderboard.IsEnabled ? "+" : "-")}]" +
+                    $"[{leaderboard.Id}] " +
+                    $"{leaderboard.Name} = " +
+                    $"{leaderboard.StartTime}");
 
             return sb.ToString();
         }
