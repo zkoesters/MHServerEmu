@@ -456,6 +456,60 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
         }
 
         [PostgreSQLIntegrationFact]
+        public async Task MaintainVisibility_PreCommitTerminationRollsBackVisibilityAndReturnsEmptySnapshot()
+        {
+            List<PostgreSQLPersistenceFailure> failures = new();
+            await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database, fatalCallback: failures.Add);
+            await InsertDefinitionAsync(fixture, 1);
+            await InsertInstanceAsync(fixture, 1, 1, true, LeaderboardState.eLBS_Active);
+            await InsertInstanceAsync(fixture, 10, 1, true, LeaderboardState.eLBS_Rewarded, false);
+            bool hookInvoked = false;
+            try
+            {
+                PostgreSQLLeaderboardStore.SetLifecyclePreCommitHookForTest(async (connection, transaction) =>
+                {
+                    hookInvoked = true;
+                    await TerminateBackendBeforeCommitAsync(connection, transaction);
+                });
+                Assert.Equal(LeaderboardStoreResult.Failed, fixture.Leaderboards.MaintainVisibility(new(1, 0, 500), out LeaderboardVisibilitySnapshot snapshot));
+                Assert.Empty(snapshot.NormalArchiveInstances);
+                Assert.Empty(snapshot.MetaMappings);
+            }
+            finally
+            {
+                PostgreSQLLeaderboardStore.SetLifecyclePreCommitHookForTest(null);
+            }
+
+            Assert.True(hookInvoked);
+            Assert.Empty(failures);
+            Assert.True(await ReadInstanceVisibleAsync(fixture, 10));
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Leaderboards.LoadVisibleInstances(1, 0, 10, out _));
+        }
+
+        [PostgreSQLIntegrationFact]
+        public async Task MaintainVisibility_CommitTerminationReturnsOutcomeUncertainWithOneSanitizedFatalFailure()
+        {
+            List<PostgreSQLPersistenceFailure> failures = new();
+            await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database, fatalCallback: failures.Add);
+            await InsertDefinitionAsync(fixture, 1);
+            await InsertInstanceAsync(fixture, 1, 1, true, LeaderboardState.eLBS_Active);
+            await InsertInstanceAsync(fixture, 10, 1, true, LeaderboardState.eLBS_Rewarded, false);
+            await CreateDeferredBackendTerminationAsync(fixture.Provider.DataSource, "visibility", "leaderboard_instance", "UPDATE");
+            try
+            {
+                Assert.Equal(LeaderboardStoreResult.OutcomeUncertain, fixture.Leaderboards.MaintainVisibility(new(1, 0, 500), out LeaderboardVisibilitySnapshot snapshot));
+                Assert.Empty(snapshot.NormalArchiveInstances);
+                Assert.Empty(snapshot.MetaMappings);
+            }
+            finally
+            {
+                await DropDeferredBackendTerminationAsync(fixture.Provider.DataSource, "visibility", "leaderboard_instance");
+            }
+
+            AssertSanitizedUncertainFailure(Assert.Single(failures));
+        }
+
+        [PostgreSQLIntegrationFact]
         public async Task GenerateRewards_PersistsCompleteSetWithExactReplayAndPreservedCreationDates()
         {
             await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
@@ -532,6 +586,56 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
                 "SELECT rewarded_date FROM mhserveremu.leaderboard_reward WHERE leaderboard_id = 1 AND instance_id = 10 AND participant_id = 20"));
             Assert.Equal(RewardFinalizationResult.NotFound, fixture.Leaderboards.FinalizeReward(new(2, 10, 20), 700));
             Assert.Equal(RewardFinalizationResult.NotFound, fixture.Leaderboards.FinalizeReward(new(1, 10, 999), 700));
+        }
+
+        [PostgreSQLIntegrationFact]
+        public async Task FinalizeReward_PreCommitTerminationDoesNotFinalizeOrNotifyFatalFailure()
+        {
+            List<PostgreSQLPersistenceFailure> failures = new();
+            await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database, fatalCallback: failures.Add);
+            await InsertDefinitionAsync(fixture, 1);
+            await InsertInstanceAsync(fixture, 10, 1, true, LeaderboardState.eLBS_Rewarded);
+            await InsertRewardAsync(fixture, 1, 10, 20, 1, 300, null);
+            bool hookInvoked = false;
+            try
+            {
+                PostgreSQLLeaderboardStore.SetLifecyclePreCommitHookForTest(async (connection, transaction) =>
+                {
+                    hookInvoked = true;
+                    await TerminateBackendBeforeCommitAsync(connection, transaction);
+                });
+                Assert.Equal(RewardFinalizationResult.Failed, fixture.Leaderboards.FinalizeReward(new(1, 10, 20), 500));
+            }
+            finally
+            {
+                PostgreSQLLeaderboardStore.SetLifecyclePreCommitHookForTest(null);
+            }
+
+            Assert.True(hookInvoked);
+            Assert.Empty(failures);
+            Assert.Equal(1L, await ScalarAsync(fixture,
+                "SELECT COUNT(*) FROM mhserveremu.leaderboard_reward WHERE leaderboard_id = 1 AND instance_id = 10 AND participant_id = 20 AND rewarded_date IS NULL"));
+        }
+
+        [PostgreSQLIntegrationFact]
+        public async Task FinalizeReward_CommitTerminationReturnsDedicatedOutcomeUncertainWithOneSanitizedFatalFailure()
+        {
+            List<PostgreSQLPersistenceFailure> failures = new();
+            await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database, fatalCallback: failures.Add);
+            await InsertDefinitionAsync(fixture, 1);
+            await InsertInstanceAsync(fixture, 10, 1, true, LeaderboardState.eLBS_Rewarded);
+            await InsertRewardAsync(fixture, 1, 10, 20, 1, 300, null);
+            await CreateDeferredBackendTerminationAsync(fixture.Provider.DataSource, "finalization", "leaderboard_reward", "UPDATE");
+            try
+            {
+                Assert.Equal(RewardFinalizationResult.OutcomeUncertain, fixture.Leaderboards.FinalizeReward(new(1, 10, 20), 500));
+            }
+            finally
+            {
+                await DropDeferredBackendTerminationAsync(fixture.Provider.DataSource, "finalization", "leaderboard_reward");
+            }
+
+            AssertSanitizedUncertainFailure(Assert.Single(failures));
         }
 
         [PostgreSQLIntegrationFact]
@@ -628,7 +732,11 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
                 await DropDeferredBackendTerminationAsync(fixture.Provider.DataSource, name, table);
             }
 
-            PostgreSQLPersistenceFailure failure = Assert.Single(failures);
+            AssertSanitizedUncertainFailure(Assert.Single(failures));
+        }
+
+        private static void AssertSanitizedUncertainFailure(PostgreSQLPersistenceFailure failure)
+        {
             Assert.Equal("WriteOutcomeUncertain", failure.Code);
             Assert.DoesNotContain("termination", failure.ToString(), StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("pg_terminate_backend", failure.ToString(), StringComparison.OrdinalIgnoreCase);
