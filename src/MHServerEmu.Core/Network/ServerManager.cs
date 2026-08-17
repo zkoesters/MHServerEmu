@@ -155,7 +155,9 @@ namespace MHServerEmu.Core.Network
         /// <summary>
         /// Runs all registered <see cref="IGameService"/> instances.
         /// </summary>
-        public bool RunServices()
+        public bool RunServices() => RunServices(CancellationToken.None);
+
+        public bool RunServices(CancellationToken cancellationToken)
         {
             lock (_lifecycleLock)
             {
@@ -164,6 +166,11 @@ namespace MHServerEmu.Core.Network
 
                 _state = ServerManagerState.Starting;
             }
+
+            using CancellationTokenRegistration cancellationRegistration = cancellationToken.Register(ShutdownServices);
+
+            if (cancellationToken.IsCancellationRequested)
+                return false;
 
             for (int i = 0; i < _services.Length; i++)
             {
@@ -187,13 +194,15 @@ namespace MHServerEmu.Core.Network
                 _serviceThreads[serviceIndex] = new(() => RunService(service, IsStopping, exception => ReportServiceFault(serviceIndex, exception))) { Name = $"Service [{serviceType}]", IsBackground = true, CurrentCulture = CultureInfo.InvariantCulture };
                 _serviceThreads[i].Start();
 
-                while (service.State != GameServiceState.Running && serviceFault.Task.IsCompleted == false && IsStarting())
+                while (service.State != GameServiceState.Running && serviceFault.Task.IsCompleted == false && _fault.Task.IsCompleted == false && IsStarting())
                     Thread.Sleep(1);
 
-                if (service.State != GameServiceState.Running || serviceFault.Task.IsCompleted)
+                if (service.State != GameServiceState.Running || serviceFault.Task.IsCompleted || _fault.Task.IsCompleted)
                 {
                     Exception exception = serviceFault.Task.IsCompleted
                         ? serviceFault.Task.GetAwaiter().GetResult()
+                        : _fault.Task.IsCompleted
+                            ? _fault.Task.GetAwaiter().GetResult()
                         : new OperationCanceledException($"Service for type [{serviceType}] stopped while starting.");
                     Logger.ErrorException(exception, $"Service for type [{serviceType}] failed during startup");
                     ShutdownServices();

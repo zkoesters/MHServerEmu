@@ -64,6 +64,7 @@ namespace MHServerEmu
         private readonly ServerStartupDependencies _startupDependencies;
         private readonly ServerManager _serverManager;
         private readonly TaskCompletionSource<bool> _shutdownSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly CancellationTokenSource _shutdownCancellation = new();
         private PersistenceServices _persistence;
         private PersistenceRuntime _persistenceRuntime;
         private AccountManager _accountManager;
@@ -121,7 +122,7 @@ namespace MHServerEmu
                 _accountManager = new(_persistence.Accounts, _persistence.Players, _persistence.Capabilities, new ServerAccountSecurityNotifier());
                 _serverManager.Initialize();
                 _startupDependencies.RegisterServices(_serverManager, _persistence, _accountManager);
-                if (_serverManager.RunServices() == false)
+                if (_serverManager.RunServices(_shutdownCancellation.Token) == false)
                     return;
 
                 _startupDependencies.NotifyServicesStarted();
@@ -184,7 +185,10 @@ namespace MHServerEmu
         private void RequestShutdown()
         {
             if (Interlocked.Exchange(ref _shutdownRequested, 1) == 0)
+            {
+                _shutdownCancellation.Cancel();
                 _shutdownSignal.TrySetResult(true);
+            }
         }
 
         /// <summary>

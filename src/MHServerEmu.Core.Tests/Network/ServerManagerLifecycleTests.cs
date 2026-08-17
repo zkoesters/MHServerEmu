@@ -46,6 +46,23 @@ namespace MHServerEmu.Core.Tests.Network
         }
 
         [Fact]
+        public async Task RunServices_EarlierServiceFaultsWhileLaterServiceIsStarting_ReturnsFalseAndStopsLaterService()
+        {
+            ServerManager manager = new();
+            PostRunningThrowingService throwing = new();
+            StartingService starting = new();
+            manager.RegisterGameService(throwing, GameServiceType.GameInstance);
+            manager.RegisterGameService(starting, GameServiceType.Leaderboard);
+
+            Task<bool> run = Task.Run(manager.RunServices);
+            await starting.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            throwing.Throw();
+
+            Assert.False(await run.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.Equal(1, starting.ShutdownCount);
+        }
+
+        [Fact]
         public async Task RunServices_ServiceThrowsAfterRunning_ReportsFaultAndShutdownDoesNotHang()
         {
             ServerManager manager = new();
