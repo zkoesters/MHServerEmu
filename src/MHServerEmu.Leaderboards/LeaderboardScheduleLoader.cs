@@ -43,7 +43,7 @@ namespace MHServerEmu.Leaderboards
                         .OrderBy(prototype => unchecked((ulong)prototype.LeaderboardId))
                         .Select(prototype => new ScheduleEntry
                         {
-                            PrototypeName = prototype.PrototypeName,
+                            LeaderboardId = prototype.LeaderboardId,
                             IsEnabled = prototype.IsEnabledByDefault,
                             StartTime = _currentTime,
                             MaxResetCount = 0,
@@ -56,10 +56,10 @@ namespace MHServerEmu.Leaderboards
                     File.WriteAllText(path, JsonSerializer.Serialize(entries, JsonOptions));
                 }
 
-                Dictionary<string, LeaderboardPrototypeDefinition> definitionsByName = prototypes.ToDictionary(prototype => prototype.PrototypeName, StringComparer.Ordinal);
+                Dictionary<long, LeaderboardPrototypeDefinition> definitionsById = prototypes.ToDictionary(prototype => prototype.LeaderboardId);
                 if (entries.Any(entry => IsValidScheduleEntry(entry) == false)
-                    || entries.GroupBy(entry => entry.PrototypeName, StringComparer.Ordinal).Any(group => group.Skip(1).Any())
-                    || entries.Any(entry => definitionsByName.ContainsKey(entry.PrototypeName) == false))
+                    || entries.GroupBy(entry => entry.LeaderboardId).Any(group => group.Skip(1).Any())
+                    || entries.Any(entry => definitionsById.ContainsKey(entry.LeaderboardId) == false))
                     return false;
 
                 Dictionary<long, long> initialInstanceIds = new();
@@ -67,7 +67,7 @@ namespace MHServerEmu.Leaderboards
                 List<LeaderboardInstanceSpec> initialInstances = new();
                 foreach (ScheduleEntry entry in entries)
                 {
-                    LeaderboardPrototypeDefinition prototype = definitionsByName[entry.PrototypeName];
+                    LeaderboardPrototypeDefinition prototype = definitionsById[entry.LeaderboardId];
                     if (LeaderboardInstanceIdGenerator.TryGetNext(prototype.LeaderboardId, Array.Empty<long>(), out long instanceId) == false)
                         return false;
 
@@ -115,7 +115,6 @@ namespace MHServerEmu.Leaderboards
         private static bool IsValidScheduleEntry(ScheduleEntry entry)
         {
             return entry != null
-                && string.IsNullOrWhiteSpace(entry.PrototypeName) == false
                 && entry.StartTime.Kind == DateTimeKind.Utc
                 && entry.StartTime != DateTime.MinValue
                 && entry.MaxResetCount >= 0;
@@ -123,7 +122,7 @@ namespace MHServerEmu.Leaderboards
 
         private sealed class ScheduleEntry
         {
-            public string PrototypeName { get; set; }
+            public long LeaderboardId { get; set; }
             public bool IsEnabled { get; set; }
             public DateTime StartTime { get; set; }
             public int MaxResetCount { get; set; }

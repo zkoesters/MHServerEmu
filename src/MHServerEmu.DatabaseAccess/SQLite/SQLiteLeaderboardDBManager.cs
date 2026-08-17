@@ -895,8 +895,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                 if (instance.State == LeaderboardState.eLBS_Rewarded)
                     return HasExactRewards(existingRewards, request.Rewards) ? LeaderboardStoreResult.Success : LeaderboardStoreResult.Conflict;
 
-                if (definition.ActiveInstanceId != request.ExpectedActiveInstanceId || request.InstanceId != definition.ActiveInstanceId
-                    || instance.State != request.ExpectedState)
+                if (instance.State != request.ExpectedState)
                     return LeaderboardStoreResult.StaleState;
                 if (existingRewards.Count != 0)
                     return LeaderboardStoreResult.Conflict;

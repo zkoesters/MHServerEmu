@@ -5,6 +5,7 @@ using MHServerEmu.Core.Logging;
 using MHServerEmu.Core.Memory;
 using MHServerEmu.Core.Network;
 using MHServerEmu.Core.System.Time;
+using MHServerEmu.DatabaseAccess;
 using MHServerEmu.DatabaseAccess.Models.Leaderboards;
 using MHServerEmu.Games.GameData;
 using MHServerEmu.Games.GameData.Prototypes;
@@ -266,11 +267,14 @@ namespace MHServerEmu.Leaderboards
         /// <summary>
         /// Writes new <see cref="DBMetaEntry"/> instances for the next instance of this metaleaderboard.
         /// </summary>
-        public void AddNewMetaEntries(ulong instanceId)
+        public IReadOnlyList<DBMetaEntry> GetNewMetaEntries(ulong instanceId)
         {
             // This assumes that meta leaderboards will always stay in sync with their subleaderboards, which is not ideal.
             // Because this is used only for the Civil War leaderboard it's probably fine, but it will have to change if we ever implement custom meta leaderboards.
             List<DBMetaEntry> metaEntries = new();
+            if (_metaLeaderboardEntries == null)
+                return metaEntries;
+
             foreach (MetaLeaderboardEntry entry in _metaLeaderboardEntries)
             {
                 metaEntries.Add(
@@ -278,12 +282,17 @@ namespace MHServerEmu.Leaderboards
                     {
                         LeaderboardId = (long)LeaderboardId,
                         InstanceId = (long)instanceId,
-                        SubInstanceId = (long)(entry.SubInstanceId + 1),
+                        SubInstanceId = (long)entry.SubInstanceId,
                         SubLeaderboardId = (long)entry.SubLeaderboardId 
                     });
             }
 
-            _leaderboard.Database.InsertMetaEntries(metaEntries);
+            return metaEntries;
+        }
+
+        public void AddNewMetaEntries(ulong instanceId)
+        {
+            _leaderboard.Database.InsertMetaEntries(GetNewMetaEntries(instanceId));
         }
 
         /// <summary>
@@ -378,9 +387,10 @@ namespace MHServerEmu.Leaderboards
         /// Saves <see cref="LeaderboardEntry">LeaderboardEntries</see> to the database.
         /// </summary>
         /// <param name="forceUpdate">Forces entries that haven't changed to be saved.</param>
-        public void SaveEntries(bool forceUpdate = false)
+        public bool SaveEntries(bool forceUpdate = false)
         {
             using var dbEntriesHandle = ListPool<DBLeaderboardEntry>.Instance.Get(out List<DBLeaderboardEntry> dbEntries);
+            List<LeaderboardEntry> savedEntries = new();
 
             lock (_lock)
             {
@@ -390,13 +400,18 @@ namespace MHServerEmu.Leaderboards
                     {
                         DBLeaderboardEntry dbEntry = entry.ToDbEntry(InstanceId);
                         dbEntries.Add(dbEntry);
-                        entry.SaveRequired = false;
+                        savedEntries.Add(entry);
                     }
                 }
 
-                _leaderboard.Database.SaveEntries((long)LeaderboardId, (long)InstanceId, dbEntries);
+                if (_leaderboard.Database.SaveEntries((long)LeaderboardId, (long)InstanceId, dbEntries) != LeaderboardStoreResult.Success)
+                    return false;
+
+                foreach (LeaderboardEntry entry in savedEntries)
+                    entry.SaveRequired = false;
 
                 ScheduleNextAutoSave();
+                return true;
             }
         }
 
@@ -471,9 +486,6 @@ namespace MHServerEmu.Leaderboards
         {
             lock (_lock) 
             {
-                if (Entries.Count == 0)
-                    return true;
-
                 using var rewardsListHandle = ListPool<DBRewardEntry>.Instance.Get(out List<DBRewardEntry> rewardsList);
 
                 LeaderboardRewardEntryPrototype[] rewards = LeaderboardPrototype.Rewards;
@@ -483,7 +495,9 @@ namespace MHServerEmu.Leaderboards
                 if (LeaderboardPrototype.IsMetaLeaderboard)
                     GetMetaRewards(rewardsList);
 
-                _leaderboard.Database.GenerateRewards((long)LeaderboardId, (long)InstanceId, rewardsList);
+                long expectedActiveInstanceId = (long)(_leaderboard.ActiveInstance?.InstanceId ?? InstanceId);
+                if (_leaderboard.Database.GenerateRewards((long)LeaderboardId, expectedActiveInstanceId, (long)InstanceId, rewardsList) != LeaderboardStoreResult.Success)
+                    return false;
             }
 
             return true;
@@ -634,25 +648,16 @@ namespace MHServerEmu.Leaderboards
                         if (State == LeaderboardState.eLBS_Active)
                         {
                             SortEntries();
-                            SaveEntries(true);
+                            List<DBLeaderboardEntry> entries = Entries.Select(entry => entry.ToDbEntry(InstanceId)).ToList();
+                            long expectedActiveInstanceId = (long)(_leaderboard.ActiveInstance?.InstanceId ?? InstanceId);
+                            changed = _leaderboard.Database.PersistExpiration(new((long)LeaderboardId, expectedActiveInstanceId,
+                                (long)InstanceId, LeaderboardState.eLBS_Active, entries)) == LeaderboardStoreResult.Success;
                         }
-
-                        changed = true;
-                        break;
-
-                    case LeaderboardState.eLBS_Reward:
-
-                        changed = true;
-                        break;
-
-                    case LeaderboardState.eLBS_RewardsPending:
-
-                        changed = State == LeaderboardState.eLBS_Reward;
                         break;
 
                     case LeaderboardState.eLBS_Rewarded:
 
-                        changed = State == LeaderboardState.eLBS_RewardsPending;
+                        changed = State == LeaderboardState.eLBS_Expired && GiveRewards();
                         break;
                 }
 
@@ -670,11 +675,6 @@ namespace MHServerEmu.Leaderboards
         /// <summary>
         /// Writes the new <see cref="LeaderboardState"/> to the database.
         /// </summary>
-        public void UpdateDBState(LeaderboardState state)
-        {
-            _leaderboard.Database.UpdateInstanceState((long)LeaderboardId, (long)InstanceId, state);
-        }
-
         /// <summary>
         /// Sorts this <see cref="LeaderboardInstance"/> and saves it to the database if enough time has passed.
         /// </summary>

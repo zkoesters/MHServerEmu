@@ -519,8 +519,7 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
                         abort(LeaderboardStoreResult.Conflict);
                     return;
                 }
-                if (definition.ActiveInstanceId != request.ExpectedActiveInstanceId || request.InstanceId != definition.ActiveInstanceId
-                    || instance.State != request.ExpectedState)
+                if (instance.State != request.ExpectedState)
                     abort(LeaderboardStoreResult.StaleState);
                 if (existingRewards.Count != 0)
                     abort(LeaderboardStoreResult.Conflict);
