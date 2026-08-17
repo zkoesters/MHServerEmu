@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Reflection;
 using MHServerEmu.DatabaseAccess.Json;
 using MHServerEmu.DatabaseAccess.Models;
 
@@ -78,6 +79,135 @@ namespace MHServerEmu.DatabaseAccess.Tests.Json
             Assert.Equal(GuildStoreResult.Success, store.ChangeGuildMotd(guild, "Motd"));
             Assert.Equal(GuildStoreResult.Success, store.ApplyMembershipTransition(guild, transition));
             Assert.Equal(GuildStoreResult.Success, store.DeleteGuild(guild));
+        }
+
+        [Fact]
+        public void ReconcileAccount_UncertainDefaultIdClone_RefreshesScalarsAndPreservesAggregate()
+        {
+            DBAccount configured = CreateConfiguredAccount();
+            JsonDBManager store = CreateStore(configured);
+            DBAccount clone = new("Clone")
+            {
+                Id = configured.Id,
+                Email = "stale@example.com",
+                PlayerName = "StalePlayer",
+                PasswordHash = [0x10],
+                Salt = [0x11],
+                UserLevel = AccountUserLevel.User,
+                Flags = AccountFlags.IsArchived,
+                PasswordAlgorithm = "stale",
+                PasswordFormatVersion = 99,
+                PasswordIterations = 98,
+                PasswordKeySize = 97,
+                CredentialVersion = 96,
+                GameSecurityVersion = 95,
+                PersistenceRevision = 94,
+                EmailVerifiedAtUtc = null,
+                CreatedAtUtc = null,
+                UpdatedAtUtc = null,
+                PersistenceState = PersistenceState.OutcomeUncertain,
+            };
+            DBPlayer player = new(clone.Id);
+            DBEntityCollection avatars = clone.Avatars;
+            DBEntityCollection teamUps = clone.TeamUps;
+            DBEntityCollection items = clone.Items;
+            DBEntityCollection controlledEntities = clone.ControlledEntities;
+            DBEntityCollection transferredEntities = clone.TransferredEntities;
+            MigrationData migrationData = clone.MigrationData;
+            clone.Player = player;
+
+            Assert.Equal(AccountStoreResult.Success, store.ReconcileAccount(clone));
+
+            Assert.Equal(configured.Email, clone.Email);
+            Assert.Equal(configured.PlayerName, clone.PlayerName);
+            Assert.Equal(configured.PasswordHash, clone.PasswordHash);
+            Assert.Equal(configured.Salt, clone.Salt);
+            Assert.Equal(configured.UserLevel, clone.UserLevel);
+            Assert.Equal(configured.Flags, clone.Flags);
+            Assert.Equal(configured.PasswordAlgorithm, clone.PasswordAlgorithm);
+            Assert.Equal(configured.PasswordFormatVersion, clone.PasswordFormatVersion);
+            Assert.Equal(configured.PasswordIterations, clone.PasswordIterations);
+            Assert.Equal(configured.PasswordKeySize, clone.PasswordKeySize);
+            Assert.Equal(configured.CredentialVersion, clone.CredentialVersion);
+            Assert.Equal(configured.GameSecurityVersion, clone.GameSecurityVersion);
+            Assert.Equal(configured.PersistenceRevision, clone.PersistenceRevision);
+            Assert.Equal(configured.EmailVerifiedAtUtc, clone.EmailVerifiedAtUtc);
+            Assert.Equal(configured.CreatedAtUtc, clone.CreatedAtUtc);
+            Assert.Equal(configured.UpdatedAtUtc, clone.UpdatedAtUtc);
+            Assert.Same(player, clone.Player);
+            Assert.Same(avatars, clone.Avatars);
+            Assert.Same(teamUps, clone.TeamUps);
+            Assert.Same(items, clone.Items);
+            Assert.Same(controlledEntities, clone.ControlledEntities);
+            Assert.Same(transferredEntities, clone.TransferredEntities);
+            Assert.Same(migrationData, clone.MigrationData);
+            Assert.Equal(PersistenceState.Clean, clone.PersistenceState);
+        }
+
+        [Fact]
+        public void ReconcileAccount_NonDefaultIdClone_ReturnsAccountNotFoundAndRetainsUncertainty()
+        {
+            DBAccount configured = CreateConfiguredAccount();
+            JsonDBManager store = CreateStore(configured);
+            DBAccount clone = new("Clone")
+            {
+                Id = configured.Id + 1,
+                Email = "stale@example.com",
+                PersistenceState = PersistenceState.OutcomeUncertain,
+            };
+            DBPlayer player = new(clone.Id);
+            clone.Player = player;
+
+            Assert.Equal(AccountStoreResult.AccountNotFound, store.ReconcileAccount(clone));
+            Assert.Equal("stale@example.com", clone.Email);
+            Assert.Same(player, clone.Player);
+            Assert.Equal(PersistenceState.OutcomeUncertain, clone.PersistenceState);
+        }
+
+        [Fact]
+        public void ReconcileAccount_CleanDefaultIdClone_IsNoOpSuccess()
+        {
+            DBAccount configured = CreateConfiguredAccount();
+            JsonDBManager store = CreateStore(configured);
+            DBAccount clone = new("Clone")
+            {
+                Id = configured.Id,
+                Email = "clean@example.com",
+            };
+
+            Assert.Equal(AccountStoreResult.Success, store.ReconcileAccount(clone));
+            Assert.Equal("clean@example.com", clone.Email);
+            Assert.Equal(PersistenceState.Clean, clone.PersistenceState);
+        }
+
+        private static JsonDBManager CreateStore(DBAccount account)
+        {
+            JsonDBManager store = (JsonDBManager)Activator.CreateInstance(typeof(JsonDBManager), nonPublic: true);
+            typeof(JsonDBManager).GetField("_account", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(store, account);
+            return store;
+        }
+
+        private static DBAccount CreateConfiguredAccount()
+        {
+            return new DBAccount("Configured")
+            {
+                Email = "configured@example.com",
+                PlayerName = "ConfiguredPlayer",
+                PasswordHash = [0x01, 0x02],
+                Salt = [0x03, 0x04],
+                UserLevel = AccountUserLevel.Admin,
+                Flags = AccountFlags.IsBanned,
+                PasswordAlgorithm = "configured",
+                PasswordFormatVersion = 2,
+                PasswordIterations = 3,
+                PasswordKeySize = 4,
+                CredentialVersion = 5,
+                GameSecurityVersion = 6,
+                PersistenceRevision = 7,
+                EmailVerifiedAtUtc = new DateTime(2025, 1, 2, 3, 4, 5, DateTimeKind.Utc),
+                CreatedAtUtc = new DateTime(2024, 1, 2, 3, 4, 5, DateTimeKind.Utc),
+                UpdatedAtUtc = new DateTime(2026, 1, 2, 3, 4, 5, DateTimeKind.Utc),
+            };
         }
 
         private static void AssertMetadataIsExcluded(string json, params string[] propertyNames)
