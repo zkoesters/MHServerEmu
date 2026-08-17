@@ -32,6 +32,7 @@
     <ProjectReference Include="..\Gazillion\Gazillion.csproj" />
     <ProjectReference Include="..\MHServerEmu.Core\MHServerEmu.Core.csproj" />
     <ProjectReference Include="..\MHServerEmu.DatabaseAccess\MHServerEmu.DatabaseAccess.csproj" />
+    <ProjectReference Include="..\MHServerEmu.DatabaseAccess.PostgreSQL\MHServerEmu.DatabaseAccess.PostgreSQL.csproj" />
     <ProjectReference Include="..\MHServerEmu.Frontend\MHServerEmu.Frontend.csproj" />
     <ProjectReference Include="..\MHServerEmu.Games\MHServerEmu.Games.csproj" />
     <ProjectReference Include="..\MHServerEmu.Grouping\MHServerEmu.Grouping.csproj" />

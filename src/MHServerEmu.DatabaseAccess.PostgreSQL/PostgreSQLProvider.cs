@@ -159,8 +159,15 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
         {
             if (writerConnection != null)
                 await writerConnection.DisposeAsync();
+            if (_monitor != null)
+                await _monitor.DisposeAsync();
+            if (_writerOwner != null)
+                await _writerOwner.DisposeAsync();
             if (_dataSource != null)
                 await _dataSource.DisposeAsync();
+            _monitor = null;
+            _storeExecutor = null;
+            _writerOwner = null;
             _dataSource = null;
         }
 
