@@ -255,7 +255,9 @@ namespace MHServerEmu.Leaderboards
         private bool AddNewInstance(DBLeaderboardInstance dbInstance, LeaderboardInstance previousInstance)
         {
             Logger.Info($"AddNewInstance(): {LeaderboardId} {dbInstance.InstanceId}");
-            IEnumerable<DBMetaEntry> metaEntries = previousInstance?.GetNewMetaEntries((ulong)dbInstance.InstanceId) ?? Array.Empty<DBMetaEntry>();
+            IReadOnlyList<DBMetaEntry> metaEntries = previousInstance?.GetNewMetaEntries((ulong)dbInstance.InstanceId);
+            if (metaEntries == null)
+                return false;
             if (_database.PersistRotation(new((long)LeaderboardId, (long)previousInstance.InstanceId,
                 LeaderboardState.eLBS_Expired, LeaderboardState.eLBS_Expired, dbInstance,
                 LeaderboardState.eLBS_Created, metaEntries), out DBLeaderboardInstance committedInstance) != LeaderboardStoreResult.Success)
