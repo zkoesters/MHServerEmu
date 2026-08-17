@@ -314,8 +314,7 @@ namespace MHServerEmu.PlayerManagement.Network
             if (player.SavePlayerDataResult() == PlayerStoreResult.OutcomeUncertain)
             {
                 Logger.Error($"OnPlayerDataUpdated(): Player save outcome is uncertain; disconnecting client [{player.Client}]");
-                player.Disconnect();
-                _playerManager.ClientManager.DiscardPlayerHandle(player);
+                _playerManager.ClientManager.DisconnectAndDiscardPlayer(player);
             }
             return true;
         }
