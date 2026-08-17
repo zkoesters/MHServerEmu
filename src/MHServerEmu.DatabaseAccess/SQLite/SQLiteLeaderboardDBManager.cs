@@ -476,16 +476,272 @@ namespace MHServerEmu.DatabaseAccess.SQLite
             return new(definitions, nonterminal, normalArchives, mappings);
         }
 
-        public LeaderboardStoreResult ActivateInstance(LeaderboardActivation request) => LeaderboardStoreResult.Failed;
+        public LeaderboardStoreResult ActivateInstance(LeaderboardActivation request)
+        {
+            if (request == null)
+                return LeaderboardStoreResult.InvalidData;
 
-        public LeaderboardStoreResult SaveScoreBatch(LeaderboardScoreBatch request) => LeaderboardStoreResult.Failed;
+            try
+            {
+                using SQLiteConnection connection = GetConnection();
+                using SQLiteTransaction transaction = connection.BeginTransaction(IsolationLevel.Serializable);
+                DBLeaderboard definition = connection.QueryFirstOrDefault<DBLeaderboard>("SELECT * FROM Leaderboards WHERE LeaderboardId = @LeaderboardId",
+                    new { request.LeaderboardId }, transaction);
+                if (definition == null)
+                    return LeaderboardStoreResult.NotFound;
 
-        public LeaderboardStoreResult ExpireInstance(LeaderboardExpiration request) => LeaderboardStoreResult.Failed;
+                DBLeaderboardInstance target = connection.QueryFirstOrDefault<DBLeaderboardInstance>("SELECT * FROM Instances WHERE InstanceId = @InstanceId",
+                    new { request.InstanceId }, transaction);
+                if (target == null)
+                    return LeaderboardStoreResult.NotFound;
+
+                if (target.LeaderboardId != request.LeaderboardId)
+                    return definition.ActiveInstanceId == request.InstanceId ? LeaderboardStoreResult.InvalidData : LeaderboardStoreResult.Conflict;
+
+                if (definition.ActiveInstanceId != request.ExpectedActiveInstanceId)
+                    return LeaderboardStoreResult.StaleState;
+
+                if (request.InstanceId != definition.ActiveInstanceId)
+                    return LeaderboardStoreResult.Conflict;
+
+                if (target.State == LeaderboardState.eLBS_Active)
+                    return LeaderboardStoreResult.Success;
+
+                if (target.State != request.ExpectedState)
+                    return LeaderboardStoreResult.StaleState;
+
+                connection.Execute("UPDATE Instances SET State = @State WHERE InstanceId = @InstanceId",
+                    new { State = (int)LeaderboardState.eLBS_Active, request.InstanceId }, transaction);
+                transaction.Commit();
+                return LeaderboardStoreResult.Success;
+            }
+            catch (Exception e)
+            {
+                Logger.Error($"ActivateInstance(): {e.Message}");
+                return LeaderboardStoreResult.Failed;
+            }
+        }
+
+        public LeaderboardStoreResult SaveScoreBatch(LeaderboardScoreBatch request)
+        {
+            if (request == null || request.Entries.GroupBy(entry => entry.ParticipantId).Any(group => group.Skip(1).Any()))
+                return LeaderboardStoreResult.InvalidData;
+
+            try
+            {
+                using SQLiteConnection connection = GetConnection();
+                using SQLiteTransaction transaction = connection.BeginTransaction(IsolationLevel.Serializable);
+                DBLeaderboard definition = connection.QueryFirstOrDefault<DBLeaderboard>("SELECT * FROM Leaderboards WHERE LeaderboardId = @LeaderboardId",
+                    new { request.LeaderboardId }, transaction);
+                if (definition == null)
+                    return LeaderboardStoreResult.NotFound;
+
+                DBLeaderboardInstance instance = connection.QueryFirstOrDefault<DBLeaderboardInstance>("SELECT * FROM Instances WHERE InstanceId = @InstanceId",
+                    new { request.InstanceId }, transaction);
+                if (instance == null)
+                    return LeaderboardStoreResult.NotFound;
+
+                if (instance.LeaderboardId != request.LeaderboardId)
+                    return LeaderboardStoreResult.Conflict;
+
+                if (definition.ActiveInstanceId != request.InstanceId || instance.State != request.ExpectedState)
+                    return LeaderboardStoreResult.StaleState;
+
+                List<LeaderboardEntryWrite> missingEntries = new();
+                foreach (LeaderboardEntryWrite entry in request.Entries)
+                {
+                    DBLeaderboardEntry existing = connection.QueryFirstOrDefault<DBLeaderboardEntry>(@"
+                        SELECT * FROM Entries WHERE InstanceId = @InstanceId AND ParticipantId = @ParticipantId",
+                        new { entry.InstanceId, entry.ParticipantId }, transaction);
+                    if (existing == null)
+                    {
+                        missingEntries.Add(entry);
+                        continue;
+                    }
+
+                    if (existing.Score != entry.Score || existing.HighScore != entry.HighScore || existing.RuleStates?.SequenceEqual(entry.RuleStates) != true)
+                        return LeaderboardStoreResult.Conflict;
+                }
+
+                foreach (LeaderboardEntryWrite entry in missingEntries)
+                {
+                    connection.Execute(@"
+                        INSERT INTO Entries (InstanceId, ParticipantId, Score, HighScore, RuleStates)
+                        VALUES (@InstanceId, @ParticipantId, @Score, @HighScore, @RuleStates)",
+                        new { entry.InstanceId, entry.ParticipantId, entry.Score, entry.HighScore, RuleStates = entry.RuleStates }, transaction);
+                }
+
+                transaction.Commit();
+                return LeaderboardStoreResult.Success;
+            }
+            catch (Exception e)
+            {
+                Logger.Error($"SaveScoreBatch(): {e.Message}");
+                return LeaderboardStoreResult.Failed;
+            }
+        }
+
+        public LeaderboardStoreResult ExpireInstance(LeaderboardExpiration request)
+        {
+            if (request == null || request.Entries.GroupBy(entry => entry.ParticipantId).Any(group => group.Skip(1).Any()))
+                return LeaderboardStoreResult.InvalidData;
+
+            try
+            {
+                using SQLiteConnection connection = GetConnection();
+                using SQLiteTransaction transaction = connection.BeginTransaction(IsolationLevel.Serializable);
+                DBLeaderboard definition = connection.QueryFirstOrDefault<DBLeaderboard>("SELECT * FROM Leaderboards WHERE LeaderboardId = @LeaderboardId",
+                    new { request.LeaderboardId }, transaction);
+                if (definition == null)
+                    return LeaderboardStoreResult.NotFound;
+
+                DBLeaderboardInstance instance = connection.QueryFirstOrDefault<DBLeaderboardInstance>("SELECT * FROM Instances WHERE InstanceId = @InstanceId",
+                    new { request.InstanceId }, transaction);
+                if (instance == null)
+                    return LeaderboardStoreResult.NotFound;
+
+                if (instance.LeaderboardId != request.LeaderboardId)
+                    return LeaderboardStoreResult.Conflict;
+
+                List<DBLeaderboardEntry> existingEntries = connection.Query<DBLeaderboardEntry>("SELECT * FROM Entries WHERE InstanceId = @InstanceId",
+                    new { request.InstanceId }, transaction).ToList();
+                if (instance.State == LeaderboardState.eLBS_Expired)
+                    return HasExactEntries(existingEntries, request.Entries) ? LeaderboardStoreResult.Success : LeaderboardStoreResult.Conflict;
+
+                if (definition.ActiveInstanceId != request.ExpectedActiveInstanceId || request.InstanceId != definition.ActiveInstanceId
+                    || instance.State != request.ExpectedState)
+                    return LeaderboardStoreResult.StaleState;
+
+                Dictionary<long, LeaderboardEntryWrite> requestedEntries = request.Entries.ToDictionary(entry => entry.ParticipantId);
+                if (existingEntries.Any(entry => requestedEntries.TryGetValue(entry.ParticipantId, out LeaderboardEntryWrite requested) == false
+                    || EntriesMatch(entry, requested) == false))
+                    return LeaderboardStoreResult.Conflict;
+
+                foreach (LeaderboardEntryWrite entry in request.Entries.Where(entry => existingEntries.Any(existing => existing.ParticipantId == entry.ParticipantId) == false))
+                {
+                    connection.Execute(@"
+                        INSERT INTO Entries (InstanceId, ParticipantId, Score, HighScore, RuleStates)
+                        VALUES (@InstanceId, @ParticipantId, @Score, @HighScore, @RuleStates)",
+                        new { entry.InstanceId, entry.ParticipantId, entry.Score, entry.HighScore, RuleStates = entry.RuleStates }, transaction);
+                }
+
+                connection.Execute("UPDATE Instances SET State = @State WHERE InstanceId = @InstanceId",
+                    new { State = (int)LeaderboardState.eLBS_Expired, request.InstanceId }, transaction);
+                transaction.Commit();
+                return LeaderboardStoreResult.Success;
+            }
+            catch (Exception e)
+            {
+                Logger.Error($"ExpireInstance(): {e.Message}");
+                return LeaderboardStoreResult.Failed;
+            }
+        }
 
         public LeaderboardStoreResult RotateActiveInstance(LeaderboardRotation request, out DBLeaderboardInstance committedInstance)
         {
             committedInstance = null;
-            return LeaderboardStoreResult.Failed;
+            if (request == null)
+                return LeaderboardStoreResult.InvalidData;
+
+            try
+            {
+                using SQLiteConnection connection = GetConnection();
+                using SQLiteTransaction transaction = connection.BeginTransaction(IsolationLevel.Serializable);
+                DBLeaderboard definition = connection.QueryFirstOrDefault<DBLeaderboard>("SELECT * FROM Leaderboards WHERE LeaderboardId = @LeaderboardId",
+                    new { request.LeaderboardId }, transaction);
+                if (definition == null)
+                    return LeaderboardStoreResult.NotFound;
+
+                DBLeaderboardInstance previous = connection.QueryFirstOrDefault<DBLeaderboardInstance>("SELECT * FROM Instances WHERE InstanceId = @InstanceId",
+                    new { InstanceId = request.ExpectedActiveInstanceId }, transaction);
+                if (previous == null)
+                    return LeaderboardStoreResult.NotFound;
+
+                if (previous.LeaderboardId != request.LeaderboardId)
+                    return LeaderboardStoreResult.InvalidData;
+
+                if (definition.ActiveInstanceId != request.ExpectedActiveInstanceId)
+                {
+                    if (request.NextInstance.InstanceId != 0 && definition.ActiveInstanceId != request.NextInstance.InstanceId)
+                        return LeaderboardStoreResult.StaleState;
+
+                    DBLeaderboardInstance replay = connection.QueryFirstOrDefault<DBLeaderboardInstance>("SELECT * FROM Instances WHERE InstanceId = @InstanceId",
+                        new { InstanceId = definition.ActiveInstanceId }, transaction);
+                    if (replay == null || replay.LeaderboardId != request.LeaderboardId || previous.State != request.PreviousState
+                        || MatchesInstance(replay, request.NextInstance) == false)
+                        return LeaderboardStoreResult.Conflict;
+
+                    List<DBMetaEntry> replayMappings = connection.Query<DBMetaEntry>(@"
+                        SELECT * FROM MetaEntries WHERE LeaderboardId = @LeaderboardId AND InstanceId = @InstanceId",
+                        new { request.LeaderboardId, InstanceId = replay.InstanceId }, transaction).ToList();
+                    if (HasExactMappings(replayMappings, request.MetaMappings, replay.InstanceId) == false)
+                        return LeaderboardStoreResult.Conflict;
+
+                    committedInstance = CloneInstance(replay);
+                    return LeaderboardStoreResult.Success;
+                }
+
+                if (previous.State != request.ExpectedActiveState)
+                    return LeaderboardStoreResult.StaleState;
+
+                List<long> leaderboardInstanceIds = connection.Query<long>("SELECT InstanceId FROM Instances WHERE LeaderboardId = @LeaderboardId",
+                    new { request.LeaderboardId }, transaction).ToList();
+                if (LeaderboardInstanceIdGenerator.TryGetNext(request.LeaderboardId, leaderboardInstanceIds, out long generatedInstanceId) == false
+                    || (request.NextInstance.InstanceId != 0 && request.NextInstance.InstanceId != generatedInstanceId)
+                    || connection.QuerySingleOrDefault<long?>("SELECT InstanceId FROM Instances WHERE InstanceId = @InstanceId", new { InstanceId = generatedInstanceId }, transaction) != null)
+                    return LeaderboardStoreResult.InvalidData;
+
+                foreach (LeaderboardMetaMapping mapping in request.MetaMappings)
+                {
+                    DBLeaderboard subDefinition = connection.QueryFirstOrDefault<DBLeaderboard>("SELECT * FROM Leaderboards WHERE LeaderboardId = @LeaderboardId",
+                        new { LeaderboardId = mapping.SubLeaderboardId }, transaction);
+                    DBLeaderboardInstance subInstance = connection.QueryFirstOrDefault<DBLeaderboardInstance>("SELECT * FROM Instances WHERE InstanceId = @InstanceId",
+                        new { InstanceId = mapping.SubInstanceId }, transaction);
+                    if (subDefinition == null || subInstance == null || subDefinition.ActiveInstanceId != mapping.SubInstanceId
+                        || subInstance.LeaderboardId != mapping.SubLeaderboardId)
+                        return LeaderboardStoreResult.InvalidData;
+                }
+
+                connection.Execute(@"
+                    INSERT INTO Instances (InstanceId, LeaderboardId, State, ActivationDate, Visible)
+                    VALUES (@InstanceId, @LeaderboardId, @State, @ActivationDate, @Visible)",
+                    new
+                    {
+                        InstanceId = generatedInstanceId,
+                        request.LeaderboardId,
+                        State = (int)request.NextState,
+                        request.NextInstance.ActivationDate,
+                        request.NextInstance.Visible
+                    }, transaction);
+                connection.Execute("UPDATE Instances SET State = @State WHERE InstanceId = @InstanceId",
+                    new { State = (int)request.PreviousState, InstanceId = request.ExpectedActiveInstanceId }, transaction);
+                connection.Execute("UPDATE Leaderboards SET ActiveInstanceId = @ActiveInstanceId WHERE LeaderboardId = @LeaderboardId",
+                    new { ActiveInstanceId = generatedInstanceId, request.LeaderboardId }, transaction);
+                foreach (LeaderboardMetaMapping mapping in request.MetaMappings)
+                {
+                    connection.Execute(@"
+                        INSERT INTO MetaEntries (LeaderboardId, InstanceId, SubLeaderboardId, SubInstanceId)
+                        VALUES (@LeaderboardId, @InstanceId, @SubLeaderboardId, @SubInstanceId)",
+                        new { request.LeaderboardId, InstanceId = generatedInstanceId, mapping.SubLeaderboardId, mapping.SubInstanceId }, transaction);
+                }
+
+                committedInstance = new()
+                {
+                    InstanceId = generatedInstanceId,
+                    LeaderboardId = request.LeaderboardId,
+                    State = request.NextState,
+                    ActivationDate = request.NextInstance.ActivationDate,
+                    Visible = request.NextInstance.Visible
+                };
+                transaction.Commit();
+                return LeaderboardStoreResult.Success;
+            }
+            catch (Exception e)
+            {
+                Logger.Error($"RotateActiveInstance(): {e.Message}");
+                committedInstance = null;
+                return LeaderboardStoreResult.Failed;
+            }
         }
 
         public LeaderboardStoreResult MaintainVisibility(LeaderboardVisibilityRequest request, out LeaderboardVisibilitySnapshot snapshot)
@@ -503,6 +759,31 @@ namespace MHServerEmu.DatabaseAccess.SQLite
         }
 
         public RewardFinalizationResult FinalizeReward(LeaderboardRewardKey key, long rewardedDate) => RewardFinalizationResult.Failed;
+
+        private static bool HasExactEntries(IReadOnlyCollection<DBLeaderboardEntry> existingEntries, IReadOnlyList<LeaderboardEntryWrite> requestedEntries)
+        {
+            return existingEntries.Count == requestedEntries.Count
+                && requestedEntries.All(requested => existingEntries.Any(existing => existing.ParticipantId == requested.ParticipantId && EntriesMatch(existing, requested)));
+        }
+
+        private static bool EntriesMatch(DBLeaderboardEntry existing, LeaderboardEntryWrite requested)
+        {
+            return existing.Score == requested.Score && existing.HighScore == requested.HighScore
+                && existing.RuleStates != null && existing.RuleStates.SequenceEqual(requested.RuleStates);
+        }
+
+        private static bool MatchesInstance(DBLeaderboardInstance existing, LeaderboardInstanceSpec requested)
+        {
+            return existing.LeaderboardId == requested.LeaderboardId && existing.State == requested.State
+                && existing.ActivationDate == requested.ActivationDate && existing.Visible == requested.Visible;
+        }
+
+        private static bool HasExactMappings(IReadOnlyCollection<DBMetaEntry> existingMappings, IReadOnlyList<LeaderboardMetaMapping> requestedMappings, long instanceId)
+        {
+            return existingMappings.Count == requestedMappings.Count
+                && requestedMappings.All(requested => existingMappings.Any(existing => existing.LeaderboardId == requested.LeaderboardId
+                    && existing.InstanceId == instanceId && existing.SubLeaderboardId == requested.SubLeaderboardId && existing.SubInstanceId == requested.SubInstanceId));
+        }
 
         private static DBLeaderboardEntry CloneEntry(DBLeaderboardEntry entry)
         {
