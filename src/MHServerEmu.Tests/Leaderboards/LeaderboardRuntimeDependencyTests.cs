@@ -46,6 +46,18 @@ namespace MHServerEmu.Tests.Leaderboards
         }
 
         [Fact]
+        public void ProductionLeaderboardRuntime_UsesOnlyTheLeaderboardStoreContract()
+        {
+            string root = FindRoot();
+            string[] offenders = Directory.EnumerateFiles(Path.Combine(root, "src", "MHServerEmu.Leaderboards"), "*.cs", SearchOption.AllDirectories)
+                .Where(path => File.ReadAllText(path).Contains("SQLiteLeaderboardDBManager", StringComparison.Ordinal)
+                    || File.ReadAllText(path).Contains("DBManager", StringComparison.Ordinal))
+                .ToArray();
+
+            Assert.Empty(offenders);
+        }
+
+        [Fact]
         public void LeaderboardInstance_DoesNotReadStaticConfiguration()
         {
             string root = FindRoot();

@@ -339,14 +339,6 @@ namespace MHServerEmu.Leaderboards
                 // Add new instance
                 Logger.Info($"RefreshInstance(): Adding new instance {Prototype.DataRef.GetNameFormatted()} {refreshInstance.InstanceId}");
 
-                if (Prototype.IsMetaLeaderboard)
-                {
-                    // Get the previous instance of this leaderboard (InstanceId - 1)
-                    LeaderboardInstance previousInstance = GetInstance((ulong)refreshInstance.InstanceId - 1, true);
-                    // add new SubInstances
-                    previousInstance?.AddNewMetaEntries((ulong)refreshInstance.InstanceId);
-                }
-
                 AddInstance(refreshInstance, false);
                 OnStateChange((ulong)refreshInstance.InstanceId, LeaderboardState.eLBS_Created);
             }

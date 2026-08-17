@@ -48,13 +48,30 @@ namespace MHServerEmu.Tests.Leaderboards
         [Fact]
         public void ReloadSchedule_DrainsScoresAndSavesBeforeReconciliation()
         {
-            string source = File.ReadAllText(Path.Combine(FindRoot(), "src/MHServerEmu.Leaderboards/LeaderboardService.cs"));
-            int drain = source.IndexOf("_database.ProcessLeaderboardScoreUpdateQueue();", StringComparison.Ordinal);
-            int save = source.IndexOf("_database.Save()", StringComparison.Ordinal);
-            int reload = source.IndexOf("_database.ReloadAndReapplySchedule()", StringComparison.Ordinal);
+            string source = File.ReadAllText(Path.Combine(FindRoot(), "src/MHServerEmu.Leaderboards/LeaderboardDatabase.cs"));
+            int drain = source.IndexOf("ProcessLeaderboardScoreUpdateQueue();", StringComparison.Ordinal);
+            int save = source.IndexOf("Save()", drain, StringComparison.Ordinal);
+            int reload = source.IndexOf("_store.ReconcileSchedule", save, StringComparison.Ordinal);
 
             Assert.InRange(drain, 0, save - 1);
             Assert.InRange(save, 0, reload - 1);
+        }
+
+        [Fact]
+        public void ReloadSchedule_BlocksScoreAcceptanceUntilTheReplacementSnapshotIsApplied()
+        {
+            string source = File.ReadAllText(Path.Combine(FindRoot(), "src/MHServerEmu.Leaderboards/LeaderboardDatabase.cs"));
+            int reloadLock = source.IndexOf("lock (_scoreUpdateLock)", StringComparison.Ordinal);
+            Assert.True(reloadLock >= 0);
+            if (reloadLock < 0)
+                return;
+            int drain = source.IndexOf("ProcessLeaderboardScoreUpdateQueue();", reloadLock, StringComparison.Ordinal);
+            int save = source.IndexOf("Save()", drain, StringComparison.Ordinal);
+            int applySnapshot = source.IndexOf("ApplySnapshot(snapshot);", save, StringComparison.Ordinal);
+
+            Assert.InRange(reloadLock, 0, drain - 1);
+            Assert.InRange(drain, 0, save - 1);
+            Assert.InRange(save, 0, applySnapshot - 1);
         }
 
         private static LeaderboardService CreateRunningService()

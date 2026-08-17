@@ -303,11 +303,6 @@ namespace MHServerEmu.Leaderboards
             return metaEntries;
         }
 
-        public void AddNewMetaEntries(ulong instanceId)
-        {
-            _leaderboard.Database.InsertMetaEntries(GetNewMetaEntries(instanceId));
-        }
-
         /// <summary>
         /// Binds a SubLeaderboard instance to this MetaLeaderboard.
         /// </summary>
