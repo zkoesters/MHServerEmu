@@ -560,6 +560,40 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
                 "SELECT COUNT(*) FROM mhserveremu.leaderboard_reward WHERE instance_id = 10"));
         }
 
+        [PostgreSQLIntegrationTheory]
+        [InlineData(0)]
+        [InlineData(-1)]
+        public async Task GenerateRewards_RejectsNonPositiveRanksWithoutTransitioningState(int rank)
+        {
+            await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
+            await InsertDefinitionAsync(fixture, 1);
+            await InsertInstanceAsync(fixture, 10, 1, true, LeaderboardState.eLBS_Expired);
+
+            Assert.Equal(LeaderboardStoreResult.InvalidData, fixture.Leaderboards.GenerateRewards(Rewards(1, 10,
+                new LeaderboardRewardWrite(1, 10, 100, 20, rank, 300))));
+
+            Assert.Equal((short)LeaderboardState.eLBS_Expired, await ScalarAsync(fixture,
+                "SELECT state FROM mhserveremu.leaderboard_instance WHERE instance_id = 10"));
+            Assert.Equal(0L, await ScalarAsync(fixture,
+                "SELECT COUNT(*) FROM mhserveremu.leaderboard_reward WHERE instance_id = 10"));
+        }
+
+        [PostgreSQLIntegrationFact]
+        public async Task GenerateRewards_UsesOneThousandRowUnnestBatch()
+        {
+            await using PostgreSQLStoreTestFixture fixture = await PostgreSQLStoreTestFixture.StartAsync(_database);
+            await InsertDefinitionAsync(fixture, 1);
+            await InsertInstanceAsync(fixture, 10, 1, true, LeaderboardState.eLBS_Expired);
+            LeaderboardRewardWrite[] rewards = Enumerable.Range(1, 1000)
+                .Select(index => new LeaderboardRewardWrite(1, 10, 10_000 + index, 20_000 + index, index, 30_000 + index))
+                .ToArray();
+
+            Assert.Equal(LeaderboardStoreResult.Success, fixture.Leaderboards.GenerateRewards(Rewards(1, 10, rewards)));
+            Assert.Equal(1000L, await ScalarAsync(fixture,
+                "SELECT COUNT(*) FROM mhserveremu.leaderboard_reward WHERE leaderboard_id = 1 AND instance_id = 10"));
+            Assert.Equal((10_777L, 777, 30_777L), await ReadRewardValuesAsync(fixture, 10, 20_777));
+        }
+
         [PostgreSQLIntegrationFact]
         public async Task PendingRewards_AreDetachedAndFinalizationUsesFullKeyWithoutTimestampOverwrite()
         {
@@ -798,6 +832,17 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL.Stores
         {
             return (bool)await ScalarAsync(fixture, "SELECT visible FROM mhserveremu.leaderboard_instance WHERE instance_id = @instanceId",
                 ("instanceId", NpgsqlDbType.Bigint, instanceId));
+        }
+
+        private static async Task<(long RewardId, int Rank, long CreationDate)> ReadRewardValuesAsync(PostgreSQLStoreTestFixture fixture, long instanceId, long participantId)
+        {
+            await using NpgsqlConnection connection = await fixture.Provider.DataSource.OpenConnectionAsync();
+            await using NpgsqlCommand command = new("SELECT reward_id, rank, creation_date FROM mhserveremu.leaderboard_reward WHERE instance_id = @instanceId AND participant_id = @participantId", connection);
+            command.Parameters.AddWithValue("instanceId", NpgsqlDbType.Bigint, instanceId);
+            command.Parameters.AddWithValue("participantId", NpgsqlDbType.Bigint, participantId);
+            await using NpgsqlDataReader reader = await command.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            return (reader.GetInt64(0), reader.GetInt32(1), reader.GetInt64(2));
         }
 
         private static async Task ExecuteAsync(PostgreSQLStoreTestFixture fixture, string sql, params (string Name, NpgsqlDbType Type, object Value)[] parameters)
