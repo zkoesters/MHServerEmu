@@ -20,6 +20,32 @@ namespace MHServerEmu.Core.Tests.Network
         }
 
         [Fact]
+        public async Task RunServices_ServiceStopsDuringStartup_ReturnsFalseWithoutWaitingIndefinitely()
+        {
+            ServerManager manager = new();
+            manager.RegisterGameService(new StoppedService(), GameServiceType.GameInstance);
+
+            Task<bool> run = Task.Run(manager.RunServices);
+
+            Assert.False(await run.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+
+        [Fact]
+        public async Task ShutdownServices_WhileServiceIsStarting_RequestsServiceShutdownAndUnblocksStartup()
+        {
+            ServerManager manager = new();
+            StartingService starting = new();
+            manager.RegisterGameService(starting, GameServiceType.GameInstance);
+
+            Task<bool> run = Task.Run(manager.RunServices);
+            await starting.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            manager.ShutdownServices();
+
+            Assert.False(await run.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.Equal(1, starting.ShutdownCount);
+        }
+
+        [Fact]
         public async Task RunServices_ServiceThrowsAfterRunning_ReportsFaultAndShutdownDoesNotHang()
         {
             ServerManager manager = new();
@@ -70,6 +96,42 @@ namespace MHServerEmu.Core.Tests.Network
 
             public void Run() => throw new InvalidOperationException("startup failure");
             public void Shutdown() { }
+            public void ReceiveServiceMessage<T>(in T message) where T : struct, IGameServiceMessage { }
+            public void GetStatus(Dictionary<string, long> statusDict) { }
+        }
+
+        private sealed class StoppedService : IGameService
+        {
+            public GameServiceState State { get; private set; } = GameServiceState.Created;
+
+            public void Run() => State = GameServiceState.Shutdown;
+            public void Shutdown() => State = GameServiceState.Shutdown;
+            public void ReceiveServiceMessage<T>(in T message) where T : struct, IGameServiceMessage { }
+            public void GetStatus(Dictionary<string, long> statusDict) { }
+        }
+
+        private sealed class StartingService : IGameService
+        {
+            private readonly ManualResetEventSlim _shutdown = new();
+
+            public TaskCompletionSource<bool> Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            public GameServiceState State { get; private set; } = GameServiceState.Created;
+            public int ShutdownCount { get; private set; }
+
+            public void Run()
+            {
+                Started.TrySetResult(true);
+                _shutdown.Wait();
+                State = GameServiceState.Shutdown;
+            }
+
+            public void Shutdown()
+            {
+                ShutdownCount++;
+                State = GameServiceState.ShuttingDown;
+                _shutdown.Set();
+            }
+
             public void ReceiveServiceMessage<T>(in T message) where T : struct, IGameServiceMessage { }
             public void GetStatus(Dictionary<string, long> statusDict) { }
         }
