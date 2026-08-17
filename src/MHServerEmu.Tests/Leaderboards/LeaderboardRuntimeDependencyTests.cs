@@ -32,6 +32,14 @@ namespace MHServerEmu.Tests.Leaderboards
             Assert.DoesNotContain("ConfigManager" + ".Instance", File.ReadAllText(Path.Combine(root, "src/MHServerEmu.Leaderboards/LeaderboardInstance.cs")), StringComparison.Ordinal);
         }
 
+        [Fact]
+        public void ClientLookups_LoadArchivedInstancesOnDemand()
+        {
+            string source = File.ReadAllText(Path.Combine(FindRoot(), "src/MHServerEmu.Leaderboards/LeaderboardDatabase.cs"));
+
+            Assert.Equal(2, source.Split("leaderboard.GetInstance(instanceId, true)", StringSplitOptions.None).Length - 1);
+        }
+
         private static string FindRoot()
         {
             DirectoryInfo directory = new(AppContext.BaseDirectory);
