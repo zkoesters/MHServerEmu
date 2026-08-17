@@ -12,6 +12,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
         private const int CurrentSchemaVersion = 1;         // Increment this when making changes to the database schema
 
         private static readonly Logger Logger = LogManager.CreateLogger();
+        private static readonly Lazy<IReadOnlyDictionary<string, string>> SchemaVersionOneMetadata = new(CreateSchemaVersionOneMetadata);
         public static SQLiteLeaderboardDBManager Instance { get; } = new();
 
         private string _dbFilePath;
@@ -101,32 +102,36 @@ namespace MHServerEmu.DatabaseAccess.SQLite
 
         private static bool HasSchemaVersionOneMetadata(SQLiteConnection connection)
         {
-            Dictionary<string, string[]> tables = new()
-            {
-                ["Leaderboards"] = ["LeaderboardId", "PrototypeName", "ActiveInstanceId", "IsEnabled", "StartTime", "MaxResetCount"],
-                ["Instances"] = ["InstanceId", "LeaderboardId", "State", "ActivationDate", "Visible"],
-                ["Entries"] = ["InstanceId", "ParticipantId", "Score", "HighScore", "RuleStates"],
-                ["MetaEntries"] = ["LeaderboardId", "InstanceId", "SubLeaderboardId", "SubInstanceId"],
-                ["Rewards"] = ["LeaderboardId", "InstanceId", "ParticipantId", "Rank", "RewardId", "CreationDate", "RewardedDate"],
-            };
-            Dictionary<string, string[]> indexes = new()
-            {
-                ["idx_instances_leaderboardid"] = ["LeaderboardId"],
-                ["idx_entries_instanceid"] = ["InstanceId"],
-                ["idx_rewards_participantid"] = ["ParticipantId"],
-            };
-
-            return tables.All(table => connection.Query<SQLiteSchemaColumn>($"PRAGMA table_info([{table.Key}])")
-                    .Select(column => column.Name)
-                    .SequenceEqual(table.Value))
-                && indexes.All(index => connection.Query<SQLiteSchemaColumn>($"PRAGMA index_info([{index.Key}])")
-                    .Select(column => column.Name)
-                    .SequenceEqual(index.Value));
+            return ReadSchemaMetadata(connection).OrderBy(pair => pair.Key).SequenceEqual(SchemaVersionOneMetadata.Value.OrderBy(pair => pair.Key));
         }
 
-        private sealed class SQLiteSchemaColumn
+        private static IReadOnlyDictionary<string, string> CreateSchemaVersionOneMetadata()
         {
+            using SQLiteConnection connection = new("Data Source=:memory:");
+            connection.Open();
+            connection.Execute(SQLiteScripts.GetLeaderboardsScript());
+            return ReadSchemaMetadata(connection);
+        }
+
+        private static IReadOnlyDictionary<string, string> ReadSchemaMetadata(SQLiteConnection connection)
+        {
+            return connection.Query<SQLiteSchemaObject>(@"
+                SELECT Type, Name, Sql FROM sqlite_master
+                WHERE Type IN ('table', 'index') AND Name NOT LIKE 'sqlite_%'")
+                .ToDictionary(schema => $"{schema.Type}:{schema.Name}", schema => NormalizeSchemaSql(schema.Sql));
+        }
+
+        private static string NormalizeSchemaSql(string sql)
+        {
+            return new string(sql.Where(character => char.IsWhiteSpace(character) == false && character != '"' && character != '[' && character != ']').ToArray())
+                .ToUpperInvariant();
+        }
+
+        private sealed class SQLiteSchemaObject
+        {
+            public string Type { get; set; }
             public string Name { get; set; }
+            public string Sql { get; set; }
         }
 
         public LeaderboardStoreResult LoadEntries(long instanceId, out IReadOnlyList<DBLeaderboardEntry> entries)
@@ -193,7 +198,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                     WHERE LeaderboardId = @LeaderboardId AND Visible = 1
                       AND (@BeforeInstanceId = 0
                         OR (@BeforeInstanceId < 0 AND (InstanceId < @BeforeInstanceId OR InstanceId >= 0))
-                        OR (@BeforeInstanceId >= 0 AND (InstanceId < 0 OR (InstanceId >= 0 AND InstanceId < @BeforeInstanceId))))
+                        OR (@BeforeInstanceId > 0 AND InstanceId >= 0 AND InstanceId < @BeforeInstanceId))
                     ORDER BY CASE WHEN InstanceId < 0 THEN 0 ELSE 1 END, InstanceId DESC
                     LIMIT @Limit",
                     new { LeaderboardId = leaderboardId, BeforeInstanceId = beforeInstanceId, Limit = limit })
@@ -225,7 +230,7 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                     return LeaderboardStoreResult.InvalidData;
 
                 Dictionary<long, DBLeaderboard> currentById = currentDefinitions.ToDictionary(definition => definition.LeaderboardId);
-                if (HasTerminalizationOwnershipMismatch(currentDefinitions, currentInstances, desiredDefinitions))
+                if (HasActiveInstanceOwnershipMismatch(currentDefinitions, currentInstances))
                     return LeaderboardStoreResult.InvalidData;
 
                 Dictionary<long, long> activeInstanceIds = new();
@@ -415,11 +420,10 @@ namespace MHServerEmu.DatabaseAccess.SQLite
                     && activeInstanceIds[mapping.SubLeaderboardId] == mapping.SubInstanceId);
         }
 
-        private static bool HasTerminalizationOwnershipMismatch(IEnumerable<DBLeaderboard> currentDefinitions,
-            IReadOnlyList<DBLeaderboardInstance> currentInstances, IReadOnlyDictionary<long, LeaderboardDefinitionSpec> desiredDefinitions)
+        private static bool HasActiveInstanceOwnershipMismatch(IEnumerable<DBLeaderboard> currentDefinitions,
+            IReadOnlyList<DBLeaderboardInstance> currentInstances)
         {
             return currentDefinitions
-                .Where(definition => desiredDefinitions.TryGetValue(definition.LeaderboardId, out LeaderboardDefinitionSpec desired) == false || desired.IsEnabled == false)
                 .Any(definition => currentInstances.Any(instance => instance.LeaderboardId == definition.LeaderboardId
                     && instance.InstanceId == definition.ActiveInstanceId) == false);
         }
