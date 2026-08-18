@@ -10,23 +10,31 @@ namespace MHServerEmu.Games.Network.InstanceManagement
     {
         private static readonly Logger Logger = LogManager.CreateLogger();
 
+        private readonly object _gameThreadsLock = new();
         private readonly Dictionary<uint, GameThread> _gameThreads = new();
         private readonly PriorityQueue<Game, TimeSpan> _gameUpdateQueue = new();
 
         private readonly GameInstanceService _gis;
+        private readonly Action _initializeThreadLocalStorage;
 
         private bool _isInitialized = false;
         private uint _currentThreadId = 1;
 
-        public int ThreadCount { get => _gameThreads.Count; }
+        public int ThreadCount { get { lock (_gameThreadsLock) { return _gameThreads.Count; } } }
         public int GameCount { get { lock (_gameUpdateQueue) { return _gameUpdateQueue.Count; } } }
 
         /// <summary>
         /// Constructs a <see cref="GameThreadManager"/> for the provided <see cref="GameInstanceService"/>.
         /// </summary>
         public GameThreadManager(GameInstanceService gis)
+            : this(gis, null)
+        {
+        }
+
+        internal GameThreadManager(GameInstanceService gis, Action initializeThreadLocalStorage)
         {
             _gis = gis;
+            _initializeThreadLocalStorage = initializeThreadLocalStorage;
         }
 
         /// <summary>
@@ -34,25 +42,28 @@ namespace MHServerEmu.Games.Network.InstanceManagement
         /// </summary>
         public void Initialize()
         {
-            if (_isInitialized)
-                throw new InvalidOperationException("GameThreadManager is already initialized.");
-
-            // Always have at least 1 runner thread
-            int numThreads = _gis.Config.NumWorkerThreads;
-
-            if (numThreads < 1)
+            lock (_gameThreadsLock)
             {
-                Logger.Warn("Initialize(): numThreads < 1, defaulting to 1");
-                numThreads = 1;
-            }
+                if (_isInitialized)
+                    throw new InvalidOperationException("GameThreadManager is already initialized.");
 
-            for (int i = 0; i < numThreads; i++)
-            {
-                GameThread thread = CreateThread();
-                thread.Start();
-            }
+                // Always have at least 1 runner thread
+                int numThreads = _gis.Config.NumWorkerThreads;
 
-            _isInitialized = true;
+                if (numThreads < 1)
+                {
+                    Logger.Warn("Initialize(): numThreads < 1, defaulting to 1");
+                    numThreads = 1;
+                }
+
+                for (int i = 0; i < numThreads; i++)
+                {
+                    GameThread thread = CreateThread();
+                    thread.Start();
+                }
+
+                _isInitialized = true;
+            }
         }
 
         /// <summary>
@@ -60,8 +71,16 @@ namespace MHServerEmu.Games.Network.InstanceManagement
         /// </summary>
         public void Shutdown()
         {
-            if (_isInitialized == false)
-                return;
+            GameThread[] gameThreads;
+
+            lock (_gameThreadsLock)
+            {
+                if (_isInitialized == false)
+                    return;
+
+                _isInitialized = false;
+                gameThreads = _gameThreads.Values.ToArray();
+            }
 
             // There should be no running games by the time this gets shut down
             lock (_gameUpdateQueue)
@@ -72,11 +91,14 @@ namespace MHServerEmu.Games.Network.InstanceManagement
                     Logger.Warn($"Shutdown(): {gameCount} games still need updating");
             }
 
-            foreach (GameThread thread in _gameThreads.Values.ToArray())
-            {
+            foreach (GameThread thread in gameThreads)
                 thread.Stop();
+
+            foreach (GameThread thread in gameThreads)
+                thread.WaitForStop();
+
+            foreach (GameThread thread in gameThreads)
                 RemoveThread(thread.Id);
-            }
         }
 
         /// <summary>
@@ -112,7 +134,7 @@ namespace MHServerEmu.Games.Network.InstanceManagement
         /// </summary>
         private GameThread CreateThread()
         {
-            GameThread thread = new(this, _currentThreadId++);
+            GameThread thread = new(this, _currentThreadId++, _initializeThreadLocalStorage);
             _gameThreads.Add(thread.Id, thread);
 
             Logger.Trace($"Created GameThread {thread.Id}");
@@ -124,8 +146,11 @@ namespace MHServerEmu.Games.Network.InstanceManagement
         /// </summary>
         private bool RemoveThread(uint threadId)
         {
-            if (_gameThreads.Remove(threadId) == false)
-                return Logger.WarnReturn(false, $"RemoveThread(): Failed to remove GameThread {threadId}");
+            lock (_gameThreadsLock)
+            {
+                if (_gameThreads.Remove(threadId) == false)
+                    return Logger.WarnReturn(false, $"RemoveThread(): Failed to remove GameThread {threadId}");
+            }
 
             Logger.Trace($"Removed GameThread {threadId}");
             return false;

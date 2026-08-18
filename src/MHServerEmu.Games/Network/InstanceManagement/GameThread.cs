@@ -28,19 +28,28 @@ namespace MHServerEmu.Games.Network.InstanceManagement
         private static readonly Logger Logger = LogManager.CreateLogger();
 
         private readonly GameThreadManager _threadManager;
+        private readonly object _threadLock = new();
+        private readonly Action _initializeThreadLocalStorage;
 
         private Thread _thread = null;
+        private int _state = (int)GameThreadState.Created;
 
         public uint Id { get; }
-        public GameThreadState State { get; private set; } = GameThreadState.Created;
+        public GameThreadState State { get => (GameThreadState)Volatile.Read(ref _state); private set => Volatile.Write(ref _state, (int)value); }
 
         /// <summary>
         /// Constructs a new <see cref="GameThread"/> instance.
         /// </summary>
         public GameThread(GameThreadManager threadManager, uint id)
+            : this(threadManager, id, null)
+        {
+        }
+
+        internal GameThread(GameThreadManager threadManager, uint id, Action initializeThreadLocalStorage)
         {
             _threadManager = threadManager;
             Id = id;
+            _initializeThreadLocalStorage = initializeThreadLocalStorage;
         }
 
         public override string ToString()
@@ -53,25 +62,28 @@ namespace MHServerEmu.Games.Network.InstanceManagement
         /// </summary>
         public bool Start()
         {
-            if (State != GameThreadState.Created)
-                return Logger.WarnReturn(false, $"Start(): Invalid state [{State}] for GameThread [{this}]");
-
-            State = GameThreadState.Starting;
-
-            if (_thread != null)
-                throw new InvalidOperationException($"Existing C# thread [{_thread}] found.");
-
-            _thread = new(Run)
+            lock (_threadLock)
             {
-                Name = $"GameThread {Id}",  // We don't have a managed id until we create the thread
-                IsBackground = true,
-                CurrentCulture = CultureInfo.InvariantCulture,
-                Priority = ThreadPriority.AboveNormal,
-            };
+                if (State != GameThreadState.Created)
+                    return Logger.WarnReturn(false, $"Start(): Invalid state [{State}] for GameThread [{this}]");
 
-            _thread.Start();
+                State = GameThreadState.Starting;
 
-            return true;
+                if (_thread != null)
+                    throw new InvalidOperationException($"Existing C# thread [{_thread}] found.");
+
+                _thread = new(Run)
+                {
+                    Name = $"GameThread {Id}",  // We don't have a managed id until we create the thread
+                    IsBackground = true,
+                    CurrentCulture = CultureInfo.InvariantCulture,
+                    Priority = ThreadPriority.AboveNormal,
+                };
+
+                _thread.Start();
+
+                return true;
+            }
         }
 
         /// <summary>
@@ -79,11 +91,26 @@ namespace MHServerEmu.Games.Network.InstanceManagement
         /// </summary>
         public bool Stop()
         {
-            if (State != GameThreadState.Starting && State != GameThreadState.Running)
-                return Logger.WarnReturn(false, $"Stop(): Invalid state [{State}] for GameThread [{this}]");
+            lock (_threadLock)
+            {
+                if (State != GameThreadState.Starting && State != GameThreadState.Running)
+                    return Logger.WarnReturn(false, $"Stop(): Invalid state [{State}] for GameThread [{this}]");
 
-            State = GameThreadState.Stopping;
-            return true;
+                State = GameThreadState.Stopping;
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Waits for the underlying managed thread to stop.
+        /// </summary>
+        internal void WaitForStop()
+        {
+            Thread thread;
+            lock (_threadLock)
+                thread = _thread;
+
+            thread?.Join();
         }
 
         /// <summary>
@@ -91,23 +118,37 @@ namespace MHServerEmu.Games.Network.InstanceManagement
         /// </summary>
         private void Run()
         {
-            if (State != GameThreadState.Starting && State != GameThreadState.Stopping)
-                throw new InvalidOperationException($"Invalid state [{State}] for GameThread [{this}].");
+            try
+            {
+                if (State != GameThreadState.Starting && State != GameThreadState.Stopping)
+                    throw new InvalidOperationException($"Invalid state [{State}] for GameThread [{this}].");
 
-            InitializeThreadLocalStorage();
+                if (_initializeThreadLocalStorage != null)
+                    _initializeThreadLocalStorage();
+                else
+                    InitializeThreadLocalStorage();
 
-            if (State == GameThreadState.Starting)
-                State = GameThreadState.Running;
+                lock (_threadLock)
+                {
+                    if (State == GameThreadState.Starting)
+                        State = GameThreadState.Running;
+                }
 
-            Logger.Info($"Worker thread [{this}] started");
+                Logger.Info($"Worker thread [{this}] started");
 
-            while (State == GameThreadState.Running)
-                UpdateGame();
+                while (State == GameThreadState.Running)
+                    UpdateGame();
+            }
+            finally
+            {
+                lock (_threadLock)
+                {
+                    State = GameThreadState.Stopped;
+                    _thread = null;
+                }
 
-            State = GameThreadState.Stopped;
-            _thread = null;
-
-            Logger.Info($"Worker thread [{this}] stopped");
+                Logger.Info($"Worker thread [{this}] stopped");
+            }
         }
 
         /// <summary>
