@@ -79,7 +79,7 @@ namespace MHServerEmu.Games.Network.InstanceManagement
         /// </summary>
         public bool Stop()
         {
-            if (State != GameThreadState.Running)
+            if (State != GameThreadState.Starting && State != GameThreadState.Running)
                 return Logger.WarnReturn(false, $"Stop(): Invalid state [{State}] for GameThread [{this}]");
 
             State = GameThreadState.Stopping;
@@ -91,12 +91,13 @@ namespace MHServerEmu.Games.Network.InstanceManagement
         /// </summary>
         private void Run()
         {
-            if (State != GameThreadState.Starting)
+            if (State != GameThreadState.Starting && State != GameThreadState.Stopping)
                 throw new InvalidOperationException($"Invalid state [{State}] for GameThread [{this}].");
 
             InitializeThreadLocalStorage();
 
-            State = GameThreadState.Running;
+            if (State == GameThreadState.Starting)
+                State = GameThreadState.Running;
 
             Logger.Info($"Worker thread [{this}] started");
 

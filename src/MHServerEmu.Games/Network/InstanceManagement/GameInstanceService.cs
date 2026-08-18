@@ -8,6 +8,7 @@ namespace MHServerEmu.Games.Network.InstanceManagement
     public class GameInstanceService : IGameService
     {
         private static readonly Logger Logger = LogManager.CreateLogger();
+        private readonly ManualResetEventSlim _shutdown = new();
 
         internal GameManager GameManager { get; }
         internal GameThreadManager GameThreadManager { get; }
@@ -31,6 +32,7 @@ namespace MHServerEmu.Games.Network.InstanceManagement
             GameThreadManager.Initialize();
 
             State = GameServiceState.Running;
+            _shutdown.Wait();
         }
 
         public void Shutdown()
@@ -40,7 +42,9 @@ namespace MHServerEmu.Games.Network.InstanceManagement
             if (gameCount > 0)
                 Logger.Warn($"Shutdown(): {gameCount} games are still running");
 
+            GameThreadManager.Shutdown();
             State = GameServiceState.Shutdown;
+            _shutdown.Set();
         }
 
         public void ReceiveServiceMessage<T>(in T message) where T : struct, IGameServiceMessage

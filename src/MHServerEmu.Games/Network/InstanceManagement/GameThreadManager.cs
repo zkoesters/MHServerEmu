@@ -72,7 +72,7 @@ namespace MHServerEmu.Games.Network.InstanceManagement
                     Logger.Warn($"Shutdown(): {gameCount} games still need updating");
             }
 
-            foreach (GameThread thread in _gameThreads.Values)
+            foreach (GameThread thread in _gameThreads.Values.ToArray())
             {
                 thread.Stop();
                 RemoveThread(thread.Id);
