@@ -8,7 +8,7 @@
 
 `GameInstanceService` will own the lifetime of the manager-created service thread. After initializing its game worker threads and entering `Running`, `Run()` will wait for a shutdown signal.
 
-`Shutdown()` will preserve its current game-count warning, stop the game worker threads, set the service state to `Shutdown`, and signal `Run()` to return. This makes the return expected because `ServerManager` has already transitioned to shutdown.
+`Shutdown()` will preserve its current game-count warning, stop the game worker threads, set the service state to `Shutdown`, and signal `Run()` to return. Workers that are still transitioning from `Starting` to `Running` will honor the stop request rather than being left active. This makes the return expected because `ServerManager` has already transitioned to shutdown.
 
 `ServerManager` remains generic: any service that returns before shutdown continues to be reported as a runtime failure. No service-specific exception or interface capability is added.
 
