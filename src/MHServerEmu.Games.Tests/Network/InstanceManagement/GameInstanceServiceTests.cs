@@ -19,9 +19,9 @@ namespace MHServerEmu.Games.Tests.Network.InstanceManagement
             finally
             {
                 service.Shutdown();
+                await run.WaitAsync(TimeSpan.FromSeconds(5));
             }
 
-            await run.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(GameServiceState.Shutdown, service.State);
         }
 
