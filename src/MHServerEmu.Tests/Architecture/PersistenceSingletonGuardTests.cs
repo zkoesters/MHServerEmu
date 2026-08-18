@@ -133,7 +133,7 @@ namespace MHServerEmu.Tests.Architecture
 
         private static bool IsConcreteStoreProviderOrCompositionPath(string repositoryRoot, string path)
         {
-            string relativePath = Path.GetRelativePath(repositoryRoot, path);
+            string relativePath = Path.GetRelativePath(repositoryRoot, path).Replace('\\', '/');
             return relativePath is "src/MHServerEmu/Persistence/PersistenceComposition.cs"
                 or "src/MHServerEmu.DatabaseAccess.PostgreSQL/PostgreSQLPersistenceFacade.cs"
                 or "src/MHServerEmu.DatabaseAccess.PostgreSQL/PostgreSQLLeaderboardStore.cs"
