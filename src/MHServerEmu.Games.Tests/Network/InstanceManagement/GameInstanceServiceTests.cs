@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Reflection;
 using MHServerEmu.Core.Network;
 using MHServerEmu.Games.Network.InstanceManagement;
@@ -52,11 +53,16 @@ namespace MHServerEmu.Games.Tests.Network.InstanceManagement
         {
             using ManualResetEventSlim initializationStarted = new();
             using ManualResetEventSlim continueInitialization = new();
-            GameInstanceService service = CreateService(() =>
+            using ManualResetEventSlim shutdownRequested = new();
+            int shutdownReturned = 0;
+            int shutdownReturnedBeforeWorkerReleased = 0;
+            GameInstanceService service = CreateCoordinatedService(() =>
             {
                 initializationStarted.Set();
                 continueInitialization.Wait();
-            });
+                if (Volatile.Read(ref shutdownReturned) != 0)
+                    Interlocked.Exchange(ref shutdownReturnedBeforeWorkerReleased, 1);
+            }, beforeShutdownLock: shutdownRequested.Set);
             Task run = Task.Run(service.Run);
 
             try
@@ -66,13 +72,96 @@ namespace MHServerEmu.Games.Tests.Network.InstanceManagement
                 GameThread[] gameThreads = GetGameThreads(GetThreadManager(service));
                 Assert.All(gameThreads, gameThread => Assert.Equal(GameThreadState.Starting, gameThread.State));
 
-                Task shutdown = Task.Run(service.Shutdown);
-                Assert.False(shutdown.Wait(TimeSpan.FromMilliseconds(100)));
+                Task shutdown = Task.Run(() =>
+                {
+                    service.Shutdown();
+                    Volatile.Write(ref shutdownReturned, 1);
+                });
+                Assert.True(shutdownRequested.Wait(TimeSpan.FromSeconds(5)));
 
                 continueInitialization.Set();
                 await shutdown.WaitAsync(TimeSpan.FromSeconds(5));
                 await run.WaitAsync(TimeSpan.FromSeconds(5));
 
+                Assert.Equal(0, Volatile.Read(ref shutdownReturnedBeforeWorkerReleased));
+                Assert.All(gameThreads, gameThread => Assert.Equal(GameThreadState.Stopped, gameThread.State));
+                Assert.Equal(0, GetThreadManager(service).ThreadCount);
+            }
+            finally
+            {
+                continueInitialization.Set();
+                service.Shutdown();
+                await run.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+        }
+
+        [Fact]
+        public async Task Run_InitializationFailure_StopsStartedWorkers()
+        {
+            using ManualResetEventSlim workerInitializationStarted = new();
+            using ManualResetEventSlim continueWorkerInitialization = new();
+            GameInstanceService service = CreateCoordinatedService(
+                () =>
+                {
+                    workerInitializationStarted.Set();
+                    continueWorkerInitialization.Wait();
+                },
+                failStart: threadId => threadId == 2);
+            SetWorkerCount(service, 2);
+            Task run = Task.Run(service.Run);
+
+            try
+            {
+                Assert.True(workerInitializationStarted.Wait(TimeSpan.FromSeconds(5)));
+                GameThread startedThread = Assert.Single(GetGameThreads(GetThreadManager(service)).Where(gameThread => gameThread.State != GameThreadState.Created));
+
+                continueWorkerInitialization.Set();
+                await Assert.ThrowsAsync<InvalidOperationException>(() => run.WaitAsync(TimeSpan.FromSeconds(5)));
+
+                service.Shutdown();
+                Assert.Equal(GameServiceState.Shutdown, service.State);
+                Assert.Equal(GameThreadState.Stopped, startedThread.State);
+                Assert.Equal(0, GetThreadManager(service).ThreadCount);
+            }
+            finally
+            {
+                continueWorkerInitialization.Set();
+                try { await run; } catch (InvalidOperationException) { }
+                service.Shutdown();
+            }
+        }
+
+        [Fact]
+        public async Task Shutdown_DuringRunInitialization_DoesNotPublishRunning()
+        {
+            using ManualResetEventSlim initializationBlocked = new();
+            using ManualResetEventSlim continueInitialization = new();
+            using ManualResetEventSlim shutdownRequested = new();
+            ConcurrentQueue<GameServiceState> stateChanges = new();
+            GameInstanceService service = CreateCoordinatedService(
+                beforeInitializeComplete: () =>
+                {
+                    initializationBlocked.Set();
+                    continueInitialization.Wait();
+                },
+                beforeShutdownLock: shutdownRequested.Set,
+                stateChanged: stateChanges.Enqueue);
+            Task run = Task.Run(service.Run);
+
+            try
+            {
+                Assert.True(initializationBlocked.Wait(TimeSpan.FromSeconds(5)));
+                GameThread[] gameThreads = GetGameThreads(GetThreadManager(service));
+                Task shutdown = Task.Run(service.Shutdown);
+                Assert.True(shutdownRequested.Wait(TimeSpan.FromSeconds(5)));
+
+                Assert.Equal(GameServiceState.Created, service.State);
+                continueInitialization.Set();
+                await shutdown.WaitAsync(TimeSpan.FromSeconds(5));
+                await run.WaitAsync(TimeSpan.FromSeconds(5));
+
+                Assert.DoesNotContain(GameServiceState.Running, stateChanges);
+                Assert.Equal(GameServiceState.Shutdown, service.State);
                 Assert.All(gameThreads, gameThread => Assert.Equal(GameThreadState.Stopped, gameThread.State));
                 Assert.Equal(0, GetThreadManager(service).ThreadCount);
             }
@@ -107,6 +196,20 @@ namespace MHServerEmu.Games.Tests.Network.InstanceManagement
         {
             ConstructorInfo constructor = typeof(GameInstanceService).GetConstructor(BindingFlags.Instance | BindingFlags.NonPublic, new[] { typeof(Action) });
             return Assert.IsType<GameInstanceService>(constructor.Invoke(new Action[] { initializeThreadLocalStorage ?? (() => { }) }));
+        }
+
+        private static GameInstanceService CreateCoordinatedService(Action initializeThreadLocalStorage = null, Action beforeInitializeComplete = null,
+            Func<uint, bool> failStart = null, Action beforeShutdownLock = null, Action<GameServiceState> stateChanged = null)
+        {
+            ConstructorInfo constructor = typeof(GameInstanceService).GetConstructor(BindingFlags.Instance | BindingFlags.NonPublic,
+                new[] { typeof(Action), typeof(Action), typeof(Func<uint, bool>), typeof(Action), typeof(Action<GameServiceState>) });
+            return Assert.IsType<GameInstanceService>(constructor.Invoke(new object[] { initializeThreadLocalStorage ?? (() => { }), beforeInitializeComplete, failStart, beforeShutdownLock, stateChanged }));
+        }
+
+        private static void SetWorkerCount(GameInstanceService service, int workerCount)
+        {
+            PropertyInfo numWorkerThreads = typeof(GameInstanceConfig).GetProperty("NumWorkerThreads", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            numWorkerThreads.SetValue(service.Config, workerCount);
         }
     }
 }

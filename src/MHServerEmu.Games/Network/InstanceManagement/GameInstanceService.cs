@@ -10,15 +10,26 @@ namespace MHServerEmu.Games.Network.InstanceManagement
         private static readonly Logger Logger = LogManager.CreateLogger();
         private readonly object _lifecycleLock = new();
         private readonly ManualResetEventSlim _shutdown = new();
+        private readonly Action _beforeShutdownLock;
+        private readonly Action<GameServiceState> _stateChanged;
 
         private int _state = (int)GameServiceState.Created;
+        private int _shutdownRequested;
 
         internal GameManager GameManager { get; }
         internal GameThreadManager GameThreadManager { get; }
 
         public GameInstanceConfig Config { get; }
 
-        public GameServiceState State { get => (GameServiceState)Volatile.Read(ref _state); private set => Volatile.Write(ref _state, (int)value); }
+        public GameServiceState State
+        {
+            get => (GameServiceState)Volatile.Read(ref _state);
+            private set
+            {
+                Volatile.Write(ref _state, (int)value);
+                _stateChanged?.Invoke(value);
+            }
+        }
 
         public GameInstanceService()
             : this(null)
@@ -26,9 +37,17 @@ namespace MHServerEmu.Games.Network.InstanceManagement
         }
 
         internal GameInstanceService(Action initializeThreadLocalStorage)
+            : this(initializeThreadLocalStorage, null, null, null, null)
+        {
+        }
+
+        internal GameInstanceService(Action initializeThreadLocalStorage, Action beforeInitializeComplete, Func<uint, bool> failStart,
+            Action beforeShutdownLock, Action<GameServiceState> stateChanged)
         {
             GameManager = new(this);
-            GameThreadManager = new(this, initializeThreadLocalStorage);
+            GameThreadManager = new(this, initializeThreadLocalStorage, beforeInitializeComplete, failStart);
+            _beforeShutdownLock = beforeShutdownLock;
+            _stateChanged = stateChanged;
 
             Config = ConfigManager.Instance.GetConfig<GameInstanceConfig>();
         }
@@ -37,20 +56,49 @@ namespace MHServerEmu.Games.Network.InstanceManagement
 
         public void Run()
         {
-            lock (_lifecycleLock)
-            {
-                if (State == GameServiceState.Created)
-                {
-                    GameThreadManager.Initialize();
-                    State = GameServiceState.Running;
-                }
-            }
+            bool shutdownWorkers = false;
 
-            _shutdown.Wait();
+            try
+            {
+                lock (_lifecycleLock)
+                {
+                    if (State == GameServiceState.Created)
+                    {
+                        GameThreadManager.Initialize();
+
+                        if (Volatile.Read(ref _shutdownRequested) == 0)
+                            State = GameServiceState.Running;
+                        else
+                        {
+                            State = GameServiceState.ShuttingDown;
+                            shutdownWorkers = true;
+                        }
+                    }
+                }
+
+                if (shutdownWorkers)
+                    CompleteShutdown();
+                else
+                    _shutdown.Wait();
+            }
+            catch
+            {
+                lock (_lifecycleLock)
+                {
+                    if (State != GameServiceState.Shutdown)
+                        State = GameServiceState.ShuttingDown;
+                }
+
+                CompleteShutdown();
+                throw;
+            }
         }
 
         public void Shutdown()
         {
+            Interlocked.Exchange(ref _shutdownRequested, 1);
+            _beforeShutdownLock?.Invoke();
+
             // All game instances should be shut down by the PlayerManager before we get here
             int gameCount = GameManager.GameCount;
             if (gameCount > 0)
@@ -78,19 +126,19 @@ namespace MHServerEmu.Games.Network.InstanceManagement
             }
 
             if (shutdownWorkers)
-            {
-                GameThreadManager.Shutdown();
-
-                lock (_lifecycleLock)
-                    State = GameServiceState.Shutdown;
-
-                _shutdown.Set();
-            }
+                CompleteShutdown();
             else
-            {
                 _shutdown.Wait();
-            }
+        }
 
+        private void CompleteShutdown()
+        {
+            GameThreadManager.Shutdown();
+
+            lock (_lifecycleLock)
+                State = GameServiceState.Shutdown;
+
+            _shutdown.Set();
         }
 
         public void ReceiveServiceMessage<T>(in T message) where T : struct, IGameServiceMessage

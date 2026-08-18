@@ -30,6 +30,7 @@ namespace MHServerEmu.Games.Network.InstanceManagement
         private readonly GameThreadManager _threadManager;
         private readonly object _threadLock = new();
         private readonly Action _initializeThreadLocalStorage;
+        private readonly Func<uint, bool> _failStart;
 
         private Thread _thread = null;
         private int _state = (int)GameThreadState.Created;
@@ -46,10 +47,16 @@ namespace MHServerEmu.Games.Network.InstanceManagement
         }
 
         internal GameThread(GameThreadManager threadManager, uint id, Action initializeThreadLocalStorage)
+            : this(threadManager, id, initializeThreadLocalStorage, null)
+        {
+        }
+
+        internal GameThread(GameThreadManager threadManager, uint id, Action initializeThreadLocalStorage, Func<uint, bool> failStart)
         {
             _threadManager = threadManager;
             Id = id;
             _initializeThreadLocalStorage = initializeThreadLocalStorage;
+            _failStart = failStart;
         }
 
         public override string ToString()
@@ -62,6 +69,9 @@ namespace MHServerEmu.Games.Network.InstanceManagement
         /// </summary>
         public bool Start()
         {
+            if (_failStart?.Invoke(Id) == true)
+                throw new InvalidOperationException($"Start(): Failed to start GameThread [{this}]");
+
             lock (_threadLock)
             {
                 if (State != GameThreadState.Created)
