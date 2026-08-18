@@ -33,6 +33,7 @@ namespace MHServerEmu.Games.Network.InstanceManagement
         private readonly Func<uint, bool> _failStart;
 
         private Thread _thread = null;
+        private bool _threadStarted;
         private int _state = (int)GameThreadState.Created;
 
         public uint Id { get; }
@@ -69,9 +70,6 @@ namespace MHServerEmu.Games.Network.InstanceManagement
         /// </summary>
         public bool Start()
         {
-            if (_failStart?.Invoke(Id) == true)
-                throw new InvalidOperationException($"Start(): Failed to start GameThread [{this}]");
-
             lock (_threadLock)
             {
                 if (State != GameThreadState.Created)
@@ -90,9 +88,21 @@ namespace MHServerEmu.Games.Network.InstanceManagement
                     Priority = ThreadPriority.AboveNormal,
                 };
 
-                _thread.Start();
+                try
+                {
+                    if (_failStart?.Invoke(Id) == true)
+                        throw new InvalidOperationException($"Start(): Failed to start GameThread [{this}]");
 
-                return true;
+                    _thread.Start();
+                    _threadStarted = true;
+                    return true;
+                }
+                catch
+                {
+                    _thread = null;
+                    State = GameThreadState.Stopped;
+                    throw;
+                }
             }
         }
 
@@ -118,7 +128,7 @@ namespace MHServerEmu.Games.Network.InstanceManagement
         {
             Thread thread;
             lock (_threadLock)
-                thread = _thread;
+                thread = _threadStarted ? _thread : null;
 
             thread?.Join();
         }
@@ -155,6 +165,7 @@ namespace MHServerEmu.Games.Network.InstanceManagement
                 {
                     State = GameThreadState.Stopped;
                     _thread = null;
+                    _threadStarted = false;
                 }
 
                 Logger.Info($"Worker thread [{this}] stopped");

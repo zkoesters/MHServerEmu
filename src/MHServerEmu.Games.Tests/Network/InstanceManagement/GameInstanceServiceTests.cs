@@ -96,7 +96,7 @@ namespace MHServerEmu.Games.Tests.Network.InstanceManagement
         }
 
         [Fact]
-        public async Task Run_InitializationFailure_StopsStartedWorkers()
+        public async Task Run_ThreadStartFailureAfterAllocation_RollsBackAllWorkers()
         {
             using ManualResetEventSlim workerInitializationStarted = new();
             using ManualResetEventSlim continueWorkerInitialization = new();
@@ -113,7 +113,8 @@ namespace MHServerEmu.Games.Tests.Network.InstanceManagement
             try
             {
                 Assert.True(workerInitializationStarted.Wait(TimeSpan.FromSeconds(5)));
-                GameThread startedThread = Assert.Single(GetGameThreads(GetThreadManager(service)).Where(gameThread => gameThread.State != GameThreadState.Created));
+                GameThread[] gameThreads = GetGameThreads(GetThreadManager(service));
+                GameThread startedThread = Assert.Single(gameThreads.Where(gameThread => gameThread.Id == 1));
 
                 continueWorkerInitialization.Set();
                 await Assert.ThrowsAsync<InvalidOperationException>(() => run.WaitAsync(TimeSpan.FromSeconds(5)));
@@ -121,6 +122,7 @@ namespace MHServerEmu.Games.Tests.Network.InstanceManagement
                 service.Shutdown();
                 Assert.Equal(GameServiceState.Shutdown, service.State);
                 Assert.Equal(GameThreadState.Stopped, startedThread.State);
+                Assert.All(gameThreads, gameThread => Assert.Equal(GameThreadState.Stopped, gameThread.State));
                 Assert.Equal(0, GetThreadManager(service).ThreadCount);
             }
             finally
