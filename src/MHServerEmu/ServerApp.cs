@@ -8,8 +8,6 @@ using MHServerEmu.Core.Logging.Targets;
 using MHServerEmu.Core.Metrics;
 using MHServerEmu.Core.Network;
 using MHServerEmu.DatabaseAccess;
-using MHServerEmu.DatabaseAccess.Json;
-using MHServerEmu.DatabaseAccess.SQLite;
 using MHServerEmu.Frontend;
 using MHServerEmu.Games.Common;
 using MHServerEmu.Games.GameData;
@@ -246,9 +244,17 @@ namespace MHServerEmu
         /// </summary>
         private bool InitSystems()
         {
-            // JsonDBManager saves a single account in a JSON file
             var config = ConfigManager.Instance.GetConfig<PlayerManagerConfig>();
-            IDBManager.Instance = config.UseJsonDBManager ? JsonDBManager.Instance : SQLiteDBManager.Instance;
+            if (DBManagerFactory.TryCreate(config.DatabaseType, config.UseJsonDBManager, out IDBManager manager, out bool usedLegacyJsonSetting) == false)
+            {
+                Logger.Error($"Unknown database type '{config.DatabaseType}'");
+                return false;
+            }
+
+            if (usedLegacyJsonSetting)
+                Logger.Warn("UseJsonDBManager is deprecated; set DatabaseType=Json instead.");
+
+            IDBManager.Instance = manager;
 
             // LiveTuningManager uses data from LiveTuningEventScheduler initialization,
             // and LiveTuningEventScheduler needs GameDatabase to be initialized to get TimeZone from GlobalsPrototype.

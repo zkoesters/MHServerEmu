@@ -8,6 +8,7 @@ namespace MHServerEmu.PlayerManagement
     public class PlayerManagerConfig : ConfigContainer
     {
         public bool EnablePersistence { get; private set; } = true;
+        public string DatabaseType { get; private set; } = string.Empty;
         public bool UseJsonDBManager { get; private set; } = false;
         public bool AllowClientVersionMismatch { get; private set; } = false;
         public bool UseWhitelist { get; private set; } = false;

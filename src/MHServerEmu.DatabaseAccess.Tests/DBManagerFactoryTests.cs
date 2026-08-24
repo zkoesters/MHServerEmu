@@ -1,4 +1,7 @@
 using MHServerEmu.DatabaseAccess;
+using MHServerEmu.DatabaseAccess.Json;
+using MHServerEmu.DatabaseAccess.PostgreSQL;
+using MHServerEmu.DatabaseAccess.SQLite;
 
 namespace MHServerEmu.DatabaseAccess.Tests
 {
@@ -43,6 +46,54 @@ namespace MHServerEmu.DatabaseAccess.Tests
                 out _);
 
             Assert.False(resolved);
+        }
+
+        [Theory]
+        [InlineData(null, false, "SQLite")]
+        [InlineData(null, true, "Json")]
+        [InlineData("Json", false, "Json")]
+        [InlineData("SQLite", false, "SQLite")]
+        [InlineData("SQLite", true, "Json")]
+        [InlineData("PostgreSQL", true, "PostgreSQL")]
+        public void TryCreate_ValidConfiguration_ReturnsExpectedSingleton(
+            string configuredType,
+            bool useJsonDBManager,
+            string expectedType)
+        {
+            bool created = DBManagerFactory.TryCreate(
+                configuredType,
+                useJsonDBManager,
+                out IDBManager manager,
+                out _);
+
+            Assert.True(created);
+            Assert.Same(GetExpectedManager(expectedType), manager);
+        }
+
+        [Theory]
+        [InlineData("Oracle")]
+        [InlineData("1")]
+        public void TryCreate_InvalidConfiguredType_ReturnsFalseAndNullManager(string configuredType)
+        {
+            bool created = DBManagerFactory.TryCreate(
+                configuredType,
+                false,
+                out IDBManager manager,
+                out _);
+
+            Assert.False(created);
+            Assert.Null(manager);
+        }
+
+        private static IDBManager GetExpectedManager(string configuredType)
+        {
+            return configuredType switch
+            {
+                "Json" => JsonDBManager.Instance,
+                "SQLite" => SQLiteDBManager.Instance,
+                "PostgreSQL" => PostgreSQLDBManager.Instance,
+                _ => null
+            };
         }
     }
 }

@@ -1,3 +1,7 @@
+using MHServerEmu.DatabaseAccess.Json;
+using MHServerEmu.DatabaseAccess.PostgreSQL;
+using MHServerEmu.DatabaseAccess.SQLite;
+
 namespace MHServerEmu.DatabaseAccess
 {
     public enum DBManagerType
@@ -9,6 +13,28 @@ namespace MHServerEmu.DatabaseAccess
 
     public static class DBManagerFactory
     {
+        public static bool TryCreate(
+            string configuredType,
+            bool useJsonDBManager,
+            out IDBManager manager,
+            out bool usedLegacyJsonSetting)
+        {
+            manager = null;
+
+            if (TryResolveType(configuredType, useJsonDBManager, out DBManagerType type, out usedLegacyJsonSetting) == false)
+                return false;
+
+            manager = type switch
+            {
+                DBManagerType.Json => JsonDBManager.Instance,
+                DBManagerType.SQLite => SQLiteDBManager.Instance,
+                DBManagerType.PostgreSQL => PostgreSQLDBManager.Instance,
+                _ => null
+            };
+
+            return manager != null;
+        }
+
         public static bool TryResolveType(
             string configuredType,
             bool useJsonDBManager,
