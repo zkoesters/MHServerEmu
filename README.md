@@ -42,7 +42,7 @@ We do not provide download links for the game client for legal reasons. If you h
 
 **How to update the server?**
 
-Download the latest stable or nightly build and overwrite your existing files. Nightly builds can be potentially unstable, so it is recommended to back up your account database file located in `MHServerEmu\Data\Account.db` before updating.
+Download the latest stable or nightly build and overwrite your existing files. Nightly builds can be potentially unstable, so SQLite deployments should back up the SQLite account database located at `MHServerEmu\Data\Account.db` before updating. PostgreSQL deployments require external PostgreSQL backups; see [PostgreSQL Setup](./docs/Setup/PostgreSQL.md).
 
 **Are you going to support other versions of the game, like the ones from before the Biggest Update Ever (BUE) came out?**
 
