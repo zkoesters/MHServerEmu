@@ -1,4 +1,5 @@
 ﻿using System.Globalization;
+using System.Runtime.ExceptionServices;
 using System.Text;
 using MHServerEmu.Core.Logging;
 using MHServerEmu.Core.Memory;
@@ -45,14 +46,16 @@ namespace MHServerEmu.Core.Network
 
         private readonly IGameService[] _services = new IGameService[(int)GameServiceType.NumServiceTypes];
         private readonly Thread[] _serviceThreads = new Thread[(int)GameServiceType.NumServiceTypes];
+        private readonly Exception[] _startupExceptions = new Exception[(int)GameServiceType.NumServiceTypes];
 
         private ServerManagerState _state = ServerManagerState.Created;
 
         public static ServerManager Instance { get; } = new();
 
         public TimeSpan StartupTime { get; private set; }
+        internal ServerManagerState State => _state;
 
-        private ServerManager() { }
+        internal ServerManager() { }
 
         /// <summary>
         /// Initializes the <see cref="ServerManager"/> instance.
@@ -172,11 +175,33 @@ namespace MHServerEmu.Core.Network
 
                 Logger.Info($"Starting service for type [{serviceType}]...");
 
-                _serviceThreads[i] = new(_services[i].Run) { Name = $"Service [{serviceType}]", IsBackground = true, CurrentCulture = CultureInfo.InvariantCulture };
+                _serviceThreads[i] = new(() => RunService(i)) { Name = $"Service [{serviceType}]", IsBackground = true, CurrentCulture = CultureInfo.InvariantCulture };
                 _serviceThreads[i].Start();
 
                 while (service.State != GameServiceState.Running)
+                {
+                    Exception startupException = _startupExceptions[i];
+                    if (startupException != null || _serviceThreads[i].IsAlive == false)
+                    {
+                        ExceptionDispatchInfo startupExceptionInfo = ExceptionDispatchInfo.Capture(startupException ?? new InvalidOperationException($"Service for type [{serviceType}] returned before reaching the Running state."));
+                        try
+                        {
+                            ShutdownRunningServices(i - 1, continueAfterShutdownFailure: true);
+                        }
+                        catch (Exception e)
+                        {
+                            Logger.ErrorException(e, "Error shutting down services after startup failure.");
+                        }
+                        finally
+                        {
+                            _state = ServerManagerState.Shutdown;
+                        }
+
+                        startupExceptionInfo.Throw();
+                    }
+
                     Thread.Sleep(1);
+                }
 
                 Logger.Info($"Service for type [{serviceType}] started");                
             }
@@ -189,8 +214,7 @@ namespace MHServerEmu.Core.Network
         /// </summary>
         public void ShutdownServices()
         {
-            // Ignore shutdown requests if already shutting down
-            if (_state == ServerManagerState.ShuttingDown)
+            if (_state == ServerManagerState.ShuttingDown || _state == ServerManagerState.Shutdown)
                 return;
 
             if (_state != ServerManagerState.Running)
@@ -198,15 +222,41 @@ namespace MHServerEmu.Core.Network
 
             _state = ServerManagerState.ShuttingDown;
 
-            // Shut down services in reverse
-            for (int i = _services.Length - 1; i >= 0; i--)
-            {
-                GameServiceType serviceType = (GameServiceType)i;
+            ShutdownRunningServices(_services.Length - 1, continueAfterShutdownFailure: false);
 
+            Logger.Info("All services shut down");
+
+            _state = ServerManagerState.Shutdown;
+        }
+
+        private void RunService(int index)
+        {
+            try
+            {
+                _services[index].Run();
+                if (_services[index].State != GameServiceState.Running)
+                    _startupExceptions[index] = new InvalidOperationException($"Service for type [{(GameServiceType)index}] returned before reaching the Running state.");
+            }
+            catch (Exception e) when (_services[index].State != GameServiceState.Running)
+            {
+                _startupExceptions[index] = e;
+            }
+            catch (Exception e)
+            {
+                Logger.ErrorException(e, $"Service for type [{(GameServiceType)index}] terminated after startup.");
+                throw;
+            }
+        }
+
+        private void ShutdownRunningServices(int lastServiceIndex, bool continueAfterShutdownFailure)
+        {
+            for (int i = lastServiceIndex; i >= 0; i--)
+            {
                 IGameService service = _services[i];
-                if (service == null)
+                if (service == null || _serviceThreads[i] == null)
                     continue;
 
+                GameServiceType serviceType = (GameServiceType)i;
                 if (service.State == GameServiceState.Shutdown)
                     continue;
 
@@ -217,20 +267,22 @@ namespace MHServerEmu.Core.Network
                 }
 
                 Logger.Info($"Shutting down service for type [{serviceType}]...");
-
-                _services[i].Shutdown();
+                try
+                {
+                    service.Shutdown();
+                }
+                catch (Exception e) when (continueAfterShutdownFailure)
+                {
+                    Logger.ErrorException(e, $"Error shutting down service for type [{serviceType}].");
+                    continue;
+                }
 
                 while (service.State != GameServiceState.Shutdown)
                     Thread.Sleep(1);
 
                 _serviceThreads[i] = null;
-
                 Logger.Info($"Service for type [{serviceType}] shut down");
             }
-
-            Logger.Info("All services shut down");
-
-            _state = ServerManagerState.Shutdown;
         }
 
         /// <summary>

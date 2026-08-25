@@ -10,7 +10,6 @@ using MHServerEmu.Core.Network;
 using MHServerEmu.Core.System.Time;
 using MHServerEmu.DatabaseAccess;
 using MHServerEmu.DatabaseAccess.Models.Leaderboards;
-using MHServerEmu.DatabaseAccess.SQLite;
 using MHServerEmu.Games.GameData;
 using MHServerEmu.Games.GameData.Prototypes;
 
@@ -27,6 +26,7 @@ namespace MHServerEmu.Leaderboards
         private static readonly string LeaderboardsDirectory = Path.Combine(FileHelper.DataDirectory, "Leaderboards");
 
         private readonly object _leaderboardLock = new();
+        private readonly string _schedulePath;
 
         private readonly Dictionary<PrototypeGuid, Leaderboard> _leaderboards = new();
         private readonly Dictionary<PrototypeGuid, Leaderboard> _metaLeaderboards = new();
@@ -35,18 +35,33 @@ namespace MHServerEmu.Leaderboards
         private readonly DoubleBufferQueue<ServiceMessage.LeaderboardScoreUpdateBatch> _scoreUpdateQueue = new();
 
         public bool IsInitialized { get; private set; }
-        public SQLiteLeaderboardDBManager DBManager { get; private set; }
+        public ILeaderboardDBManager DBManager { get; private set; }
         public int LeaderboardCount { get => _leaderboards.Count; }
         public static LeaderboardDatabase Instance { get; } = new();
 
-        private LeaderboardDatabase() { }
+        internal LeaderboardDatabase(ILeaderboardDBManager dbManager = null, string schedulePath = null)
+        {
+            DBManager = dbManager;
+            _schedulePath = schedulePath;
+        }
 
         /// <summary>
         /// Initializes the <see cref="LeaderboardDatabase"/> instance.
         /// </summary>
-        public bool Initialize(SQLiteLeaderboardDBManager instance)
+        public bool Initialize(ILeaderboardDBManager dbManager)
         {
-            DBManager = instance;
+            DBManager = dbManager;
+            return Initialize();
+        }
+
+        public bool Initialize()
+        {
+            ILeaderboardDBManager dbManager = DBManager;
+            Reset();
+            DBManager = dbManager;
+
+            if (DBManager == null)
+                return false;
 
             var stopwatch = Stopwatch.StartNew();
 
@@ -56,44 +71,70 @@ namespace MHServerEmu.Leaderboards
             if (Directory.Exists(LeaderboardsDirectory) == false)
                 Directory.CreateDirectory(LeaderboardsDirectory);
 
-            // Initialize leaderboard database
-            string databasePath = Path.Combine(LeaderboardsDirectory, config.DatabaseFile);
-            bool noTables = false;
-            DBManager.Initialize(databasePath, ref noTables);
+            string schedulePath = _schedulePath ?? Path.Combine(LeaderboardsDirectory, config.ScheduleFile);
+            try
+            {
+                if (InitializePersistence(schedulePath) == false)
+                    return false;
 
-            // Initialize leaderboards from prototypes if there is no data in the database
-            string schedulePath = Path.Combine(LeaderboardsDirectory, config.ScheduleFile);
-            if (noTables)
-                GenerateTables(schedulePath);
+                if (IDBManager.Instance.GetPlayerNames(_playerNames))
+                    Logger.Info($"Loaded and cached {_playerNames.Count} player names");
 
-            // Load and cache player names (remove/disable this if the number of accounts gets out of hand)
-            if (IDBManager.Instance.GetPlayerNames(_playerNames))
-                Logger.Info($"Loaded and cached {_playerNames.Count} player names");
+                List<DBLeaderboard> updatedLeaderboards = new();
+                List<DBLeaderboardInstance> updatedInstances = new();
+                if (LoadSchedule(schedulePath, updatedLeaderboards, updatedInstances, out bool scheduleChanged) == false)
+                    throw new InvalidOperationException("Failed to load leaderboard schedule.");
+                if (scheduleChanged)
+                    SaveScheduleChanges(updatedLeaderboards, updatedInstances);
 
-            // Load the schedule and write changes to the database if needed
-            List<DBLeaderboard> updatedLeaderboards = new();
-            List<DBLeaderboardInstance> updatedInstances = new();
-            if (LoadSchedule(schedulePath, updatedLeaderboards, updatedInstances))
-                SaveScheduleChanges(updatedLeaderboards, updatedInstances);
+                LoadLeaderboards();
+                SendLeaderboardsToGames();
+                IsInitialized = true;
+                Logger.Info($"Initialized {_leaderboards.Count} leaderboards in {stopwatch.ElapsedMilliseconds} ms");
+                return true;
+            }
+            catch
+            {
+                Reset();
+                return false;
+            }
+        }
 
-            // Load leaderboards from the database
-            LoadLeaderboards();
+        internal bool InitializePersistence(ILeaderboardDBManager dbManager)
+        {
+            DBManager = dbManager;
+            return InitializePersistence(_schedulePath);
+        }
 
-            // Send initial leaderboard state to game instances
-            SendLeaderboardsToGames();
+        private bool InitializePersistence(string schedulePath)
+        {
+            try
+            {
+                if (DBManager == null || DBManager.Initialize(out bool isNewDatabase) == false)
+                    throw new InvalidOperationException("Failed to initialize leaderboard database.");
 
-            IsInitialized = true;
+                if (isNewDatabase || DBManager.GetLeaderboards().Length == 0)
+                {
+                    (List<DBLeaderboard> leaderboards, List<DBLeaderboardInstance> instances, List<DBMetaEntry> metaEntries, List<LeaderboardScheduler> schedule) = BuildInitialData();
+                    PersistInitialData(schedulePath, schedule, leaderboards, instances, metaEntries);
+                }
 
-            Logger.Info($"Initialized {_leaderboards.Count} leaderboards in {stopwatch.ElapsedMilliseconds} ms");
-            return true;
+                return true;
+            }
+            catch
+            {
+                Reset();
+                return false;
+            }
         }
 
         /// <summary>
         /// Loads leaderboard schedule from JSON and adds updated models to provided lists.
         /// Returns <see langword="true"/> if any changes were applied.
         /// </summary>
-        private bool LoadSchedule(string schedulePath, List<DBLeaderboard> updatedLeaderboards, List<DBLeaderboardInstance> updatedInstances)
+        private bool LoadSchedule(string schedulePath, List<DBLeaderboard> updatedLeaderboards, List<DBLeaderboardInstance> updatedInstances, out bool scheduleChanged)
         {
+            scheduleChanged = false;
             // Load schedule
             LeaderboardScheduler[] schedulers;
 
@@ -211,7 +252,8 @@ namespace MHServerEmu.Leaderboards
 
             Logger.Info($"Loaded leaderboard schedule from {Path.GetFileName(schedulePath)}");
 
-            return updatedLeaderboards.Count > 0;
+            scheduleChanged = updatedLeaderboards.Count > 0;
+            return true;
         }
 
         /// <summary>
@@ -226,7 +268,7 @@ namespace MHServerEmu.Leaderboards
                 
                 List<DBLeaderboard> updatedLeaderboards = new();
                 List<DBLeaderboardInstance> updatedInstances = new();
-                if (LoadSchedule(schedulePath, updatedLeaderboards, updatedInstances))
+                if (LoadSchedule(schedulePath, updatedLeaderboards, updatedInstances, out bool scheduleChanged) && scheduleChanged)
                 {
                     SaveScheduleChanges(updatedLeaderboards, updatedInstances);
                     ApplyScheduleChanges(updatedLeaderboards, updatedInstances);
@@ -317,10 +359,11 @@ namespace MHServerEmu.Leaderboards
         /// <summary>
         /// Initializes database data.
         /// </summary>
-        private void GenerateTables(string schedulePath)
+        protected virtual (List<DBLeaderboard>, List<DBLeaderboardInstance>, List<DBMetaEntry>, List<LeaderboardScheduler>) BuildInitialData()
         {
             List<DBLeaderboard> dbLeaderboards = new();
             List<DBLeaderboardInstance> dbInstances = new();
+            List<DBMetaEntry> dbMetaEntries = new();
             List<LeaderboardScheduler> schedule = new();
 
             DateTime currentYear = new(DateTime.Now.Year, 1, 1, 0, 0, 0, DateTimeKind.Utc);
@@ -364,7 +407,6 @@ namespace MHServerEmu.Leaderboards
 
                 if (proto.IsMetaLeaderboard)
                 {
-                    List<DBMetaEntry> dbMetaEntries = new();
                     foreach (MetaLeaderboardEntryPrototype meta in proto.MetaLeaderboardEntries)
                     {
                         PrototypeGuid subLeaderboardId = GameDatabase.GetPrototypeGuid(meta.Leaderboard);
@@ -377,15 +419,26 @@ namespace MHServerEmu.Leaderboards
                             SubInstanceId = (long)subInstanceId
                         });
                     }
-                    DBManager.InsertMetaEntries(dbMetaEntries);
                 }
             }
 
+            return (dbLeaderboards, dbInstances, dbMetaEntries, schedule);
+        }
+
+        internal void PersistInitialData(string schedulePath, List<LeaderboardScheduler> schedule, List<DBLeaderboard> dbLeaderboards, List<DBLeaderboardInstance> dbInstances, List<DBMetaEntry> dbMetaEntries)
+        {
             string scheduleJson = JsonSerializer.Serialize(schedule, LeaderboardScheduler.JsonSerializerOptions);
             File.WriteAllText(schedulePath, scheduleJson);
+            DBManager.InsertInitialData(dbLeaderboards, dbInstances, dbMetaEntries);
+        }
 
-            DBManager.InsertLeaderboards(dbLeaderboards);
-            DBManager.UpdateOrInsertInstances(dbInstances);
+        private void Reset()
+        {
+            IsInitialized = false;
+            DBManager = null;
+            _leaderboards.Clear();
+            _metaLeaderboards.Clear();
+            _playerNames.Clear();
         }
 
         /// <summary>
