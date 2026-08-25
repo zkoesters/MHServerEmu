@@ -25,6 +25,24 @@ namespace MHServerEmu.DatabaseAccess.Tests.PostgreSQL
             Assert.Contains("ux_guild_name_ci", script);
         }
 
+        [Fact]
+        public void GetLeaderboardInitializationScript_ContainsRequiredSchemaElements()
+        {
+            string script = PostgreSQLScripts.GetLeaderboardInitializationScript();
+
+            Assert.Contains("CREATE TABLE mhserveremu_leaderboards_schema", script);
+            Assert.Contains("VALUES (1, 1)", script);
+            Assert.Contains("CREATE TABLE leaderboard", script);
+            Assert.Contains("CREATE TABLE leaderboard_instance", script);
+            Assert.Contains("CREATE TABLE leaderboard_entry", script);
+            Assert.Contains("CREATE TABLE leaderboard_meta_entry", script);
+            Assert.Contains("CREATE TABLE leaderboard_reward", script);
+            Assert.Contains("rewarded_date bigint NULL", script);
+            Assert.Contains("idx_instances_leaderboardid", script);
+            Assert.Contains("idx_entries_instanceid", script);
+            Assert.Contains("idx_rewards_participantid", script);
+        }
+
         [Theory]
         [InlineData(0, "CREATE TABLE player")]
         [InlineData(1, "RENAME COLUMN is_banned TO flags")]

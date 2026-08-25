@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <None Remove="PostgreSQL\Scripts\InitializeDatabase.sql" />
+    <None Remove="PostgreSQL\Scripts\InitializeLeaderboardsDatabase.sql" />
     <None Remove="PostgreSQL\Scripts\Migrations\0.sql" />
     <None Remove="PostgreSQL\Scripts\Migrations\1.sql" />
     <None Remove="PostgreSQL\Scripts\Migrations\2.sql" />
@@ -33,6 +34,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="PostgreSQL\Scripts\InitializeDatabase.sql" />
+    <EmbeddedResource Include="PostgreSQL\Scripts\InitializeLeaderboardsDatabase.sql" />
     <EmbeddedResource Include="PostgreSQL\Scripts\Migrations\0.sql" />
     <EmbeddedResource Include="PostgreSQL\Scripts\Migrations\1.sql" />
     <EmbeddedResource Include="PostgreSQL\Scripts\Migrations\2.sql" />

@@ -1,3 +1,4 @@
+using MHServerEmu.DatabaseAccess.PostgreSQL;
 using MHServerEmu.DatabaseAccess.SQLite;
 
 namespace MHServerEmu.DatabaseAccess.Tests
@@ -18,8 +19,17 @@ namespace MHServerEmu.DatabaseAccess.Tests
         }
 
         [Theory]
-        [InlineData("Json")]
         [InlineData("PostgreSQL")]
+        [InlineData("postgresql")]
+        [InlineData(" PostgreSQL ")]
+        public void TryResolveType_PostgreSQLConfiguration_ReturnsPostgreSQL(string configuredType)
+        {
+            Assert.True(LeaderboardDBManagerFactory.TryResolveType(configuredType, out LeaderboardDBManagerType type));
+            Assert.Equal(LeaderboardDBManagerType.PostgreSQL, type);
+        }
+
+        [Theory]
+        [InlineData("Json")]
         [InlineData("Oracle")]
         [InlineData("0")]
         public void TryResolveType_UnavailableConfiguration_ReturnsFalse(string configuredType)
@@ -41,6 +51,17 @@ namespace MHServerEmu.DatabaseAccess.Tests
             {
                 File.Delete(path);
             }
+        }
+
+        [Fact]
+        public void TryCreate_PostgreSQLConfiguration_ConstructsFreshManagerWithoutDatabasePathOrConfiguration()
+        {
+            Assert.True(LeaderboardDBManagerFactory.TryCreate("PostgreSQL", string.Empty, out ILeaderboardDBManager first));
+            Assert.True(LeaderboardDBManagerFactory.TryCreate("PostgreSQL", string.Empty, out ILeaderboardDBManager second));
+
+            Assert.IsType<PostgreSQLLeaderboardDBManager>(first);
+            Assert.IsType<PostgreSQLLeaderboardDBManager>(second);
+            Assert.NotSame(first, second);
         }
     }
 }
