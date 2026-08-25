@@ -1,6 +1,6 @@
 # PostgreSQL Setup
 
-PostgreSQL is an alternative account database backend. The database must exist before starting MHServerEmu. Startup creates and migrates the MHServerEmu schema.
+PostgreSQL is an alternative persistence backend for account/player data and leaderboards. The database must exist before starting MHServerEmu. Startup creates and migrates the account/player schema. Leaderboard storage is initialized independently and version-validated at schema version 1; it has no migration path yet.
 
 ## Create the Database
 
@@ -24,11 +24,21 @@ Keep connection details in `ConfigOverride.ini`, not `Config.ini` or source cont
 DatabaseType=PostgreSQL
 UseJsonDBManager=false
 
+[GameOptions]
+LeaderboardsEnabled=true
+
+[Leaderboards]
+DatabaseType=PostgreSQL
+
 [PostgreSQLDBManager]
 ConnectionString=Host=your-postgres-host;Port=5432;Database=mhserveremu;Username=mhserveremu;Password=your-password
 ```
 
-`DatabaseType` can be `Json`, `SQLite`, or `PostgreSQL`. `UseJsonDBManager` is a legacy setting; leave it `false` when selecting PostgreSQL.
+`PlayerManager.DatabaseType` selects account/player storage and can be `Json`, `SQLite`, or `PostgreSQL`. `Leaderboards.DatabaseType` independently selects leaderboard storage and can be `SQLite` or `PostgreSQL`. Account/player data and leaderboards can each use either SQLite or PostgreSQL independently. `UseJsonDBManager` is a legacy setting; leave it `false` when selecting PostgreSQL.
+
+Both PostgreSQL selections use the existing `[PostgreSQLDBManager] ConnectionString`. `Leaderboards.DatabaseFile` applies only to SQLite leaderboard storage and is ignored when `Leaderboards.DatabaseType=PostgreSQL`.
+
+`GameOptions.LeaderboardsEnabled=true` is required to enable the leaderboard service because leaderboards are disabled by default.
 
 The connection string uses [Npgsql connection string parameters](https://www.npgsql.org/doc/connection-string-parameters.html). For a TLS-protected deployment with explicit connection and command timeouts and Npgsql pooling, use options such as the following:
 
@@ -51,7 +61,9 @@ pg_dump --host=your-postgres-host --port=5432 --username=mhserveremu --format=cu
 
 Configure authentication through PostgreSQL operator controls, such as a protected `.pgpass` file or the interactive password prompt. Test restores regularly with `pg_restore`.
 
-PostgreSQL leaderboard persistence is not supported. Importing an existing SQLite `Data/Account.db` database into PostgreSQL is also not supported; start with a new PostgreSQL database.
+Importing an existing SQLite `Data/Account.db` database into PostgreSQL is not supported; start with a new PostgreSQL database. `Data/Leaderboards/Leaderboards.db` is not imported or synchronized into PostgreSQL.
+
+PostgreSQL initialization or operation failures do not fall back to SQLite. Fix PostgreSQL configuration, connectivity, or schema rather than risk writing divergent data.
 
 ## Integration Tests
 

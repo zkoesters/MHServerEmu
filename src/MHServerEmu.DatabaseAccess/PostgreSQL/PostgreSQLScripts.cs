@@ -14,6 +14,11 @@ namespace MHServerEmu.DatabaseAccess.PostgreSQL
             return LoadScript($"Migrations.{currentVersion}");
         }
 
+        public static string GetLeaderboardInitializationScript()
+        {
+            return LoadScript("InitializeLeaderboardsDatabase");
+        }
+
         private static string LoadScript(string name)
         {
             string resourceName = $"MHServerEmu.DatabaseAccess.PostgreSQL.Scripts.{name}.sql";

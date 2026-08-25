@@ -1,10 +1,12 @@
 using MHServerEmu.DatabaseAccess.SQLite;
+using MHServerEmu.DatabaseAccess.PostgreSQL;
 
 namespace MHServerEmu.DatabaseAccess
 {
     public enum LeaderboardDBManagerType
     {
-        SQLite
+        SQLite,
+        PostgreSQL
     }
 
     public static class LeaderboardDBManagerFactory
@@ -16,6 +18,12 @@ namespace MHServerEmu.DatabaseAccess
                 || string.Equals(configuredType, nameof(LeaderboardDBManagerType.SQLite), StringComparison.OrdinalIgnoreCase))
             {
                 type = LeaderboardDBManagerType.SQLite;
+                return true;
+            }
+
+            if (string.Equals(configuredType, nameof(LeaderboardDBManagerType.PostgreSQL), StringComparison.OrdinalIgnoreCase))
+            {
+                type = LeaderboardDBManagerType.PostgreSQL;
                 return true;
             }
 
@@ -32,6 +40,7 @@ namespace MHServerEmu.DatabaseAccess
             manager = type switch
             {
                 LeaderboardDBManagerType.SQLite => new SQLiteLeaderboardDBManager(databasePath),
+                LeaderboardDBManagerType.PostgreSQL => new PostgreSQLLeaderboardDBManager(),
                 _ => null
             };
             return manager != null;
