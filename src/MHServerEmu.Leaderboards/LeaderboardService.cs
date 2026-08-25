@@ -2,7 +2,8 @@
 using MHServerEmu.Core.Config;
 using MHServerEmu.Core.Logging;
 using MHServerEmu.Core.Network;
-using MHServerEmu.DatabaseAccess.SQLite;
+using MHServerEmu.Core.Helpers;
+using MHServerEmu.DatabaseAccess;
 using MHServerEmu.Games;
 
 namespace MHServerEmu.Leaderboards
@@ -14,8 +15,9 @@ namespace MHServerEmu.Leaderboards
     {
         private const int UpdateTimeMS = 1000;
 
+        private static readonly Logger Logger = LogManager.CreateLogger();
         private readonly LeaderboardDatabase _database = LeaderboardDatabase.Instance;
-        private readonly LeaderboardRewardManager _rewardManager = new();
+        private LeaderboardRewardManager _rewardManager;
 
         private bool _isEnabled;
 
@@ -36,7 +38,27 @@ namespace MHServerEmu.Leaderboards
                 return;
             }
 
-            _database.Initialize(SQLiteLeaderboardDBManager.Instance);
+            LeaderboardsConfig leaderboardsConfig = ConfigManager.Instance.GetConfig<LeaderboardsConfig>();
+            string databasePath = Path.Combine(FileHelper.DataDirectory, "Leaderboards", leaderboardsConfig.DatabaseFile);
+
+            try
+            {
+                if (LeaderboardDBManagerFactory.TryCreate(leaderboardsConfig.DatabaseType, databasePath, out ILeaderboardDBManager manager) == false
+                    || _database.Initialize(manager) == false)
+                {
+                    Logger.Error("Leaderboard database initialization failed.");
+                    State = GameServiceState.Shutdown;
+                    return;
+                }
+            }
+            catch
+            {
+                Logger.Error("Leaderboard database initialization failed.");
+                State = GameServiceState.Shutdown;
+                return;
+            }
+
+            _rewardManager = new(_database.DBManager);
 
             State = GameServiceState.Running;
 
