@@ -49,7 +49,6 @@ namespace MHServerEmu.DatabaseAccess
             {
                 LeaderboardDBManagerType.SQLite => new SQLiteLeaderboardDBManager(databasePath),
                 LeaderboardDBManagerType.PostgreSQL => new PostgreSQLLeaderboardDBManager(),
-                LeaderboardDBManagerType.PostgreSQL => new PostgreSQLLeaderboardDBManager(),
                 LeaderboardDBManagerType.MySQL => new MySQLLeaderboardDBManager(),
                 _ => null
             };

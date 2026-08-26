@@ -30,8 +30,6 @@ namespace MHServerEmu.DatabaseAccess.Tests
         }
 
         [Theory]
-        [InlineData("Json")]
-        [InlineData("MariaDB")]
         [InlineData("PostgreSQL")]
         [InlineData("postgresql")]
         [InlineData(" PostgreSQL ")]
@@ -43,6 +41,7 @@ namespace MHServerEmu.DatabaseAccess.Tests
 
         [Theory]
         [InlineData("Json")]
+        [InlineData("MariaDB")]
         [InlineData("Oracle")]
         [InlineData("0")]
         public void TryResolveType_UnavailableConfiguration_ReturnsFalse(string configuredType)
@@ -77,6 +76,7 @@ namespace MHServerEmu.DatabaseAccess.Tests
             Assert.NotSame(first, second);
         }
 
+        [Fact]
         public void TryCreate_MySQLConfiguration_IgnoresDatabasePathAndConstructsDistinctManagers()
         {
             Assert.True(LeaderboardDBManagerFactory.TryCreate("MySQL", "first-sqlite-path.db", out ILeaderboardDBManager first));
