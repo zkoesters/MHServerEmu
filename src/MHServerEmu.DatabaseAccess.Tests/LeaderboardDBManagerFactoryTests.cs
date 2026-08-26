@@ -1,4 +1,5 @@
 using MHServerEmu.DatabaseAccess.PostgreSQL;
+using MHServerEmu.DatabaseAccess.MySQL;
 using MHServerEmu.DatabaseAccess.SQLite;
 
 namespace MHServerEmu.DatabaseAccess.Tests
@@ -19,6 +20,18 @@ namespace MHServerEmu.DatabaseAccess.Tests
         }
 
         [Theory]
+        [InlineData("MySQL")]
+        [InlineData("mysql")]
+        [InlineData(" MySql ")]
+        public void TryResolveType_MySQLConfiguration_ReturnsMySQL(string configuredType)
+        {
+            Assert.True(LeaderboardDBManagerFactory.TryResolveType(configuredType, out LeaderboardDBManagerType type));
+            Assert.Equal(LeaderboardDBManagerType.MySQL, type);
+        }
+
+        [Theory]
+        [InlineData("Json")]
+        [InlineData("MariaDB")]
         [InlineData("PostgreSQL")]
         [InlineData("postgresql")]
         [InlineData(" PostgreSQL ")]
@@ -61,6 +74,16 @@ namespace MHServerEmu.DatabaseAccess.Tests
 
             Assert.IsType<PostgreSQLLeaderboardDBManager>(first);
             Assert.IsType<PostgreSQLLeaderboardDBManager>(second);
+            Assert.NotSame(first, second);
+        }
+
+        public void TryCreate_MySQLConfiguration_IgnoresDatabasePathAndConstructsDistinctManagers()
+        {
+            Assert.True(LeaderboardDBManagerFactory.TryCreate("MySQL", "first-sqlite-path.db", out ILeaderboardDBManager first));
+            Assert.True(LeaderboardDBManagerFactory.TryCreate("MySQL", "second-sqlite-path.db", out ILeaderboardDBManager second));
+
+            Assert.IsType<MySQLLeaderboardDBManager>(first);
+            Assert.IsType<MySQLLeaderboardDBManager>(second);
             Assert.NotSame(first, second);
         }
     }
