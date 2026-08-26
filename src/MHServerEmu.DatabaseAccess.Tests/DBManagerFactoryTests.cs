@@ -1,5 +1,7 @@
 using MHServerEmu.DatabaseAccess;
 using MHServerEmu.DatabaseAccess.Json;
+using MHServerEmu.DatabaseAccess.Models;
+using MHServerEmu.DatabaseAccess.MySQL;
 using MHServerEmu.DatabaseAccess.PostgreSQL;
 using MHServerEmu.DatabaseAccess.SQLite;
 
@@ -15,6 +17,9 @@ namespace MHServerEmu.DatabaseAccess.Tests
         [InlineData("SQLite", false, DBManagerType.SQLite, false)]
         [InlineData("sqlite", true, DBManagerType.Json, true)]
         [InlineData("Json", false, DBManagerType.Json, false)]
+        [InlineData("MySQL", true, DBManagerType.MySQL, false)]
+        [InlineData("mysql", true, DBManagerType.MySQL, false)]
+        [InlineData(" MySQL ", true, DBManagerType.MySQL, false)]
         [InlineData("PostgreSQL", true, DBManagerType.PostgreSQL, false)]
         [InlineData(" PostgreSQL ", true, DBManagerType.PostgreSQL, false)]
         public void TryResolveType_ValidConfiguration_ReturnsExpectedType(
@@ -54,6 +59,7 @@ namespace MHServerEmu.DatabaseAccess.Tests
         [InlineData("Json", false, "Json")]
         [InlineData("SQLite", false, "SQLite")]
         [InlineData("SQLite", true, "Json")]
+        [InlineData("MySQL", true, "MySQL")]
         [InlineData("PostgreSQL", true, "PostgreSQL")]
         public void TryCreate_ValidConfiguration_ReturnsExpectedSingleton(
             string configuredType,
@@ -85,12 +91,22 @@ namespace MHServerEmu.DatabaseAccess.Tests
             Assert.Null(manager);
         }
 
+        [Fact]
+        public void TryCreate_MySQLGuildLoad_DoesNotThrow()
+        {
+            Assert.True(DBManagerFactory.TryCreate("MySQL", false, out IDBManager manager, out _));
+            Assert.IsType<MySQLDBManager>(manager);
+
+            Assert.Null(Record.Exception(() => manager.LoadGuilds(new List<DBGuild>())));
+        }
+
         private static IDBManager GetExpectedManager(string configuredType)
         {
             return configuredType switch
             {
                 "Json" => JsonDBManager.Instance,
                 "SQLite" => SQLiteDBManager.Instance,
+                "MySQL" => MySQLDBManager.Instance,
                 "PostgreSQL" => PostgreSQLDBManager.Instance,
                 _ => null
             };

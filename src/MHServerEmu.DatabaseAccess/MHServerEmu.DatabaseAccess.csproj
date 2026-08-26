@@ -47,6 +47,14 @@
     <None Remove="PostgreSQL\Scripts\Migrations\4.sql" />
     <None Remove="PostgreSQL\Scripts\Migrations\5.sql" />
     <None Remove="PostgreSQL\Scripts\Migrations\6.sql" />
+    <None Remove="MySQL\Scripts\InitializeDatabase.sql" />
+    <None Remove="MySQL\Scripts\Migrations\0.sql" />
+    <None Remove="MySQL\Scripts\Migrations\1.sql" />
+    <None Remove="MySQL\Scripts\Migrations\2.sql" />
+    <None Remove="MySQL\Scripts\Migrations\3.sql" />
+    <None Remove="MySQL\Scripts\Migrations\4.sql" />
+    <None Remove="MySQL\Scripts\Migrations\5.sql" />
+    <None Remove="MySQL\Scripts\Migrations\6.sql" />
     <None Remove="SQLite\Scripts\InitializeDatabase.sql" />
     <None Remove="SQLite\Scripts\InitializeLeaderboardsDatabase.sql" />
     <None Remove="SQLite\Scripts\Migrations\0.sql" />
@@ -67,6 +75,14 @@
     <EmbeddedResource Include="PostgreSQL\Scripts\Migrations\4.sql" />
     <EmbeddedResource Include="PostgreSQL\Scripts\Migrations\5.sql" />
     <EmbeddedResource Include="PostgreSQL\Scripts\Migrations\6.sql" />
+    <EmbeddedResource Include="MySQL\Scripts\InitializeDatabase.sql" />
+    <EmbeddedResource Include="MySQL\Scripts\Migrations\0.sql" />
+    <EmbeddedResource Include="MySQL\Scripts\Migrations\1.sql" />
+    <EmbeddedResource Include="MySQL\Scripts\Migrations\2.sql" />
+    <EmbeddedResource Include="MySQL\Scripts\Migrations\3.sql" />
+    <EmbeddedResource Include="MySQL\Scripts\Migrations\4.sql" />
+    <EmbeddedResource Include="MySQL\Scripts\Migrations\5.sql" />
+    <EmbeddedResource Include="MySQL\Scripts\Migrations\6.sql" />
     <EmbeddedResource Include="SQLite\Scripts\InitializeDatabase.sql" />
     <EmbeddedResource Include="SQLite\Scripts\InitializeLeaderboardsDatabase.sql" />
     <EmbeddedResource Include="SQLite\Scripts\Migrations\0.sql" />
@@ -91,6 +107,10 @@
     </Reference>
     <Reference Include="Npgsql">
       <HintPath>..\..\dep\Npgsql\Npgsql.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="MySqlConnector">
+      <HintPath>..\..\dep\MySqlConnector\MySqlConnector.dll</HintPath>
       <Private>true</Private>
     </Reference>
     <Reference Include="Microsoft.Extensions.Logging.Abstractions">

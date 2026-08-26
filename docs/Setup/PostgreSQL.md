@@ -28,7 +28,7 @@ UseJsonDBManager=false
 ConnectionString=Host=your-postgres-host;Port=5432;Database=mhserveremu;Username=mhserveremu;Password=your-password
 ```
 
-`DatabaseType` can be `Json`, `SQLite`, or `PostgreSQL`. `UseJsonDBManager` is a legacy setting; leave it `false` when selecting PostgreSQL.
+`DatabaseType` can be `Json`, `SQLite`, `MySQL`, or `PostgreSQL`. `UseJsonDBManager` is a legacy setting; leave it `false` when selecting PostgreSQL. For MySQL/MariaDB setup, see [MySQL and MariaDB Setup](./MySQL.md).
 
 The connection string uses [Npgsql connection string parameters](https://www.npgsql.org/doc/connection-string-parameters.html). For a TLS-protected deployment with explicit connection and command timeouts and Npgsql pooling, use options such as the following:
 
