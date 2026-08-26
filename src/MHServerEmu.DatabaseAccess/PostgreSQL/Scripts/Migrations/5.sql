@@ -1,0 +1,1 @@
+-- Empty compatibility boundary matching SQLite schema version 6.

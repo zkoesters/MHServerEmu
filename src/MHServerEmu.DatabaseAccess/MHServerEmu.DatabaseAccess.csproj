@@ -39,6 +39,15 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Remove="PostgreSQL\Scripts\InitializeDatabase.sql" />
+    <None Remove="PostgreSQL\Scripts\InitializeLeaderboardsDatabase.sql" />
+    <None Remove="PostgreSQL\Scripts\Migrations\0.sql" />
+    <None Remove="PostgreSQL\Scripts\Migrations\1.sql" />
+    <None Remove="PostgreSQL\Scripts\Migrations\2.sql" />
+    <None Remove="PostgreSQL\Scripts\Migrations\3.sql" />
+    <None Remove="PostgreSQL\Scripts\Migrations\4.sql" />
+    <None Remove="PostgreSQL\Scripts\Migrations\5.sql" />
+    <None Remove="PostgreSQL\Scripts\Migrations\6.sql" />
     <None Remove="SQLite\Scripts\InitializeDatabase.sql" />
     <None Remove="SQLite\Scripts\InitializeLeaderboardsDatabase.sql" />
     <None Remove="SQLite\Scripts\Migrations\0.sql" />
@@ -51,6 +60,15 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="PostgreSQL\Scripts\InitializeDatabase.sql" />
+    <EmbeddedResource Include="PostgreSQL\Scripts\InitializeLeaderboardsDatabase.sql" />
+    <EmbeddedResource Include="PostgreSQL\Scripts\Migrations\0.sql" />
+    <EmbeddedResource Include="PostgreSQL\Scripts\Migrations\1.sql" />
+    <EmbeddedResource Include="PostgreSQL\Scripts\Migrations\2.sql" />
+    <EmbeddedResource Include="PostgreSQL\Scripts\Migrations\3.sql" />
+    <EmbeddedResource Include="PostgreSQL\Scripts\Migrations\4.sql" />
+    <EmbeddedResource Include="PostgreSQL\Scripts\Migrations\5.sql" />
+    <EmbeddedResource Include="PostgreSQL\Scripts\Migrations\6.sql" />
     <EmbeddedResource Include="SQLite\Scripts\InitializeDatabase.sql" />
     <EmbeddedResource Include="SQLite\Scripts\InitializeLeaderboardsDatabase.sql" />
     <EmbeddedResource Include="SQLite\Scripts\Migrations\0.sql" />
@@ -72,6 +90,18 @@
     </Reference>
     <Reference Include="System.Data.SQLite">
       <HintPath>..\..\dep\System.Data.SQLite\System.Data.SQLite.dll</HintPath>
+    </Reference>
+    <Reference Include="Npgsql">
+      <HintPath>..\..\dep\Npgsql\Npgsql.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Microsoft.Extensions.Logging.Abstractions">
+      <HintPath>..\..\dep\Npgsql\Microsoft.Extensions.Logging.Abstractions.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Microsoft.Extensions.DependencyInjection.Abstractions">
+      <HintPath>..\..\dep\Npgsql\Microsoft.Extensions.DependencyInjection.Abstractions.dll</HintPath>
+      <Private>true</Private>
     </Reference>
   </ItemGroup>
 

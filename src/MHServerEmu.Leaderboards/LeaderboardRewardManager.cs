@@ -2,7 +2,7 @@
 using MHServerEmu.Core.Network;
 using MHServerEmu.Core.System.Time;
 using MHServerEmu.DatabaseAccess.Models.Leaderboards;
-using MHServerEmu.DatabaseAccess.SQLite;
+using MHServerEmu.DatabaseAccess;
 
 namespace MHServerEmu.Leaderboards
 {
@@ -15,6 +15,7 @@ namespace MHServerEmu.Leaderboards
         private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(5);    // If we don't get all confirmations in 5 minutes, something must have gone very wrong
 
         private readonly Dictionary<ulong, RewardQueryResult> _pendingRewards = new();
+        private readonly ILeaderboardDBManager _dbManager;
 
         private Queue<ServiceMessage.LeaderboardRewardRequest> _requestQueue = new();
         private Queue<ServiceMessage.LeaderboardRewardRequest> _processRequestQueue = new();
@@ -23,8 +24,9 @@ namespace MHServerEmu.Leaderboards
 
         private readonly object _queueLock = new();
 
-        public LeaderboardRewardManager()
+        public LeaderboardRewardManager(ILeaderboardDBManager dbManager)
         {
+            _dbManager = dbManager;
         }
 
         /// <summary>
@@ -86,13 +88,13 @@ namespace MHServerEmu.Leaderboards
         /// <summary>
         /// Queries the database for rewards for the specified participant and relays the data to the game instance service.
         /// </summary>
-        private bool QueryRewards(ulong participantId)
+        internal bool QueryRewards(ulong participantId)
         {
             if (!Verify.IsTrue(_pendingRewards.ContainsKey(participantId) == false, $"Participant 0x{participantId:X} already has pending rewards"))
                 return false;
 
             // Query the database and exit early if there are no rewards to give
-            List<DBRewardEntry> dbRewards = SQLiteLeaderboardDBManager.Instance.GetRewards((long)participantId);
+            List<DBRewardEntry> dbRewards = _dbManager.GetRewards((long)participantId);
             if (dbRewards.Count == 0)
                 return true;
 
@@ -117,7 +119,7 @@ namespace MHServerEmu.Leaderboards
         /// <summary>
         /// Marks a leaderboard reward as distributed in the database.
         /// </summary>
-        private bool FinalizeReward(long leaderboardId, long instanceId, ulong participantId)
+        internal bool FinalizeReward(long leaderboardId, long instanceId, ulong participantId)
         {
             bool pendingRewardFound = _pendingRewards.TryGetValue(participantId, out RewardQueryResult rewardQuery);
             if (!Verify.IsTrue(pendingRewardFound, $"Received confirmation for participant 0x{participantId:X}, who does not have pending rewards"))
@@ -143,7 +145,7 @@ namespace MHServerEmu.Leaderboards
 
             // Update reward in the database
             reward.UpdateRewardedDate();
-            SQLiteLeaderboardDBManager.Instance.UpdateReward(reward);
+            _dbManager.UpdateReward(reward);
 
             // Finish this batch of rewards if we have received confirmations for everything
             if (rewards.Count == 0)

@@ -8,6 +8,8 @@ If this is your first time using MHServerEmu, you may be interested in this.
 
 - [Initial Setup](./Setup/InitialSetup.md) - stable build setup instructions.
 
+- [PostgreSQL Setup](./Setup/PostgreSQL.md) - PostgreSQL database configuration and operations.
+
 - [Manual Setup](./Setup/ManualSetup.md) - manual setup instructions for advanced users.
 
 - [Advanced Setup](./Setup/AdvancedSetup.md) - advanced setup instructions (enabling accounts, remote connections, etc.).

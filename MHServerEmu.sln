@@ -27,6 +27,10 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "MHServerEmu.Core.Tests", "s
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MHServerEmu.Games.Tests", "src\MHServerEmu.Games.Tests\MHServerEmu.Games.Tests.csproj", "{3921B039-7911-49D4-9AE2-727168015157}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{3F639080-6D54-48A7-BE42-AC89268E3699}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MHServerEmu.DatabaseAccess.Tests", "src\MHServerEmu.DatabaseAccess.Tests\MHServerEmu.DatabaseAccess.Tests.csproj", "{AC0C7758-C557-4B0D-87FD-FFA9AD2BEC45}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug 1.48|x64 = Debug 1.48|x64
@@ -181,11 +185,26 @@ Global
 		{3921B039-7911-49D4-9AE2-727168015157}.Release 1.53|x64.Build.0 = Release 1.53|x64
 		{3921B039-7911-49D4-9AE2-727168015157}.Release|x64.ActiveCfg = Release|x64
 		{3921B039-7911-49D4-9AE2-727168015157}.Release|x64.Build.0 = Release|x64
+		{AC0C7758-C557-4B0D-87FD-FFA9AD2BEC45}.Debug 1.48|x64.ActiveCfg = Debug 1.48|x64
+		{AC0C7758-C557-4B0D-87FD-FFA9AD2BEC45}.Debug 1.48|x64.Build.0 = Debug 1.48|x64
+		{AC0C7758-C557-4B0D-87FD-FFA9AD2BEC45}.Debug 1.53|x64.ActiveCfg = Debug 1.53|x64
+		{AC0C7758-C557-4B0D-87FD-FFA9AD2BEC45}.Debug 1.53|x64.Build.0 = Debug 1.53|x64
+		{AC0C7758-C557-4B0D-87FD-FFA9AD2BEC45}.Debug|x64.ActiveCfg = Debug|x64
+		{AC0C7758-C557-4B0D-87FD-FFA9AD2BEC45}.Debug|x64.Build.0 = Debug|x64
+		{AC0C7758-C557-4B0D-87FD-FFA9AD2BEC45}.Release 1.48|x64.ActiveCfg = Release 1.48|x64
+		{AC0C7758-C557-4B0D-87FD-FFA9AD2BEC45}.Release 1.48|x64.Build.0 = Release 1.48|x64
+		{AC0C7758-C557-4B0D-87FD-FFA9AD2BEC45}.Release 1.53|x64.ActiveCfg = Release 1.53|x64
+		{AC0C7758-C557-4B0D-87FD-FFA9AD2BEC45}.Release 1.53|x64.Build.0 = Release 1.53|x64
+		{AC0C7758-C557-4B0D-87FD-FFA9AD2BEC45}.Release|x64.ActiveCfg = Release|x64
+		{AC0C7758-C557-4B0D-87FD-FFA9AD2BEC45}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {32E9F67B-DFB8-4F7F-9C2D-88DADB5FCB19}
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{AC0C7758-C557-4B0D-87FD-FFA9AD2BEC45} = {3F639080-6D54-48A7-BE42-AC89268E3699}
 	EndGlobalSection
 EndGlobal
