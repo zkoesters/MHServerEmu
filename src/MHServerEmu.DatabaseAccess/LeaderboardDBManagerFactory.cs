@@ -1,10 +1,12 @@
+using MHServerEmu.DatabaseAccess.MySQL;
 using MHServerEmu.DatabaseAccess.SQLite;
 
 namespace MHServerEmu.DatabaseAccess
 {
     public enum LeaderboardDBManagerType
     {
-        SQLite
+        SQLite,
+        MySQL
     }
 
     public static class LeaderboardDBManagerFactory
@@ -16,6 +18,12 @@ namespace MHServerEmu.DatabaseAccess
                 || string.Equals(configuredType, nameof(LeaderboardDBManagerType.SQLite), StringComparison.OrdinalIgnoreCase))
             {
                 type = LeaderboardDBManagerType.SQLite;
+                return true;
+            }
+
+            if (string.Equals(configuredType, nameof(LeaderboardDBManagerType.MySQL), StringComparison.OrdinalIgnoreCase))
+            {
+                type = LeaderboardDBManagerType.MySQL;
                 return true;
             }
 
@@ -32,6 +40,7 @@ namespace MHServerEmu.DatabaseAccess
             manager = type switch
             {
                 LeaderboardDBManagerType.SQLite => new SQLiteLeaderboardDBManager(databasePath),
+                LeaderboardDBManagerType.MySQL => new MySQLLeaderboardDBManager(),
                 _ => null
             };
             return manager != null;

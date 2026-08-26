@@ -1,6 +1,6 @@
 # MySQL and MariaDB Setup
 
-MySQL is an alternative account, player, and guild database backend. It is supported on MySQL 8.4 LTS and MariaDB 11.8 LTS. The database must exist before starting MHServerEmu; startup creates and migrates the MHServerEmu schema.
+MySQL is an alternative account, player, guild, and leaderboard database backend. It is supported on MySQL 8.4 LTS, MySQL 9.7, MariaDB 11.8 LTS, and MariaDB 12.3. The database must exist before starting MHServerEmu; startup creates and migrates the MHServerEmu schema.
 
 ## Create the Database and Accounts
 
@@ -10,7 +10,7 @@ Run the following as a database administrator. Replace each placeholder before r
 CREATE DATABASE mhserveremu CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 CREATE USER 'mhserveremu_init'@'your-server-host' IDENTIFIED BY 'your-initialization-password';
-GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, INDEX ON mhserveremu.* TO 'mhserveremu_init'@'your-server-host';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, INDEX, REFERENCES ON mhserveremu.* TO 'mhserveremu_init'@'your-server-host';
 
 CREATE USER 'mhserveremu'@'your-server-host' IDENTIFIED BY 'your-runtime-password';
 GRANT SELECT, INSERT, UPDATE, DELETE ON mhserveremu.* TO 'mhserveremu'@'your-server-host';
@@ -20,18 +20,33 @@ Use the initialization account for the first server start. Once it completes, re
 
 ## Configure MHServerEmu
 
-Keep connection details in `ConfigOverride.ini`, not `Config.ini` or source control. Replace every `your-...` placeholder with values for your deployment before starting the server.
+Keep connection details in `ConfigOverride.ini`, not `Config.ini` or source control. Replace every `your-...` placeholder with values for your deployment before starting the server. Use the initialization account for the first startup so MHServerEmu can create the schema:
 
 ```ini
 [PlayerManager]
 DatabaseType=MySQL
 UseJsonDBManager=false
 
+[Leaderboards]
+DatabaseType=MySQL
+
+[GameOptions]
+LeaderboardsEnabled=true
+
+[MySQLDBManager]
+ConnectionString=Server=your-mysql-host;Port=3306;Database=mhserveremu;User ID=mhserveremu_init;Password=your-initialization-password
+```
+
+After the schema is current, replace the connection string with the restricted runtime account:
+
+```ini
 [MySQLDBManager]
 ConnectionString=Server=your-mysql-host;Port=3306;Database=mhserveremu;User ID=mhserveremu;Password=your-runtime-password
 ```
 
-`DatabaseType` can be `Json`, `SQLite`, `MySQL`, or `PostgreSQL`. `UseJsonDBManager` is a legacy setting; leave it `false` when selecting MySQL. Use `DatabaseType=MySQL` for both MySQL and MariaDB.
+`PlayerManager.DatabaseType` and `Leaderboards.DatabaseType` are independent selectors. Each can select `MySQL` without changing the other; both use the shared `[MySQLDBManager]` connection string. `UseJsonDBManager` is a legacy PlayerManager setting; leave it `false` when selecting MySQL. Use `DatabaseType=MySQL` for both MySQL and MariaDB. `Leaderboards.DatabaseFile` applies only when `Leaderboards.DatabaseType=SQLite` and is ignored for MySQL. Set `GameOptions.LeaderboardsEnabled=true` to enable leaderboard operation.
+
+MySQL keeps account, player, guild, and leaderboard data in the configured database. The independent MySQL leaderboard schema is version 1. Leaderboard tables are an independent schema scope within that database, so selecting MySQL for leaderboards does not require selecting MySQL for PlayerManager.
 
 The connection string uses [MySqlConnector connection options](https://mysqlconnector.net/connection-options/). For production, use a CA certificate, verify the server certificate and hostname, and set explicit connection, command, and pooling limits:
 
@@ -44,16 +59,18 @@ ConnectionString=Server=your-mysql-host;Port=3306;Database=mhserveremu;User ID=m
 
 ## Operation and Backups
 
-MySQL/MariaDB backups are not created by MHServerEmu. Use database operator tooling such as `mysqldump` and retain backups outside the server directory. Test restores regularly using your MySQL/MariaDB restore process.
+MySQL/MariaDB backups are not created by MHServerEmu. Use database operator tooling such as `mysqldump` for the complete database, including the independent leaderboard tables, and retain backups outside the server directory. Test restores regularly using your MySQL/MariaDB restore process; restore the complete database before starting MHServerEmu.
 
-MySQL/MariaDB supports account, player, and guild persistence only; MySQL leaderboard persistence is unavailable on this application branch. Importing an existing SQLite `Data/Account.db` database into MySQL/MariaDB and synchronizing data between SQLite and MySQL/MariaDB are not supported. Start with a new MySQL/MariaDB database. When `DatabaseType=MySQL` is selected, MHServerEmu does not automatically fall back to SQLite if the configuration is invalid or the database cannot be reached.
+Importing existing SQLite account or leaderboard databases into MySQL/MariaDB and synchronizing MySQL/MariaDB with SQLite are not supported. Start with a new MySQL/MariaDB database. When either database selector is set to `MySQL`, MHServerEmu does not automatically fall back to SQLite if the configuration is invalid or the database cannot be reached.
+
+Leaderboard scheduling is supported for one MHServerEmu process at a time. Do not run multiple server processes against the same MySQL leaderboard database because scheduling has no distributed coordination.
 
 ## Integration Tests
 
 MySQL/MariaDB integration tests are opt-in. Provision a dedicated operator account that can create and drop databases, then set `MHSERVEREMU_MYSQL_TEST_CONNECTION_STRING` to its connection string. The tests create and remove isolated databases; they do not create a reusable test database.
 
 ```bash
-MHSERVEREMU_MYSQL_TEST_CONNECTION_STRING='Server=your-mysql-host;Port=3306;Database=your-operator-database;User ID=your-test-user;Password=your-test-password' dotnet test src/MHServerEmu.DatabaseAccess.Tests/MHServerEmu.DatabaseAccess.Tests.csproj --configuration Debug --filter "FullyQualifiedName~MHServerEmu.DatabaseAccess.Tests.MySQL"
+MHSERVEREMU_MYSQL_TEST_CONNECTION_STRING='Server=your-mysql-host;Port=3306;Database=your-operator-database;User ID=your-test-user;Password=your-test-password' dotnet test src/MHServerEmu.DatabaseAccess.Tests/MHServerEmu.DatabaseAccess.Tests.csproj --configuration "Debug 1.53" -p:Platform=x64 --filter "FullyQualifiedName~MHServerEmu.DatabaseAccess.Tests.MySQL"
 ```
 
-Run the integration suite separately against MySQL 8.4 LTS and MariaDB 11.8 LTS. Do not point it at a production database or use production credentials.
+Run the integration suite separately against MySQL 8.4 LTS, MySQL 9.7, MariaDB 11.8 LTS, and MariaDB 12.3. Do not point it at a production database or use production credentials.

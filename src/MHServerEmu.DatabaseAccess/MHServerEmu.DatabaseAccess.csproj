@@ -48,6 +48,7 @@
     <None Remove="PostgreSQL\Scripts\Migrations\5.sql" />
     <None Remove="PostgreSQL\Scripts\Migrations\6.sql" />
     <None Remove="MySQL\Scripts\InitializeDatabase.sql" />
+    <None Remove="MySQL\Scripts\InitializeLeaderboardsDatabase.sql" />
     <None Remove="MySQL\Scripts\Migrations\0.sql" />
     <None Remove="MySQL\Scripts\Migrations\1.sql" />
     <None Remove="MySQL\Scripts\Migrations\2.sql" />
@@ -76,6 +77,7 @@
     <EmbeddedResource Include="PostgreSQL\Scripts\Migrations\5.sql" />
     <EmbeddedResource Include="PostgreSQL\Scripts\Migrations\6.sql" />
     <EmbeddedResource Include="MySQL\Scripts\InitializeDatabase.sql" />
+    <EmbeddedResource Include="MySQL\Scripts\InitializeLeaderboardsDatabase.sql" />
     <EmbeddedResource Include="MySQL\Scripts\Migrations\0.sql" />
     <EmbeddedResource Include="MySQL\Scripts\Migrations\1.sql" />
     <EmbeddedResource Include="MySQL\Scripts\Migrations\2.sql" />
