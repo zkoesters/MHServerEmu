@@ -26,7 +26,7 @@ The following instructions are intended for stable builds of the server. If you 
 
 In most cases you can update MHServerEmu simply by downloading the [latest nightly build](https://nightly.link/Crypto137/MHServerEmu/workflows/nightly-release-windows-x64/master?preview) and extracting it into the `MHServerEmu` directory, overwriting all files.
 
-For SQLite deployments, account data is stored in the `MHServerEmu\Data\Account.db` file. You can back up this file to make sure your progress does not get lost. PostgreSQL deployments require external PostgreSQL backups; see [PostgreSQL Setup](./PostgreSQL.md).
+For SQLite deployments, account data is stored in the `MHServerEmu\Data\Account.db` file. You can back up this file to make sure your progress does not get lost. PostgreSQL and MySQL/MariaDB deployments require external database backups; see [PostgreSQL Setup](./PostgreSQL.md) and [MySQL and MariaDB Setup](./MySQL.md).
 
 To avoid losing your configuration changes when you update, we recommend to make all changes in the `ConfigOverride.ini` file instead of modifying `Config.ini` directly. `ConfigOverride.ini` should be created when you start the server for the first time, and it uses the same structure as `Config.ini`.
 

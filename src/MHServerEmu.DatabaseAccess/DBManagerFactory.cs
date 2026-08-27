@@ -1,4 +1,5 @@
 using MHServerEmu.DatabaseAccess.Json;
+using MHServerEmu.DatabaseAccess.MySQL;
 using MHServerEmu.DatabaseAccess.PostgreSQL;
 using MHServerEmu.DatabaseAccess.SQLite;
 
@@ -8,6 +9,7 @@ namespace MHServerEmu.DatabaseAccess
     {
         Json,
         SQLite,
+        MySQL,
         PostgreSQL
     }
 
@@ -28,6 +30,7 @@ namespace MHServerEmu.DatabaseAccess
             {
                 DBManagerType.Json => JsonDBManager.Instance,
                 DBManagerType.SQLite => SQLiteDBManager.Instance,
+                DBManagerType.MySQL => MySQLDBManager.Instance,
                 DBManagerType.PostgreSQL => PostgreSQLDBManager.Instance,
                 _ => null
             };

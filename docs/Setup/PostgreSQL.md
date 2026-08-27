@@ -34,7 +34,7 @@ DatabaseType=PostgreSQL
 ConnectionString=Host=your-postgres-host;Port=5432;Database=mhserveremu;Username=mhserveremu;Password=your-password
 ```
 
-`PlayerManager.DatabaseType` selects account/player storage and can be `Json`, `SQLite`, or `PostgreSQL`. `Leaderboards.DatabaseType` independently selects leaderboard storage and can be `SQLite` or `PostgreSQL`. Account/player data and leaderboards can each use either SQLite or PostgreSQL independently. `UseJsonDBManager` is a legacy setting; leave it `false` when selecting PostgreSQL.
+`PlayerManager.DatabaseType` selects account/player storage and can be `Json`, `SQLite`, `MySQL`, or `PostgreSQL`. `Leaderboards.DatabaseType` independently selects leaderboard storage and can be `SQLite` or `PostgreSQL`. Account/player data and leaderboards can each use either SQLite or PostgreSQL independently. `UseJsonDBManager` is a legacy setting; leave it `false` when selecting PostgreSQL. For MySQL/MariaDB account/player setup, see [MySQL and MariaDB Setup](./MySQL.md).
 
 Both PostgreSQL selections use the existing `[PostgreSQLDBManager] ConnectionString`. `Leaderboards.DatabaseFile` applies only to SQLite leaderboard storage and is ignored when `Leaderboards.DatabaseType=PostgreSQL`.
 

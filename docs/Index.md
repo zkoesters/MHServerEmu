@@ -10,6 +10,8 @@ If this is your first time using MHServerEmu, you may be interested in this.
 
 - [PostgreSQL Setup](./Setup/PostgreSQL.md) - PostgreSQL database configuration and operations.
 
+- [MySQL and MariaDB Setup](./Setup/MySQL.md) - MySQL and MariaDB database configuration and operations.
+
 - [Manual Setup](./Setup/ManualSetup.md) - manual setup instructions for advanced users.
 
 - [Advanced Setup](./Setup/AdvancedSetup.md) - advanced setup instructions (enabling accounts, remote connections, etc.).
