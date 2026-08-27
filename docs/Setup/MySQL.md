@@ -1,6 +1,6 @@
 # MySQL and MariaDB Setup
 
-MySQL is an alternative account, player, and guild database backend. It is supported on MySQL 8.4 LTS and MariaDB 11.8 LTS. The database must exist before starting MHServerEmu; startup creates and migrates the MHServerEmu schema to version 6.
+MySQL is an alternative account, player, guild, and leaderboard database backend. It is supported on MySQL 8.4 LTS and MariaDB 11.8 LTS. The database must exist before starting MHServerEmu; startup creates and migrates the account schema to version 6. Leaderboards use an independent schema at version 1.
 
 ## Create the Database and Accounts
 
@@ -10,7 +10,7 @@ Run the following as a database administrator. Replace each placeholder before r
 CREATE DATABASE mhserveremu CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 CREATE USER 'mhserveremu_init'@'your-server-host' IDENTIFIED BY 'your-initialization-password';
-GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, INDEX ON mhserveremu.* TO 'mhserveremu_init'@'your-server-host';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, INDEX, REFERENCES ON mhserveremu.* TO 'mhserveremu_init'@'your-server-host';
 
 CREATE USER 'mhserveremu'@'your-server-host' IDENTIFIED BY 'your-runtime-password';
 GRANT SELECT, INSERT, UPDATE, DELETE ON mhserveremu.* TO 'mhserveremu'@'your-server-host';
@@ -27,6 +27,12 @@ Keep connection details in `ConfigOverride.ini`, not `Config.ini` or source cont
 DatabaseType=MySQL
 UseJsonDBManager=false
 
+[GameOptions]
+LeaderboardsEnabled=true
+
+[Leaderboards]
+DatabaseType=MySQL
+
 [MySQLDBManager]
 ConnectionString=Server=your-mysql-host;Port=3306;Database=mhserveremu;User ID=mhserveremu_init;Password=your-initialization-password
 ```
@@ -38,7 +44,7 @@ Start the server with these initialization credentials. After startup creates or
 ConnectionString=Server=your-mysql-host;Port=3306;Database=mhserveremu;User ID=mhserveremu;Password=your-runtime-password
 ```
 
-`DatabaseType` can be `Json`, `SQLite`, `MySQL`, or `PostgreSQL`. `UseJsonDBManager` is a legacy setting; leave it `false` when selecting MySQL. Use `DatabaseType=MySQL` for both MySQL and MariaDB.
+`PlayerManager.DatabaseType` and `Leaderboards.DatabaseType` are independent selectors. Each can select `MySQL` without changing the other, and both use `[MySQLDBManager] ConnectionString`. `Leaderboards.DatabaseFile` applies only to SQLite and is ignored for MySQL. `UseJsonDBManager` is a legacy PlayerManager setting; leave it `false` when selecting MySQL. Set `GameOptions.LeaderboardsEnabled=true` to enable leaderboards. Use `DatabaseType=MySQL` for both MySQL and MariaDB.
 
 The connection string uses [MySqlConnector connection options](https://mysqlconnector.net/connection-options/). For production, use a CA certificate, verify the server certificate and hostname, and set explicit connection, command, and pooling limits:
 
@@ -51,9 +57,9 @@ ConnectionString=Server=your-mysql-host;Port=3306;Database=mhserveremu;User ID=m
 
 ## Operation and Backups
 
-MySQL/MariaDB backups are not created by MHServerEmu. Use database operator tooling such as `mysqldump` and retain backups outside the server directory. Test restores regularly using your MySQL/MariaDB restore process.
+MySQL/MariaDB backups are not created by MHServerEmu. Use database operator tooling such as `mysqldump` for the complete database, including the independent leaderboard tables, and retain backups outside the server directory. Test restores regularly using your MySQL/MariaDB restore process.
 
-Importing an existing SQLite `Data/Account.db` database into MySQL/MariaDB and synchronizing data between SQLite and MySQL/MariaDB are not supported. Start with a new MySQL/MariaDB database. When `DatabaseType=MySQL` is selected, MHServerEmu does not automatically fall back to SQLite if the configuration is invalid or the database cannot be reached.
+Importing existing SQLite account or leaderboard databases into MySQL/MariaDB and synchronizing data between SQLite and MySQL/MariaDB are not supported. Start with a new MySQL/MariaDB database. When either database selector is set to `MySQL`, MHServerEmu does not automatically fall back to SQLite if the configuration is invalid or the database cannot be reached.
 
 ## Integration Tests
 

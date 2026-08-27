@@ -1,12 +1,14 @@
 using MHServerEmu.DatabaseAccess.SQLite;
 using MHServerEmu.DatabaseAccess.PostgreSQL;
+using MHServerEmu.DatabaseAccess.MySQL;
 
 namespace MHServerEmu.DatabaseAccess
 {
     public enum LeaderboardDBManagerType
-    {
-        SQLite,
-        PostgreSQL
+        {
+            SQLite,
+            MySQL,
+            PostgreSQL
     }
 
     public static class LeaderboardDBManagerFactory
@@ -27,9 +29,15 @@ namespace MHServerEmu.DatabaseAccess
                 return true;
             }
 
+            if (string.Equals(configuredType, nameof(LeaderboardDBManagerType.MySQL), StringComparison.OrdinalIgnoreCase))
+            {
+                type = LeaderboardDBManagerType.MySQL;
+                return true;
+            }
+
             type = default;
             return false;
-        }
+    }
 
         public static bool TryCreate(string configuredType, string databasePath, out ILeaderboardDBManager manager)
         {
@@ -41,6 +49,7 @@ namespace MHServerEmu.DatabaseAccess
             {
                 LeaderboardDBManagerType.SQLite => new SQLiteLeaderboardDBManager(databasePath),
                 LeaderboardDBManagerType.PostgreSQL => new PostgreSQLLeaderboardDBManager(),
+                LeaderboardDBManagerType.MySQL => new MySQLLeaderboardDBManager(),
                 _ => null
             };
             return manager != null;
